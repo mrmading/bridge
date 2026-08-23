@@ -12,6 +12,8 @@ STAGE="$OUT/.dmg-stage"
 "$HERE/build.sh" "$OUT"
 
 echo "→ packaging Bridge-$VERSION.dmg"
+# a copy of the image left mounted from a previous run blocks hdiutil
+[ -d /Volumes/Bridge ] && hdiutil detach /Volumes/Bridge -force -quiet 2>/dev/null || true
 rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
 cp -R "$OUT/Bridge.app" "$STAGE/Bridge.app"
