@@ -26,22 +26,26 @@ func findBun() -> String? {
     return out.isEmpty ? nil : out
 }
 
-func freePort(from start: Int) -> Int {
-    for port in start..<(start + 40) {
-        let sock = socket(AF_INET, SOCK_STREAM, 0)
-        if sock < 0 { continue }
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = UInt16(port).bigEndian
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-        var yes: Int32 = 1
-        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
-        let bound = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-        }
-        close(sock)
-        if bound == 0 { return port }
+/// A port is free when nothing answers on it. Probing by connect (rather than bind)
+/// is what matters here: Bun listens on the dual-stack wildcard, which an IPv4-only
+/// bind test would happily miss.
+func portIsBusy(_ port: Int) -> Bool {
+    let sock = socket(AF_INET, SOCK_STREAM, 0)
+    if sock < 0 { return false }
+    defer { close(sock) }
+    var tv = timeval(tv_sec: 0, tv_usec: 200_000)
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = UInt16(port).bigEndian
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let r = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
     }
+    return r == 0
+}
+func freePort(from start: Int) -> Int {
+    for port in start..<(start + 40) where !portIsBusy(port) { return port }
     return start
 }
 
@@ -50,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     var web: WKWebView!
     var server: Process?
     var port = PORT_START
+    var serverLog = ""
+    var loaded = false
 
     func applicationDidFinishLaunching(_ note: Notification) {
         buildMenu()
@@ -112,11 +118,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         env["BRIDGE_DATA"] = support.path
         env["PATH"] = (env["PATH"] ?? "") + ":\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin"
 
+        // Launch through a login shell: a Finder-launched app inherits a bare environment,
+        // and Bun wants the same TMPDIR/HOME/PATH it gets in a terminal.
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: bun)
-        p.arguments = [entry]
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        p.arguments = ["-lc", "exec \"$BRIDGE_BUN_BIN\" \"$BRIDGE_ENTRY\""]
+        env["BRIDGE_BUN_BIN"] = bun
+        env["BRIDGE_ENTRY"] = entry
         p.environment = env
         p.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
+        // A Finder-launched app has no terminal: give the child real, drained streams,
+        // otherwise its first write to an inherited dead stdout wedges it before it listens.
+        p.standardInput = FileHandle.nullDevice
+        let outPipe = Pipe(), errPipe = Pipe()
+        p.standardOutput = outPipe
+        p.standardError = errPipe
+        let drain: (FileHandle) -> Void = { [weak self] h in
+            let chunk = String(data: h.availableData, encoding: .utf8) ?? ""
+            if !chunk.isEmpty { self?.serverLog += chunk }
+        }
+        outPipe.fileHandleForReading.readabilityHandler = drain
+        errPipe.fileHandleForReading.readabilityHandler = drain
+        p.terminationHandler = { [weak self] proc in
+            guard let self, !self.loaded else { return }
+            DispatchQueue.main.async {
+                self.fail("Bridge could not start its server",
+                          "bun exited with code \(proc.terminationStatus).\n\n"
+                          + (self.serverLog.isEmpty ? "No output." : String(self.serverLog.suffix(600))))
+            }
+        }
         do { try p.run() } catch { return fail("Could not start Bridge", error.localizedDescription) }
         server = p
         waitForServer(attempt: 0)
@@ -129,11 +159,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         URLSession.shared.dataTask(with: req) { _, resp, _ in
             DispatchQueue.main.async {
                 if let http = resp as? HTTPURLResponse, http.statusCode == 200 {
+                    self.loaded = true
                     self.web.load(URLRequest(url: URL(string: "http://127.0.0.1:\(self.port)/")!))
-                } else if attempt < 40 {
+                } else if attempt < 60 {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.waitForServer(attempt: attempt + 1) }
                 } else {
-                    self.fail("Bridge did not start", "The local server never answered on port \(self.port).")
+                    self.fail("Bridge did not start",
+                              "The local server never answered on port \(self.port).\n\n"
+                              + (self.serverLog.isEmpty ? "bun printed nothing." : String(self.serverLog.suffix(600))))
                 }
             }
         }.resume()

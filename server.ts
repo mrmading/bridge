@@ -90,15 +90,28 @@ try {
   const disk = JSON.parse(await Bun.file(CACHE_FILE).text());
   for (const [k, v] of Object.entries(disk)) metaCache.set(k, v as any);
 } catch {}
-const DEFAULT_ROOTS = [join(HOME, "Desktop", "Cowork"), CLAUDE_DIR].filter((d) => existsSync(d));
+/** Defaults touch ~/Desktop, which macOS gates behind a TCC prompt. Resolving them at
+ *  import time hangs a Finder-launched app before it can present that prompt, so the
+ *  first-run defaults are computed lazily, on the first request. */
+function defaultRoots(): string[] {
+  return [join(HOME, "Desktop"), join(HOME, "Documents"), CLAUDE_DIR].filter((d) => existsSync(d));
+}
 async function readRoots(): Promise<string[]> {
   try {
     const r = JSON.parse(await Bun.file(ROOTS_FILE).text());
     if (Array.isArray(r) && r.length) return r.filter((x: string) => typeof x === "string");
   } catch {}
-  return DEFAULT_ROOTS;
+  return [];
 }
-ROOTS = await readRoots();
+let rootsReady = false;
+async function ensureRoots() {
+  if (rootsReady) return;
+  rootsReady = true;
+  if (!ROOTS.length) {
+    ROOTS = defaultRoots();
+    try { await Bun.write(ROOTS_FILE, JSON.stringify(ROOTS, null, 2)); } catch {}
+  }
+}
 let saveTimer: any = null;
 function persistCache() {
   if (saveTimer) return;
@@ -584,6 +597,7 @@ const server = Bun.serve({
     const q = url.searchParams;
 
     try {
+      if (!rootsReady) { ROOTS = await readRoots(); await ensureRoots(); }
       if (p === "/api/bootstrap") {
         const settings = JSON.parse(await readFile(join(CLAUDE_DIR, "settings.json"), "utf8").catch(() => "{}"));
         const id = settings.daidentity || {};

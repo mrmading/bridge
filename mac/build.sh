@@ -38,6 +38,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>MIT licensed</string>
+  <key>NSDesktopFolderUsageDescription</key><string>Bridge shows the folders you add so Claude Code can work in them.</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>Bridge shows the folders you add so Claude Code can work in them.</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>Bridge shows the folders you add so Claude Code can work in them.</string>
   <key>NSAppTransportSecurity</key><dict>
     <key>NSAllowsLocalNetworking</key><true/>
   </dict>
