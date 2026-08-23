@@ -48,8 +48,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 printf 'APPL????' > "$APP/Contents/PkgInfo"
-# ad-hoc signature so Gatekeeper lets a locally built app run
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "  (codesign skipped)"
+
+# Sign with Developer ID when one is available, so the app can be notarised and
+# opened by anyone. Falls back to an ad-hoc signature for local builds.
+SIGN_ID="${BRIDGE_SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null \
+  | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)}"
+if [ -n "$SIGN_ID" ]; then
+  echo "→ signing as: $SIGN_ID"
+  codesign --force --options runtime --timestamp \
+    --entitlements "$HERE/Bridge.entitlements" \
+    --sign "$SIGN_ID" "$APP"
+  codesign --verify --strict --verbose=1 "$APP" 2>&1 | sed 's/^/  /'
+else
+  echo "  no Developer ID found — ad-hoc signing (fine locally, not distributable)"
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "  (codesign skipped)"
+fi
 
 echo "✓ $APP"
 echo "  open $APP   ·   or drag it into /Applications"

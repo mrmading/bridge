@@ -51,4 +51,29 @@ subprocess.run(["/usr/bin/osascript", "-e", f'''
 PY
 fi
 
+# ── notarise, so the first launch is an ordinary double-click ──────────────
+SIGN_ID="${BRIDGE_SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null \
+  | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)}"
+PROFILE="${BRIDGE_NOTARY_PROFILE:-bridge-notary}"
+
+if [ -n "$SIGN_ID" ]; then
+  echo "→ signing the image"
+  codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
+
+  if xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+    echo "→ notarising (this takes a few minutes)"
+    if xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait; then
+      xcrun stapler staple "$DMG" && echo "→ stapled"
+      xcrun stapler validate "$DMG" | sed 's/^/  /'
+    else
+      echo "  notarisation failed — see: xcrun notarytool log <id> --keychain-profile $PROFILE"
+    fi
+  else
+    echo "  no notary profile '$PROFILE' — skipping notarisation (see mac/SIGNING.md)"
+  fi
+else
+  echo "  unsigned image: anyone opening it will need right-click → Open (see mac/SIGNING.md)"
+fi
+
 echo "✓ $DMG  ($(du -h "$DMG" | cut -f1))"
+spctl -a -t open --context context:primary-signature -v "$DMG" 2>&1 | sed 's/^/  gatekeeper: /' || true

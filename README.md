@@ -35,9 +35,10 @@ Applications and open it. On first run Bridge checks for the two free tools it n
 install whichever is missing, and asks whether you use LifeOS. Nothing is installed unless you press
 the button.
 
-> The app is ad-hoc signed, not notarised, so the first launch needs a right-click → **Open** →
-> **Open**. Once only. If you would rather not trust a stranger's binary, build it yourself in one
-> command: `./mac/build.sh`.
+> The published build is ad-hoc signed, so the first launch needs a right-click → **Open** →
+> **Open**. Once only. Builds made with a Developer ID certificate are signed, notarised and
+> stapled automatically — see [mac/SIGNING.md](mac/SIGNING.md). You can also just build it
+> yourself: `./mac/build.sh`.
 
 ## Install from source
 
