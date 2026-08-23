@@ -35,10 +35,12 @@
       a session started in Bridge is an ordinary Claude Code session you can pick up in the terminal.
     </p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/mrmading/bridge">Get it on GitHub</a>
-      <code class="btn code">git clone https://github.com/mrmading/bridge</code>
+      <a class="btn primary" href="https://github.com/mrmading/bridge/releases/latest">Download for macOS</a>
+      <a class="btn" href="https://github.com/mrmading/bridge">View the source</a>
     </div>
-    <p class="meta">MIT · Bun + vanilla JS · a native macOS app in one Swift file · no Electron</p>
+    <p class="meta">Free and MIT licensed · a real Mac app, no Electron · nothing leaves your machine</p>
+    <p class="meta small-note">Drag it into Applications and open it. Bridge checks for the two free tools it needs
+      and offers to install whatever is missing. First launch: right-click → Open (the app is not notarised).</p>
   </section>
 
   <section class="mock-wrap">
@@ -84,8 +86,9 @@
     <pre><code>git clone https://github.com/mrmading/bridge.git
 cd bridge
 ./bridge            <span class="c"># http://localhost:4270</span>
-./mac/build.sh      <span class="c"># → dist/Bridge.app</span></code></pre>
-    <p class="lead small">Requires <a href="https://bun.sh">Bun</a> and the <a href="https://claude.com/claude-code">claude CLI</a>.</p>
+./mac/build.sh      <span class="c"># → dist/Bridge.app</span>
+./mac/dmg.sh        <span class="c"># → dist/Bridge-0.1.0.dmg</span></code></pre>
+    <p class="lead small">Requires <a href="https://bun.sh">Bun</a> and the <a href="https://claude.com/claude-code">claude CLI</a> — or let the app install them for you on first run.</p>
   </section>
 
   <section id="safety">

@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://mrmading.github.io/bridge/">Landing page</a> ·
-  <a href="#install">Install</a> ·
+  <a href="https://github.com/mrmading/bridge/releases/latest">Download</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#safety">Safety</a> ·
   <a href="LICENSE">MIT</a>
@@ -28,10 +28,21 @@ It is **not** a reimplementation. Every turn spawns the real CLI with `--session
 so a conversation started in Bridge is an ordinary Claude Code session you can pick up in the
 terminal with `claude --resume`, and vice versa.
 
-## Install
+## Download
+
+**[Bridge-0.1.0.dmg](https://github.com/mrmading/bridge/releases/latest)** — drag it into
+Applications and open it. On first run Bridge checks for the two free tools it needs, offers to
+install whichever is missing, and asks whether you use LifeOS. Nothing is installed unless you press
+the button.
+
+> The app is ad-hoc signed, not notarised, so the first launch needs a right-click → **Open** →
+> **Open**. Once only. If you would rather not trust a stranger's binary, build it yourself in one
+> command: `./mac/build.sh`.
+
+## Install from source
 
 Bridge needs [Bun](https://bun.sh) and the [`claude` CLI](https://claude.com/claude-code) on your
-`PATH`.
+`PATH` — or let the app's setup screen install them for you.
 
 ```bash
 git clone https://github.com/mrmading/bridge.git
@@ -39,11 +50,11 @@ cd bridge
 ./bridge                 # starts the server and opens http://localhost:4270
 ```
 
-### As a macOS app
+### Building the app yourself
 
 ```bash
 ./mac/build.sh           # → dist/Bridge.app
-open dist/Bridge.app     # or drag it into /Applications
+./mac/dmg.sh             # → dist/Bridge-<version>.dmg
 ```
 
 A small Swift shell around a `WKWebView`: it starts the bundled server on a free port, waits for it,
@@ -153,7 +164,9 @@ public/
   app.js            renderer, streaming, palette, search, editor
 mac/
   Bridge/main.swift the native shell
+  Bridge/Setup.swift first-run setup: Bun, Claude Code, LifeOS
   build.sh          → dist/Bridge.app
+  dmg.sh            → dist/Bridge-<version>.dmg
 docs/               the landing page (GitHub Pages)
 ```
 

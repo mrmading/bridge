@@ -8,23 +8,7 @@ import WebKit
 
 let PORT_START = 4270
 
-func findBun() -> String? {
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let candidates = [
-        ProcessInfo.processInfo.environment["BRIDGE_BUN"],
-        "\(home)/.bun/bin/bun", "/opt/homebrew/bin/bun", "/usr/local/bin/bun", "/usr/bin/bun",
-    ].compactMap { $0 }
-    for c in candidates where FileManager.default.isExecutableFile(atPath: c) { return c }
-    // last resort: ask a login shell, so nvm/asdf-style PATHs are honoured
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    p.arguments = ["-lc", "command -v bun"]
-    let pipe = Pipe(); p.standardOutput = pipe
-    try? p.run(); p.waitUntilExit()
-    let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    return out.isEmpty ? nil : out
-}
+func findBun() -> String? { ProcessInfo.processInfo.environment["BRIDGE_BUN"] ?? shellPath("bun") }
 
 /// A port is free when nothing answers on it. Probing by connect (rather than bind)
 /// is what matters here: Bun listens on the dual-stack wildcard, which an IPv4-only
@@ -57,10 +41,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     var serverLog = ""
     var loaded = false
 
+    var setup: SetupWindowController?
+
     func applicationDidFinishLaunching(_ note: Notification) {
         buildMenu()
+        if findBun() == nil || shellPath("claude") == nil { showSetup() } else { launch() }
+    }
+
+    func launch() {
         buildWindow()
         startServer()
+    }
+
+    @objc func showSetup() {
+        let c = SetupWindowController(onDone: { [weak self] in
+            self?.setup = nil
+            if self?.window == nil { self?.launch() }
+        })
+        setup = c
+        c.showWindow(nil)
+        c.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // ── window ────────────────────────────────────────────────────────────
@@ -97,11 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     // ── the Bun server that lives in Resources/app ────────────────────────
     func startServer() {
-        guard let bun = findBun() else { return fail("Bun is not installed", """
-            Bridge runs on Bun. Install it and open Bridge again:
-
-                curl -fsSL https://bun.sh/install | bash
-            """) }
+        guard let bun = findBun() else { return showSetup() }
         guard let res = Bundle.main.resourcePath else { return fail("Bundle is broken", "No Resources directory.") }
         let entry = "\(res)/app/server.ts"
         guard FileManager.default.fileExists(atPath: entry) else {
@@ -198,7 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return nil
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { setup == nil }
     func applicationWillTerminate(_ note: Notification) {
         server?.terminate()
         server?.waitUntilExit()
@@ -212,6 +209,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let appItem = NSMenuItem(); main.addItem(appItem)
         let app = NSMenu(title: "Bridge")
         app.addItem(withTitle: "About Bridge", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(.separator())
+        app.addItem(withTitle: "Setup…", action: #selector(showSetup), keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "Hide Bridge", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(withTitle: "Quit Bridge", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")

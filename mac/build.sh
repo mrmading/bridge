@@ -17,7 +17,7 @@ swiftc -O \
   -target arm64-apple-macosx13.0 \
   -framework AppKit -framework WebKit \
   -o "$APP/Contents/MacOS/Bridge" \
-  "$HERE/Bridge/main.swift"
+  "$HERE/Bridge/main.swift" "$HERE/Bridge/Setup.swift"
 
 cp "$ROOT/server.ts" "$APP/Contents/Resources/app/server.ts"
 cp -R "$ROOT/public" "$APP/Contents/Resources/app/public"
