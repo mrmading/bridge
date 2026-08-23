@@ -25,8 +25,10 @@ Bridge — a desktop client for Claude Code
 
 1. Drag Bridge into the Applications folder next to it.
 2. Open Applications and double-click Bridge.
-   The first time, macOS may say the app is from an unidentified developer:
-   right-click Bridge, choose Open, then Open again. You only do this once.
+   The first time, macOS will say it cannot check the app for malicious software.
+   Click Done, then open System Settings > Privacy & Security, scroll to the
+   bottom, and press "Open Anyway" next to Bridge. You only do this once.
+   (On macOS 14 and older: right-click Bridge, choose Open, then Open again.)
 3. Bridge checks whether the two free tools it needs are on your Mac
    (Bun, and Anthropic's Claude Code) and offers to install anything missing.
    It will also ask whether you use LifeOS. All of that is optional and
