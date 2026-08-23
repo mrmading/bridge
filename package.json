@@ -1,0 +1,10 @@
+{
+  "name": "bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A dark/light chat client for Claude Code + PAI",
+  "scripts": {
+    "start": "bun server.ts",
+    "dev": "bun --watch server.ts"
+  }
+}

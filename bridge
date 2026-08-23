@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Bridge launcher — starts the local client and opens it.
+set -e
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PORT="${BRIDGE_PORT:-4270}"
+if curl -sf "http://localhost:$PORT/api/bootstrap" >/dev/null 2>&1; then
+  echo "Bridge already running on :$PORT"
+else
+  nohup bun "$DIR/server.ts" > "$DIR/bridge.log" 2>&1 &
+  for i in $(seq 1 40); do
+    curl -sf "http://localhost:$PORT/api/bootstrap" >/dev/null 2>&1 && break
+    sleep 0.25
+  done
+fi
+open "http://localhost:$PORT"
+echo "→ http://localhost:$PORT"

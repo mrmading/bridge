@@ -1,0 +1,6 @@
+.cache/
+dist/
+bridge.log
+node_modules/
+.DS_Store
+*.icns.tmp

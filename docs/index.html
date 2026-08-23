@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bridge — a desktop client for Claude Code</title>
+<meta name="description" content="A dark/light desktop client for Claude Code. Reads ~/.claude directly, drives the real CLI, and gives you tabs, full-text search over every transcript, and an editor for your config.">
+<meta property="og:title" content="Bridge — a desktop client for Claude Code">
+<meta property="og:description" content="Keeps the engine, changes the surface. Tabs, search over every transcript, an editor for your config, a live activity log. MIT.">
+<meta property="og:type" content="website">
+<link rel="icon" href="img/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@900&display=swap">
+<link rel="stylesheet" href="style.css">
+
+<div class="glow"></div><div class="grid"></div><div class="grain"></div>
+
+<header class="nav">
+  <a class="brand" href="#top"><img src="img/icon.png" alt=""><span>Bridge</span></a>
+  <nav>
+    <a href="#what">What it is</a>
+    <a href="#how">How it works</a>
+    <a href="#safety">Safety</a>
+    <a class="gh" href="https://github.com/mrmading/bridge">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero" id="top">
+    <div class="wordmark">BRIDGE</div>
+    <h1>A desktop client for Claude&nbsp;Code.</h1>
+    <p class="sub">
+      It reads <code>~/.claude</code> directly and drives the real <code>claude</code> CLI, so your
+      hooks, skills, agents and sessions stay exactly where they are. Not a reimplementation:
+      a session started in Bridge is an ordinary Claude Code session you can pick up in the terminal.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/mrmading/bridge">Get it on GitHub</a>
+      <code class="btn code">git clone https://github.com/mrmading/bridge</code>
+    </div>
+    <p class="meta">MIT · Bun + vanilla JS · a native macOS app in one Swift file · no Electron</p>
+  </section>
+
+  <section class="mock-wrap">
+    <div class="mock">
+      <div class="mock-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="mock-title">Bridge</span></div>
+      <div class="mock-body">
+        <div class="mock-rail"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+        <div class="mock-main">
+          <div class="mock-tabs"><span class="t on"><b class="live"></b>Refactor the booking flow</span><span class="t">Weekly report</span><span class="t plus">+</span></div>
+          <div class="mock-chat">
+            <div class="bubble you">check why the deploy is failing and fix it</div>
+            <div class="tool"><span class="k">$</span> Bash <span class="arg">npm run build 2>&amp;1 | tail -40</span><span class="ok">done</span></div>
+            <div class="tool"><span class="k">✎</span> Edit <span class="arg">vite.config.ts</span><span class="ok">done</span></div>
+            <div class="say"><b>Claude</b> The build broke on a missing <code>base</code> path. Fixed and verified.</div>
+          </div>
+          <div class="mock-composer">Message Claude Code…  /skill  @file<span class="send">→</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="what">
+    <h2>What you get</h2>
+    <div class="cards">
+      <div class="card"><h3>Chat, not a terminal log</h3><p>Streaming text, thinking folded behind one line, and every tool call as a card: Bash shows its output, <code>Edit</code> renders a real ± diff, sub-agents get their own gutter.</p></div>
+      <div class="card"><h3>Sessions are tabs</h3><p>Several at once, each with its own transcript, tokens, cost and working directory. A tab that is working flashes green. Keep typing while it runs and the message queues, like the terminal.</p></div>
+      <div class="card"><h3>⌘F finds anything you ever ran</h3><p>Describe it in your own words. Bridge greps every transcript on the machine, ranks on how many of your terms a session actually covers, and shows what you asked, how it ended, and the matching lines.</p></div>
+      <div class="card"><h3>Your config, editable</h3><p><code>CLAUDE.md</code>, settings, memory files, skills and agents in one place. <code>⌘S</code> writes to disk. Markdown gets a split editor with a live preview.</p></div>
+      <div class="card"><h3>A live activity log</h3><p>What is running now, turns and spend today, and every start, finish, failure, interrupt and file save, each naming the session that caused it.</p></div>
+      <div class="card"><h3>A real macOS app</h3><p><code>./mac/build.sh</code> produces <code>Bridge.app</code>: a Swift shell around a WKWebView that starts the bundled server and shows it in a native window. No Electron, no Chromium.</p></div>
+    </div>
+  </section>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <p class="lead">One Bun file, zero dependencies, three jobs.</p>
+    <ol class="steps">
+      <li><b>Reads <code>~/.claude</code>, read-only.</b> Transcripts are normalized into a flat event list, tool results joined back onto their <code>tool_use_id</code>, usage de-duplicated by request. Metadata is cached by mtime, so hundreds of transcripts list in about 20 ms.</li>
+      <li><b>Spawns the real CLI</b> per turn with <code>--output-format stream-json</code> and <code>--session-id</code> / <code>--resume</code>, streaming stdout to the browser over SSE. Your <code>settings.json</code> env is injected so hooks behave identically.</li>
+      <li><b>Searches with ripgrep</b>, one pass per term in parallel, scoring on term coverage rather than raw hit count.</li>
+    </ol>
+    <pre><code>git clone https://github.com/mrmading/bridge.git
+cd bridge
+./bridge            <span class="c"># http://localhost:4270</span>
+./mac/build.sh      <span class="c"># → dist/Bridge.app</span></code></pre>
+    <p class="lead small">Requires <a href="https://bun.sh">Bun</a> and the <a href="https://claude.com/claude-code">claude CLI</a>.</p>
+  </section>
+
+  <section id="safety">
+    <h2>Safety</h2>
+    <p class="lead">Bridge does not expose your machine.</p>
+    <p>Every file API is confined to the folders you add in the Directory panel, and inside those it
+    still refuses anything matching <code>.ssh</code>, <code>.aws</code>, <code>.gnupg</code>,
+    <code>.credentials</code>, <code>.env*</code>, <code>*.pem</code> or <code>id_rsa</code> — reads
+    and writes alike. Anything outside says so and offers to add the folder. The composer defaults to
+    <code>acceptEdits</code>; <code>bypassPermissions</code> has to be chosen explicitly. The server
+    binds to localhost only.</p>
+  </section>
+
+  <footer>
+    <span>MIT licensed</span><span>·</span>
+    <a href="https://github.com/mrmading/bridge">github.com/mrmading/bridge</a><span>·</span>
+    <span>Not affiliated with Anthropic</span>
+  </footer>
+</main>
