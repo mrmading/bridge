@@ -83,6 +83,13 @@ h2{font-size:clamp(22px,3vw,30px);letter-spacing:-.01em;margin-bottom:10px;font-
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px;margin-top:26px}
 .card{border:1px solid var(--line);border-radius:12px;padding:20px;background:rgba(17,20,27,.7);backdrop-filter:blur(8px);position:relative;overflow:hidden}
 .card::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,rgba(74,168,255,.75),transparent);opacity:.5}
+.ic{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;margin-bottom:14px;
+  color:var(--accent);background:rgba(74,168,255,.10);border:1px solid rgba(74,168,255,.22);
+  box-shadow:0 0 22px rgba(74,168,255,.14)}
+.ic svg{width:19px;height:19px}
+.card:hover .ic{background:rgba(74,168,255,.16);box-shadow:0 0 28px rgba(74,168,255,.22)}
+.card{transition:.15s}
+.card:hover{border-color:var(--line2);transform:translateY(-2px)}
 .card h3{font-size:15.5px;margin-bottom:8px;font-weight:640}
 .card p{color:var(--muted);font-size:14px}
 .steps{margin:0 0 26px 20px;color:var(--muted);display:flex;flex-direction:column;gap:12px}

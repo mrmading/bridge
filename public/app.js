@@ -334,6 +334,20 @@ async function openSessionIn(key, id, path, title) {
   if (r.meta.title) t.title = r.meta.title;
   paint(); scrollDown(true);
 }
+/** ask for the folder this session should run in */
+function pickCwd() {
+  const dirs = S.roots.concat(S.recent.map((r) => r.projectPath).filter(Boolean));
+  const uniq = dirs.filter((d, i) => d && dirs.indexOf(d) === i).slice(0, 12);
+  const pick = prompt(
+    "Working directory — the folder Claude Code runs in for this session.\n" +
+    "Everything it reads, writes and runs happens there.\n\n" +
+    uniq.map((d, i) => (i + 1) + ". " + d).join("\n") +
+    "\n\nType a number, or paste a path:", (T() && T().path) || "");
+  if (!pick) return;
+  const n = parseInt(pick, 10);
+  setCwd(n >= 1 && n <= uniq.length ? uniq[n - 1] : pick.trim());
+}
+
 /** point the current session at a directory */
 function setCwd(path) {
   S.cwd = path;
@@ -347,7 +361,7 @@ function setCwd(path) {
 /* ───────────────────────────── views ──────────────────────────── */
 const GROUPS = ["Core", "Memory", "Skills"];
 const RAIL = [
-  { id: "chat", label: "Sessions", icon: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" },
+  { id: "chat", label: "Work sessions", icon: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" },
   { id: "activity", label: "Activity", icon: "M3 12h4l3 8 4-16 3 8h4" },
   { id: "agents", label: "Agents", icon: "M12 2a5 5 0 0 1 5 5v2a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5zM4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" },
   { id: "files", label: "Directory", icon: "M3 5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" },
@@ -694,8 +708,15 @@ function renderTop() {
   const chat = S.view === "chat";
   const label = S.view === "files" ? (S.dir ? S.dir.path.split("/").pop() : "Directory") : S.view === "agents" ? "Agents" : S.view === "activity" ? "Activity" : "Configs";
   $("#crumbTitle").textContent = chat ? (t ? tabTitle(t) : "Bridge") : c ? c.title : label;
-  $("#crumbPath").textContent = chat ? (t ? short(t.path, 40) : "")
-    : c ? short(c.path, 44) : S.view === "files" && S.dir ? short(S.dir.path, 44) : "";
+  const cp = $("#crumbPath");
+  if (chat && t) {
+    cp.innerHTML = '<span class="cwd-lab">Working directory:</span> <button class="cwd-pick" title="Change the folder this session runs in">' +
+      esc(short(t.path, 40)) + " ⌄</button>";
+    const btn = cp.querySelector(".cwd-pick");
+    if (btn) btn.onclick = pickCwd;
+  } else {
+    cp.textContent = c ? short(c.path, 44) : S.view === "files" && S.dir ? short(S.dir.path, 44) : "";
+  }
   $("#cwdChip").textContent = "⌂ " + (t ? t.name : "~") + " ⌄";
   $("#cwdChip").title = "Working directory — click to change";
   const dark = document.documentElement.dataset.theme === "dark";
@@ -1130,14 +1151,7 @@ function toggleTheme() {
   $("#recents").onclick = (e) => e.stopPropagation();
   document.addEventListener("click", () => toggleRecents(false));
   $("#cwdChip").style.cursor = "pointer";
-  $("#cwdChip").onclick = () => {
-    const dirs = S.roots.concat(S.recent.map((r) => r.projectPath).filter(Boolean));
-    const uniq = dirs.filter((d, i) => d && dirs.indexOf(d) === i).slice(0, 12);
-    const pick = prompt("Working directory for this session:\n\n" + uniq.map((d, i) => (i + 1) + ". " + d).join("\n") + "\n\nType a number or a path:", (T() && T().path) || "");
-    if (!pick) return;
-    const n = parseInt(pick, 10);
-    setCwd(n >= 1 && n <= uniq.length ? uniq[n - 1] : pick.trim());
-  };
+  $("#cwdChip").onclick = pickCwd;
   $("#finderClose").onclick = closeFinder;
   let findT;
   $("#finderInput").oninput = () => { clearTimeout(findT); findT = setTimeout(runFind, 350); };
