@@ -17,17 +17,19 @@ The repo, not the landing page. HN trusts a repo more, and the README is the pit
 ## Title
 
 ```
-Show HN: Bridge – a desktop client for Claude Code that searches every past session
+Show HN: Bridge – a Mac client for Claude Code that searches every past session
 ```
 
-76 characters, under the 80 limit. It states what it is, not why it is good, so a moderator has no
-reason to rewrite it.
+79 characters. HN truncates at 80, so this is the ceiling — count before you paste. It states what
+it is, not why it is good, so a moderator has no reason to rewrite it, and it names the wedge
+(search) rather than the category (client).
 
-**Alternates, if the first reads long:**
+**Alternates, all under 80:**
 
 ```
-Show HN: Bridge – a Mac client for Claude Code with search over every transcript
-Show HN: I built a desktop client for Claude Code that greps all my old sessions
+Show HN: Bridge – a desktop client for Claude Code, with full transcript search   (79)
+Show HN: Bridge – a Mac client for Claude Code with search over every transcript  (80)
+Show HN: Bridge – a desktop client for Claude Code with search over all sessions  (80)
 ```
 
 **Do not use:** "the best", "finally", "beautiful", "supercharge", or any question form. And never
