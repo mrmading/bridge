@@ -1,6 +1,8 @@
 .cache/
 dist/
-bridge.log
 node_modules/
 .DS_Store
 *.icns.tmp
+*.log
+demo-attach.*
+Plans/
