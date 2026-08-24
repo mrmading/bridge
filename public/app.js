@@ -41,17 +41,18 @@ const HELP = {
     auto: "Claude decides what is safe to run and asks only when unsure",
     plan: "read-only: explores and proposes a plan, changes nothing",
     bypassPermissions: "never asks, runs everything. Only in folders you trust",
-    manual: "asks before every edit and every command",
+    manual: "asks you before every edit and every command",
     default: "asks before every edit and every command",
     dontAsk: "never prompts; anything not pre-allowed is refused instead of asked",
   },
   effort: {
-    "": "default effort",
-    low: "quick answers, minimal thinking",
+    "": "your default",
+    low: "quick, minimal thinking",
     medium: "balanced",
-    high: "thinks longer, better on multi-step work",
-    xhigh: "very thorough, noticeably slower",
-    max: "maximum reasoning budget, slowest",
+    high: "thinks longer, multi-step work",
+    xhigh: "very thorough, slower",
+    max: "maximum budget, slowest",
+    ultracode: "max effort plus multi-agent orchestration: Claude Code fans the task out to a team of agents. Slowest, most thorough, most expensive",
   },
   agent: { "": "plain Claude Code with your CLAUDE.md and hooks" },
 };
@@ -175,7 +176,7 @@ function renderMsg(m) {
   if (m.kind === "user")
     return '<div class="msg user' + (m.queued ? " queued" : "") + '"><div class="av u">' + esc(((S.boot && S.boot.user) || "You").slice(0, 1).toUpperCase()) + "</div>" +
       '<div class="msg-body"><div class="msg-name">You <span class="ts">' + fmtTime(m.ts) + "</span>" +
-      (m.queued ? '<span class="tag">queued</span>' : "") + "</div>" +
+      (m.queued ? '<span class="tag">queued</span>' : "") + (m.ultra ? '<span class="tag ultra">ultracode</span>' : "") + "</div>" +
       '<div class="bubble prose">' + md(m.text) + "</div></div></div>";
   if (m.kind === "assistant" || m.kind === "agent_text") {
     const side = m.kind === "agent_text";
@@ -921,7 +922,7 @@ async function send() {
   const ats = S.attachments;
   if ((!text && !ats.length) || !tab) return;
   ta.value = ""; ta.style.height = "auto";
-  const msg = { kind: "user", text: text, attachments: ats.map((a) => ({ name: a.name, path: a.path, kind: a.kind, mediaType: a.mediaType, data: a.data, error: a.error })), ts: Date.now() };
+  const msg = { kind: "user", text: text, ultra: !!(window.BridgeEffort && window.BridgeEffort.ultra), attachments: ats.map((a) => ({ name: a.name, path: a.path, kind: a.kind, mediaType: a.mediaType, data: a.data, error: a.error })), ts: Date.now() };
   S.attachments = []; renderAttachments();
   tab.msgs.push(msg);
   // a turn already running is no reason to stop typing: queue it, same as the terminal
@@ -942,8 +943,9 @@ async function runTurn(tab, text, attachments) {
   if (T() === tab) renderStream();
   renderTabs(); sendBtn(); scrollDown(true);
 
+  const ultra = !!(window.BridgeEffort && window.BridgeEffort.ultra);
   const body = {
-    prompt: text, cwd: tab.path,
+    prompt: (ultra ? "ultracode " : "") + text, cwd: tab.path,   // the keyword switches on multi-agent orchestration in the CLI
     resume: tab.live || tab.id || null,
     model: $("#selModel").value || null,
     permissionMode: $("#selPerm").value,
@@ -1112,6 +1114,117 @@ async function runTurn(tab, text, attachments) {
     if (T() === tab) renderStream();
     return runTurn(tab, next.text, next.attachments || []);
   }
+}
+/* ── segmented dial: folded to the chosen rung, unfolds as an overlay ──
+   Generic; the hidden <select> stays in sync so older code reading .value
+   keeps working. Effort and Guardrails are both instances of it. */
+function makeDial(o) {
+  const dial = $(o.dial), track = $(o.track), sel = $(o.select), thumb = track.querySelector(".ed-thumb");
+  let closeT = 0;
+  let cur = localStorage[o.key];
+  if (!o.tiers.some((t) => t.v === cur)) cur = o.initial;
+  track.querySelectorAll(".ed-p,.ed-h").forEach((n) => n.remove());
+  if (o.name) { const h = document.createElement("span"); h.className = "ed-h"; h.textContent = o.name; track.appendChild(h); }
+  o.tiers.forEach((t) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "ed-p" + (t.cls ? " " + t.cls : ""); b.dataset.v = t.v; b.setAttribute("role", "radio");
+    b.title = t.title || (t.label + ": " + (t.help || ""));
+    b.innerHTML = esc(t.label) + (t.extra || "") + (t.help ? '<span class="ed-help">' + esc(t.help) + "</span>" : "");
+    // a click is a decision: choose and fold at once, no waiting for the pointer to leave
+    b.onclick = () => { choose(t.v, true); clearTimeout(closeT); setOpen(false); };
+    track.appendChild(b);
+  });
+  const place = () => {
+    if (!dial.classList.contains("open")) { dial.style.minWidth = ""; dial.style.minWidth = dial.offsetWidth + "px"; }
+    const b = track.querySelector('.ed-p[data-v="' + CSS.escape(cur) + '"]');
+    if (!b || !b.offsetWidth) return;
+    thumb.style.left = b.offsetLeft + "px"; thumb.style.top = b.offsetTop + "px";
+    thumb.style.width = b.offsetWidth + "px"; thumb.style.height = b.offsetHeight + "px";
+  };
+  // place() runs synchronously (forces layout with the new class) and again next frame
+  const setOpen = (on) => {
+    if (dial.classList.contains("open") === on) return;
+    dial.classList.add("snap");                 // no slide between folded and open geometry
+    dial.classList.toggle("open", on); place();
+    // keep transitions off until the frame after the ladder has fully laid out
+    requestAnimationFrame(() => { place(); requestAnimationFrame(() => dial.classList.remove("snap")); });
+  };
+  // hover intent: crossing the gap between chip and ladder must not close it
+  const openSoon = () => { clearTimeout(closeT); setOpen(true); };
+  const closeSoon = () => { clearTimeout(closeT); closeT = setTimeout(() => setOpen(false), 220); };
+  const choose = (v, byUser) => {
+    const was = cur; cur = v;
+    localStorage[o.key] = v;
+    sel.value = o.toSelect ? o.toSelect(v) : v;
+    sel.dispatchEvent(new Event("change"));
+    track.querySelectorAll(".ed-p").forEach((b) => b.setAttribute("aria-checked", b.dataset.v === cur ? "true" : "false"));
+    if (o.onChoose) o.onChoose(v, was, byUser);
+    requestAnimationFrame(place);
+  };
+  if (o.ascending) dial.classList.add("asc");
+  dial.onkeydown = (e) => {
+    const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const i = o.tiers.findIndex((t) => t.v === cur), j = Math.max(0, Math.min(o.tiers.length - 1, i + step));
+    choose(o.tiers[j].v, true);
+    const b = track.querySelector('.ed-p[data-v="' + CSS.escape(o.tiers[j].v) + '"]'); if (b) b.focus();
+  };
+  addEventListener("resize", place);
+  dial.addEventListener("pointerenter", openSoon);
+  dial.addEventListener("pointerleave", closeSoon);
+  dial.addEventListener("focusin", openSoon);
+  dial.addEventListener("focusout", (e) => { if (!dial.contains(e.relatedTarget)) closeSoon(); });
+  choose(cur, false);
+  return { get value() { return cur; }, dial };
+}
+
+/* effort: auto … max, then ULTRACODE "God mode" (max + the multi-agent keyword) */
+function initEffortDial(efforts) {
+  const tiers = efforts.map((e) => ({ v: e, label: e === "" ? "auto" : e === "medium" ? "med" : e, help: HELP.effort[e] }))
+    .concat([{ v: "ultracode", label: "ULTRA", cls: "ultra", extra: '<span class="ed-god">· GOD MODE</span>', help: "max + a team of agents", title: "ULTRACODE — God mode: " + HELP.effort.ultracode }]);
+  const d = makeDial({
+    name: "Effort — how long it thinks", ascending: true, dial: "#labEffort", track: "#edTrack", select: "#selEffort", key: "bridgeEffort", initial: "", tiers,
+    toSelect: (v) => (v === "ultracode" ? "max" : v),
+    onChoose: (v, was, byUser) => {
+      const god = v === "ultracode";
+      $("#labEffort").classList.toggle("god", god);
+      $("#composer").classList.toggle("god", god);
+      $("#btnSend").classList.toggle("god", god);
+      if (byUser && god && was !== "ultracode" && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        const w = document.createElement("span"); w.className = "ed-wave"; $("#labEffort").appendChild(w);
+        w.addEventListener("animationend", () => w.remove());
+        toast("God mode armed — every message runs as a team of agents");
+      }
+    },
+  });
+  window.BridgeEffort = { get value() { return d.value === "ultracode" ? "max" : d.value; }, get ultra() { return d.value === "ultracode"; } };
+}
+
+/* model: default + whatever the CLI reports */
+function initModelDial(models) {
+  const tiers = [{ v: "", label: "default", help: HELP.model[""] }].concat(models.map((m) => ({ v: m, label: m, help: HELP.model[m] || "" })));
+  makeDial({ name: "Model — which Claude answers", dial: "#labModel", track: "#modelTrack", select: "#selModel", key: "bridgeModel", initial: "", tiers });
+}
+/* agent: none + your custom agents, description as the help line */
+function initAgentDial(agents) {
+  const tiers = [{ v: "", label: "none", help: "plain Claude Code" }]
+    .concat(agents.map((a) => ({ v: a.name, label: a.name, help: a.description ? String(a.description).replace(/\s+/g, " ").slice(0, 70) : "" })));
+  makeDial({ name: "Agent — run as a custom agent", dial: "#labAgent", track: "#agentTrack", select: "#selAgent", key: "bridgeAgent", initial: "", tiers });
+}
+/* guardrails: four rungs in plain words, mapped onto the CLI's permission modes */
+const GUARDRAILS = [
+  { v: "plan", label: "plan", help: "read-only, proposes a plan" },
+  { v: "manual", label: "ask first", help: "asks before every edit and command" },
+  { v: "acceptEdits", label: "edit freely", help: "edits alone, asks before commands" },
+  { v: "bypassPermissions", label: "no limits", cls: "danger", help: "never asks, runs everything" },
+];
+function initPermDial(modes) {
+  const tiers = GUARDRAILS.filter((g) => modes.indexOf(g.v) >= 0);
+  makeDial({
+    name: "Mode — what it may do without asking", ascending: true, dial: "#labPerm", track: "#permTrack", select: "#selPerm", key: "bridgePerm", initial: "acceptEdits", tiers,
+    onChoose: (v) => $("#labPerm").classList.toggle("danger", v === "bypassPermissions"),
+  });
 }
 function sendBtn() {
   // Send never turns into Stop: a running turn is no reason to stop typing, the
@@ -1303,8 +1416,13 @@ function toggleTheme() {
   const opt = (v, label, help, sel) => '<option value="' + esc(v) + '"' + (sel ? " selected" : "") + (help ? ' title="' + esc(help) + '"' : "") + ">" + esc(label) + "</option>";
   $("#selModel").innerHTML = opt("", "model", HELP.model[""]) + b.models.map((m) => opt(m, m, HELP.model[m])).join("");
   $("#selPerm").innerHTML = b.permissionModes.map((m) => opt(m, m, HELP.perm[m], m === "acceptEdits")).join("");
-  $("#selEffort").innerHTML = b.efforts.map((e) => opt(e, e || "effort", HELP.effort[e])).join("");
+  initPermDial(b.permissionModes);
+  $("#selEffort").innerHTML = b.efforts.map((e) => opt(e, e || "effort", HELP.effort[e])).join("") + opt("ultracode", "ULTRACODE", HELP.effort.ultracode);
+  initEffortDial(b.efforts);
   $("#selAgent").innerHTML = opt("", "no agent", HELP.agent[""]) + agents.map((a) => opt(a.name, a.name, a.description ? String(a.description).slice(0, 160) : "")).join("");
+  // Model and Agent are dials too (after the selects have options, since the dial sets sel.value)
+  initModelDial(b.models);
+  initAgentDial(agents);
   // the label's tooltip explains the control, then what the current choice means
   const explain = (labId, selId, group, head) => {
     const lab = $("#" + labId), sel = $("#" + selId);
@@ -1315,10 +1433,10 @@ function toggleTheme() {
     };
     sel.addEventListener("change", upd); upd();
   };
-  explain("labModel", "selModel", "model", "Model — which Claude answers this turn. Leave blank to use the default from your settings.json.");
-  explain("labPerm", "selPerm", "perm", "Permission mode — how much Claude Code may do without asking you first.");
-  explain("labEffort", "selEffort", "effort", "Effort — how long the model thinks before it answers. Higher is slower and more thorough; blank uses the default.");
-  explain("labAgent", "selAgent", "agent", "Agent — run this turn as one of your custom agents (its own instructions, tools and model) instead of plain Claude Code.");
+  explain("labModel", "selModel", "model", "Model — which Claude answers this turn. Default uses your settings.json.");
+  explain("labPerm", "selPerm", "perm", "Guardrails — how much Claude Code may do without asking you first. Left is safest, right is fastest.");
+  explain("labEffort", "selEffort", "effort", "Effort — how long the model thinks before it answers. Higher is slower and more thorough; auto uses the default. ULTRACODE is God mode: max effort plus a team of agents.");
+  explain("labAgent", "selAgent", "agent", "Agent — run this turn as one of your custom agents (its own instructions, tools and model). None = plain Claude Code.");
 
   if (S.roots[0]) await selectDir(S.roots[0]);
   loadNotes();

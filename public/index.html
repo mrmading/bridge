@@ -61,10 +61,22 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
         <div class="composer-bar">
           <button class="mini" id="btnAttach" title="Attach files — drop them here, paste from the clipboard, or click to pick. Images go to the model as images; text files are inlined (up to 200 KB).">⎗</button>
           <input type="file" id="fileInput" multiple hidden>
-          <label class="mini" id="labModel" title="Model">◈ <select id="selModel"></select></label>
-          <label class="mini" id="labPerm" title="Permission mode">⚙ <select id="selPerm"></select></label>
-          <label class="mini" id="labEffort" title="Effort">⚡ <select id="selEffort"></select></label>
-          <label class="mini" id="labAgent" title="Agent">◇ <select id="selAgent"></select></label>
+          <div class="mini edial" id="labModel" role="radiogroup" aria-label="Model" title="Model">
+            <span class="ed-ic">◈</span><span class="ed-name">Model</span><div class="ed-track" id="modelTrack"><span class="ed-thumb"></span></div>
+            <select id="selModel" hidden></select>
+          </div>
+          <div class="mini edial" id="labPerm" role="radiogroup" aria-label="Guardrails" title="Guardrails">
+            <span class="ed-ic">⚙</span><span class="ed-name">Mode</span><div class="ed-track" id="permTrack"><span class="ed-thumb"></span></div>
+            <select id="selPerm" hidden></select>
+          </div>
+          <div class="mini edial" id="labEffort" role="radiogroup" aria-label="Effort" title="Effort">
+            <span class="ed-ic">⚡</span><span class="ed-name">Effort</span><div class="ed-track" id="edTrack"><span class="ed-thumb"></span></div>
+            <select id="selEffort" hidden></select>
+          </div>
+          <div class="mini edial" id="labAgent" role="radiogroup" aria-label="Agent" title="Agent">
+            <span class="ed-ic">◇</span><span class="ed-name">Agent</span><div class="ed-track" id="agentTrack"><span class="ed-thumb"></span></div>
+            <select id="selAgent" hidden></select>
+          </div>
           <span class="mini" id="cwdChip" title="Working directory — the folder Claude Code runs in for this session. Click to change it."></span>
           <button class="cancel" id="btnCancel" hidden title="Stop the running turn (same as Ctrl+C in the terminal). Anything you queued still goes out afterwards.">cancel</button>
           <button class="send" id="btnSend" title="Send (↵). Sending while a turn is running queues the message — it goes the moment the current turn finishes.">

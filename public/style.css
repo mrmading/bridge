@@ -592,3 +592,93 @@ body::after{
 .fm-p{font-family:var(--mono);font-size:11px;color:var(--fg-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fmenu-sep{height:1px;background:var(--border);margin:5px 4px}
 .fmenu-i.act .fm-n{color:var(--accent)}
+.tag.ultra{background:linear-gradient(90deg,var(--accent),var(--think));color:#fff;letter-spacing:.03em}
+
+/* ── effort dial ─────────────────────────────────────────────────────── */
+@property --ed-a { syntax:"<angle>"; inherits:false; initial-value:0deg; }
+.edial{position:relative;gap:6px;padding:0 5px 0 8px;border-radius:8px;isolation:isolate}
+.edial .ed-ic{font-size:11px;color:var(--fg-muted)}
+.ed-track{position:relative;display:inline-flex;align-items:center;gap:1px;height:20px;padding:2px;border-radius:6px;background:var(--bg-sunken);border:1px solid var(--border)}
+.ed-thumb{position:absolute;top:2px;left:2px;height:16px;width:0;border-radius:5px;background:var(--bg-raised);box-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 1px var(--border-strong);transition:left .28s cubic-bezier(.2,.9,.25,1.15),top .28s cubic-bezier(.2,.9,.25,1.15),width .28s cubic-bezier(.2,.9,.25,1.15),height .28s cubic-bezier(.2,.9,.25,1.15);z-index:0}
+.ed-name{font-size:11px;color:var(--fg-faint);margin-right:1px}
+.ed-h{display:none;font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--fg-faint);padding:4px 9px 6px}
+.ed-p .ed-help{display:none}
+.ed-p{position:relative;z-index:1;height:16px;padding:0 6px;border-radius:5px;font-size:10.5px;font-weight:600;letter-spacing:.01em;color:var(--fg-faint);background:none;border:none;cursor:pointer;font-family:var(--sans);white-space:nowrap;transition:color .18s}
+.ed-p:hover{color:var(--fg)}
+.ed-p[aria-checked="true"]{color:var(--fg)}
+.ed-p:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.ed-p.ultra{font-family:var(--mono);letter-spacing:.06em;font-weight:700}
+.ed-p.ultra .ed-god{display:none;margin-left:5px;font-family:var(--sans);font-weight:600;letter-spacing:.04em;opacity:.85}
+/* the neon comet: a masked conic ring that rotates around the control */
+.edial.god{color:var(--fg)}
+.edial.god .ed-track{border-color:transparent;background:color-mix(in srgb,var(--accent) 8%,var(--bg-sunken))}
+.edial.god::before,.edial.god::after{content:"";position:absolute;inset:-1px;border-radius:9px;padding:1.5px;pointer-events:none;
+  background:conic-gradient(from var(--ed-a),transparent 0 62%,color-mix(in srgb,var(--think) 70%,transparent) 78%,var(--accent2) 88%,#fff 94%,var(--accent) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+  animation:ed-orbit 2.4s linear infinite}
+.edial.god::after{inset:-3px;padding:3.5px;filter:blur(5px);opacity:.75;z-index:-1}
+@keyframes ed-orbit{to{--ed-a:360deg}}
+.edial.god .ed-thumb{background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 35%,var(--bg-raised)),color-mix(in srgb,var(--think) 35%,var(--bg-raised)));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 55%,transparent),0 0 10px color-mix(in srgb,var(--accent) 45%,transparent)}
+.edial{--ed-hi:var(--think)}
+[data-theme="dark"] .edial{--ed-hi:#fff}
+/* collapsed to the chosen tier; the ladder unfolds as an overlay so the bar never reflows */
+.edial:not(.open) .ed-p:not([aria-checked="true"]){display:none}
+.edial.open .ed-track{position:absolute;left:-1px;bottom:calc(100% + 8px);top:auto;z-index:40;flex-direction:column;align-items:stretch;height:auto;min-width:300px;padding:5px;gap:2px;border-radius:10px;background:var(--bg-raised);border-color:var(--border-strong);box-shadow:var(--shadow)}
+.edial.open .ed-h{display:block}
+.edial.open .ed-p{display:flex;align-items:center;justify-content:flex-start;height:26px;padding:0 9px;border-radius:7px;text-align:left}
+.edial.open .ed-p .ed-help{display:inline;margin-left:auto;padding-left:14px;font-family:var(--sans);font-weight:400;letter-spacing:0;font-size:10.5px;color:var(--fg-faint);white-space:nowrap}
+.edial.open .ed-p[aria-checked="true"] .ed-help{color:var(--fg-muted)}
+.edial.open .ed-p.danger .ed-help{color:color-mix(in srgb,var(--err) 70%,var(--fg-faint))}
+.edial.open.god .ed-track{background:color-mix(in srgb,var(--accent) 10%,var(--bg-raised))}
+/* opening/closing snaps the highlight into place; only picks inside the ladder animate */
+.edial.snap .ed-thumb{transition:none}
+.edial.god .ed-p.ultra{color:transparent;background:linear-gradient(90deg,var(--accent2),var(--ed-hi) 45%,var(--think) 80%,var(--accent2));background-size:220% 100%;-webkit-background-clip:text;background-clip:text;animation:ed-shimmer 2.2s linear infinite}
+.edial.god .ed-p.ultra .ed-god{display:inline}
+.edial.god .ed-ic{color:var(--accent2);text-shadow:0 0 8px var(--accent2);animation:ed-flicker 3s ease-in-out infinite}
+@keyframes ed-shimmer{to{background-position:-220% 0}}
+@keyframes ed-flicker{0%,100%{opacity:1}50%{opacity:.55}}
+/* one-shot engage: shockwave from the pill */
+.ed-wave{position:absolute;inset:-2px;border-radius:10px;border:1.5px solid var(--accent2);pointer-events:none;animation:ed-wave .7s cubic-bezier(.2,.8,.3,1) forwards;box-shadow:0 0 18px var(--accent2)}
+@keyframes ed-wave{from{opacity:.95;transform:scale(1)}to{opacity:0;transform:scale(1.9)}}
+/* the composer catches the light */
+.composer.god{border-color:color-mix(in srgb,var(--accent) 45%,var(--border-strong));animation:ed-breathe 3.2s ease-in-out infinite}
+.composer.god::before{opacity:1;background:linear-gradient(90deg,transparent,var(--accent2),var(--think),transparent)}
+@keyframes ed-breathe{0%,100%{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 20%,transparent),0 0 22px color-mix(in srgb,var(--accent) 12%,transparent),var(--shadow)}50%{box-shadow:0 0 0 1px color-mix(in srgb,var(--think) 35%,transparent),0 0 34px color-mix(in srgb,var(--think) 22%,transparent),var(--shadow)}}
+.send.god{background:linear-gradient(135deg,var(--accent),var(--think));box-shadow:0 0 14px color-mix(in srgb,var(--accent) 50%,transparent)}
+@media (prefers-reduced-motion:reduce){
+  .edial.god::before,.edial.god::after,.edial.god .ed-p.ultra,.edial.god .ed-ic,.composer.god{animation:none}
+  .ed-wave{display:none}.ed-thumb{transition:none}
+}
+
+/* guardrails dial: the "no limits" rung reads as a warning */
+.ed-p.danger[aria-checked="true"]{color:var(--err)}
+.edial.danger .ed-thumb{box-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 1px color-mix(in srgb,var(--err) 60%,transparent)}
+.edial.danger .ed-ic{color:var(--err)}
+
+.edial.open{z-index:50}
+
+/* long ladders (agents) scroll; the folder menu wears the same clothes */
+.edial.open .ed-track{max-height:min(58vh,520px);overflow-y:auto}
+.edial.open .ed-p .ed-help{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.fmenu{padding:5px;border-radius:10px}
+.fmenu-h{font-size:10px;letter-spacing:.07em;padding:4px 9px 6px}
+.fmenu-i{height:26px;padding:0 9px;border-radius:7px}
+
+.ed-h{position:relative;z-index:1}
+/* the ladder hugs the chip so the pointer never leaves the dial on the way up */
+.edial.open .ed-track{bottom:calc(100% + 2px)}
+.edial.open::before{content:"";position:absolute;left:0;right:0;bottom:100%;height:14px}
+.edial.god.open::before{height:auto}
+
+/* scales read bottom-up: the strongest rung sits at the top of the ladder */
+.edial.open.asc .ed-track{flex-direction:column-reverse}
+.edial.open.asc .ed-h{order:99}
+/* ULTRA is the star of the ladder even when not armed */
+.edial.open .ed-p.ultra{color:transparent;background:linear-gradient(90deg,var(--accent2),var(--ed-hi) 45%,var(--think) 80%,var(--accent2));background-size:220% 100%;-webkit-background-clip:text;background-clip:text;animation:ed-shimmer 2.2s linear infinite}
+.edial.open .ed-p.ultra .ed-god{display:inline}
+.edial.open .ed-p.ultra .ed-help{color:var(--accent2);-webkit-text-fill-color:var(--accent2)}
+.edial.open .ed-p.ultra::before{content:"";position:absolute;inset:0;border-radius:7px;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent),0 0 12px color-mix(in srgb,var(--accent) 18%,transparent);pointer-events:none}
+@media (prefers-reduced-motion:reduce){.edial.open .ed-p.ultra{animation:none}}
+
+.edial.open .ed-p{flex:none}
+.edial.open .ed-track{max-height:min(70vh,560px)}
