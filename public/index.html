@@ -59,20 +59,21 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
         <div class="attachments" id="attachments"></div>
         <textarea id="input" rows="1" placeholder="Message Claude Code…  /skill  @file" spellcheck="false"></textarea>
         <div class="composer-bar">
-          <button class="mini" id="btnAttach" title="Attach files (drop, paste, or click)">⎗</button>
+          <button class="mini" id="btnAttach" title="Attach files — drop them here, paste from the clipboard, or click to pick. Images go to the model as images; text files are inlined (up to 200 KB).">⎗</button>
           <input type="file" id="fileInput" multiple hidden>
-          <label class="mini" title="Model">◈ <select id="selModel"></select></label>
-          <label class="mini" title="Permission mode">⚙ <select id="selPerm"></select></label>
-          <label class="mini" title="Effort">⚡ <select id="selEffort"></select></label>
-          <label class="mini" title="Agent">◇ <select id="selAgent"></select></label>
-          <span class="mini" id="cwdChip" title="Working directory"></span>
-          <button class="send" id="btnSend" title="Send (↵)">
+          <label class="mini" id="labModel" title="Model">◈ <select id="selModel"></select></label>
+          <label class="mini" id="labPerm" title="Permission mode">⚙ <select id="selPerm"></select></label>
+          <label class="mini" id="labEffort" title="Effort">⚡ <select id="selEffort"></select></label>
+          <label class="mini" id="labAgent" title="Agent">◇ <select id="selAgent"></select></label>
+          <span class="mini" id="cwdChip" title="Working directory — the folder Claude Code runs in for this session. Click to change it."></span>
+          <button class="cancel" id="btnCancel" hidden title="Stop the running turn (same as Ctrl+C in the terminal). Anything you queued still goes out afterwards.">cancel</button>
+          <button class="send" id="btnSend" title="Send (↵). Sending while a turn is running queues the message — it goes the moment the current turn finishes.">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </button>
         </div>
       </div>
       <div class="hintline">
-        <span><kbd>↵</kbd> send</span><span><kbd>⇧↵</kbd> newline</span><span><kbd>/</kbd> skills</span><span><kbd>@</kbd> files</span>
+        <span title="Send while a turn is running and the message queues behind it"><kbd>↵</kbd> send / queue</span><span><kbd>⇧↵</kbd> newline</span><span><kbd>/</kbd> skills</span><span><kbd>@</kbd> files</span>
         <span><kbd>⌘K</kbd> palette</span><span id="costHint"></span>
       </div>
       </div>

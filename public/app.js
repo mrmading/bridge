@@ -27,6 +27,34 @@ const S = {
 };
 /** the active session tab */
 const T = () => S.tabs[S.active] || null;
+/** plain-language help for the composer options (shown as tooltips) */
+const HELP = {
+  model: {
+    "": "your settings.json default",
+    opus: "deepest reasoning, best for hard design and debugging work",
+    sonnet: "fast and capable, the everyday choice",
+    haiku: "cheapest and fastest, for trivial or mechanical turns",
+    fable: "Anthropic's latest top model",
+  },
+  perm: {
+    acceptEdits: "edits files without asking, still asks before running commands",
+    auto: "Claude decides what is safe to run and asks only when unsure",
+    plan: "read-only: explores and proposes a plan, changes nothing",
+    bypassPermissions: "never asks, runs everything. Only in folders you trust",
+    manual: "asks before every edit and every command",
+    default: "asks before every edit and every command",
+    dontAsk: "never prompts; anything not pre-allowed is refused instead of asked",
+  },
+  effort: {
+    "": "default effort",
+    low: "quick answers, minimal thinking",
+    medium: "balanced",
+    high: "thinks longer, better on multi-step work",
+    xhigh: "very thorough, noticeably slower",
+    max: "maximum reasoning budget, slowest",
+  },
+  agent: { "": "plain Claude Code with your CLAUDE.md and hooks" },
+};
 
 /* ─────────────────────────── markdown ─────────────────────────── */
 function inline(t) {
@@ -157,6 +185,14 @@ function renderMsg(m) {
       '<span class="ts">' + fmtTime(m.ts) + "</span></div>" +
       '<div class="prose">' + md(m.text) + (m.live ? '<span class="typing"></span>' : "") + "</div></div></div>";
   }
+  if (m.kind === "status") {
+    if (m.done) return "";
+    const secs = Math.max(0, Math.round((Date.now() - m.ts) / 1000));
+    return '<div class="msg"><div class="av a">' + esc(name.slice(0, 1).toUpperCase()) + "</div>" +
+      '<div class="msg-body"><div class="msg-name">' + esc(name) + '<span class="ts">' + fmtTime(m.ts) + "</span></div>" +
+      '<div class="prose status-line"><span class="typing"></span> ' + esc(m.text) +
+      (secs >= 2 ? ' <span class="status-secs">' + secs + "s</span>" : "") + "</div></div></div>";
+  }
   if (m.kind === "thinking")
     return '<div class="think ' + (m.open ? "open" : "") + '" data-think><div class="think-h">✦ thinking' +
       '<span style="color:var(--fg-faint);font-weight:400">' + (m.text.length > 60 ? " · " + fmtN(m.text.length) + " chars" : "") + "</span></div>" +
@@ -172,15 +208,24 @@ function renderMsg(m) {
   }
   return "";
 }
+function wireMsgHandlers(root) {
+  // open/closed is written back onto the message so a later rebuild keeps it
+  const persist = (h, cls) => (h.onclick = () => {
+    const open = h.parentElement.classList.toggle("open");
+    const row = h.closest("[data-mi]"), t = T();
+    if (row && t && t.msgs[+row.dataset.mi]) t.msgs[+row.dataset.mi].open = open;
+  });
+  root.querySelectorAll("[data-tool] .tool-h").forEach((h) => persist(h));
+  root.querySelectorAll("[data-think] .think-h").forEach((h) => persist(h));
+  root.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => {
+    navigator.clipboard.writeText(b.parentElement.innerText.replace(/^copy\n?/, "")); toast("Copied");
+  }));
+}
 function renderStream() {
   const t = T();
   const box = $("#streamInner");
-  box.innerHTML = (t && t.msgs.length ? t.msgs.map(renderMsg).join("") : "") || startScreen(t);
-  box.querySelectorAll("[data-tool] .tool-h").forEach((h) => (h.onclick = () => h.parentElement.classList.toggle("open")));
-  box.querySelectorAll("[data-think] .think-h").forEach((h) => (h.onclick = () => h.parentElement.classList.toggle("open")));
-  box.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => {
-    navigator.clipboard.writeText(b.parentElement.innerText.replace(/^copy\n?/, "")); toast("Copied");
-  }));
+  box.innerHTML = (t && t.msgs.length ? t.msgs.map((m, i) => '<div class="mrow" data-mi="' + i + '">' + renderMsg(m) + "</div>").join("") : "") || startScreen(t);
+  wireMsgHandlers(box);
   wireStart(box);
   renderPhases();
 }
@@ -335,18 +380,53 @@ async function openSessionIn(key, id, path, title) {
   if (r.meta.title) t.title = r.meta.title;
   paint(); scrollDown(true);
 }
-/** ask for the folder this session should run in */
-function pickCwd() {
-  const dirs = S.roots.concat(S.recent.map((r) => r.projectPath).filter(Boolean));
-  const uniq = dirs.filter((d, i) => d && dirs.indexOf(d) === i).slice(0, 12);
-  const pick = prompt(
-    "Working directory — the folder Claude Code runs in for this session.\n" +
-    "Everything it reads, writes and runs happens there.\n\n" +
-    uniq.map((d, i) => (i + 1) + ". " + d).join("\n") +
-    "\n\nType a number, or paste a path:", (T() && T().path) || "");
-  if (!pick) return;
-  const n = parseInt(pick, 10);
-  setCwd(n >= 1 && n <= uniq.length ? uniq[n - 1] : pick.trim());
+/** the working-folder menu — anchored to whichever folder button was clicked */
+function pickCwd(ev) {
+  closeFolderMenu();
+  const anchor = ev && ev.currentTarget ? ev.currentTarget : $("#cwdChip");
+  const cur = (T() && T().path) || S.cwd || "";
+  const recent = S.recent.map((r) => r.projectPath).filter(Boolean)
+    .filter((d, i, a) => a.indexOf(d) === i && S.roots.indexOf(d) < 0).slice(0, 8);
+  const row = (d, ic, act) => '<div class="fmenu-i ' + (d === cur ? "cur" : "") + (act ? " act" : "") + '" data-dir="' + esc(d) + '" title="' + esc(d) + '">' +
+    '<span class="fm-ic">' + ic + '</span><span class="fm-n">' + esc(d.split("/").pop() || d) + '</span><span class="fm-p">' + esc(short(d, 48)) + "</span></div>";
+  const m = document.createElement("div");
+  m.className = "fmenu"; m.id = "fmenu";
+  m.innerHTML = '<div class="fmenu-h">Working folder — where Claude Code reads, writes and runs</div>' +
+    (S.roots.length ? '<div class="fmenu-h">Your folders</div>' + S.roots.map((d) => row(d, "⌂")).join("") : "") +
+    (recent.length ? '<div class="fmenu-h">Recent sessions</div>' + recent.map((d) => row(d, "◷")).join("") : "") +
+    '<div class="fmenu-sep"></div><div class="fmenu-i act" data-choose><span class="fm-ic">＋</span><span class="fm-n">Choose another folder…</span>' +
+    '<span class="fm-p">' + (document.documentElement.dataset.native ? "opens a Finder picker" : "type a path") + "</span></div>";
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect(), W = m.offsetWidth, H = m.offsetHeight;
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - W - 8)) + "px";
+  if (r.bottom + H + 8 > innerHeight) m.style.top = Math.max(8, r.top - H - 6) + "px";
+  else m.style.top = (r.bottom + 6) + "px";
+  m.querySelectorAll("[data-dir]").forEach((n) => (n.onclick = () => { closeFolderMenu(); useFolder(n.dataset.dir); }));
+  m.querySelector("[data-choose]").onclick = () => { closeFolderMenu(); chooseFolder(cur); };
+  m.onclick = (e) => e.stopPropagation();
+  setTimeout(() => {
+    document.addEventListener("click", closeFolderMenu, { once: true });
+    document.addEventListener("keydown", escFolderMenu);
+  }, 0);
+}
+function closeFolderMenu() { const m = $("#fmenu"); if (m) m.remove(); document.removeEventListener("keydown", escFolderMenu); }
+function escFolderMenu(e) { if (e.key === "Escape") closeFolderMenu(); }
+/** native Finder picker inside the app, a typed path in a plain browser */
+function chooseFolder(start) {
+  const wk = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.pickFolder;
+  if (wk) { wk.postMessage(start || ""); return; }
+  const v = prompt("Folder Claude Code should work in:", start || "");
+  if (v && v.trim()) useFolder(v.trim());
+}
+window.bridgeFolderPicked = (p) => useFolder(p);
+/** make sure Bridge is allowed to read the folder, then point the session at it */
+async function useFolder(path) {
+  path = String(path || "").replace(/\/+$/, "");
+  if (!path) return;
+  const inside = S.roots.some((r) => path === r || path.indexOf(r + "/") === 0);
+  if (!inside) await setRoots(S.roots.concat([path]));   // the server refuses a cwd outside its roots
+  setCwd(path);
+  toast("Working in " + (path.split("/").pop() || path));
 }
 
 /** point the current session at a directory */
@@ -711,15 +791,16 @@ function renderTop() {
   $("#crumbTitle").textContent = chat ? (t ? tabTitle(t) : "Bridge") : c ? c.title : label;
   const cp = $("#crumbPath");
   if (chat && t) {
-    cp.innerHTML = '<span class="cwd-lab">Working directory:</span> <button class="cwd-pick" title="Change the folder this session runs in">' +
-      esc(short(t.path, 40)) + " ⌄</button>";
+    cp.innerHTML = '<span class="cwd-lab">Working directory:</span> <button class="cwd-pick caret-r" title="Working directory — the folder Claude Code runs in for this session. Click to change it.">' +
+      esc(short(t.path, 40)) + "</button>";
     const btn = cp.querySelector(".cwd-pick");
     if (btn) btn.onclick = pickCwd;
   } else {
     cp.textContent = c ? short(c.path, 44) : S.view === "files" && S.dir ? short(S.dir.path, 44) : "";
   }
-  $("#cwdChip").textContent = "⌂ " + (t ? t.name : "~") + " ⌄";
-  $("#cwdChip").title = "Working directory — click to change";
+  $("#cwdChip").textContent = "⌂ " + (t ? t.name : "~");
+  $("#cwdChip").classList.add("caret-r");
+  $("#cwdChip").title = "Working directory — the folder Claude Code runs in for this session. Click to change it.";
   const dark = document.documentElement.dataset.theme === "dark";
   const ti = $("#themeIc");
   if (ti) { ti.textContent = dark ? "☀" : "☾"; }
@@ -767,6 +848,8 @@ function paint() { renderRail(); renderTabs(); renderPanel(); renderMain(); rend
 /* ─────────────────────────── actions ──────────────────────────── */
 
 async function addRoot() {
+  const wk = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.pickFolder;
+  if (wk) { window.bridgeFolderPicked = async (p) => { await setRoots(S.roots.concat([String(p).replace(/\/+$/, "")])); window.bridgeFolderPicked = useFolder; }; wk.postMessage(S.roots[0] || ""); return; }
   const v = prompt("Folder to add — Bridge can only read the folders listed here:", S.roots[0] || "");
   if (v && v.trim()) await setRoots(S.roots.concat([v.trim().replace(/\/+$/, "")]));
 }
@@ -794,6 +877,43 @@ async function refreshRecent() {
 }
 
 /* ─────────────────────────── streaming ────────────────────────── */
+/* composer attachments — top level: send() calls renderAttachments() */
+function renderAttachments() {
+  const box = $("#attachments");
+  if (!S.attachments.length) { box.innerHTML = ""; box.style.display = "none"; return; }
+  box.style.display = "flex";
+  box.innerHTML = S.attachments.map((a, i) =>
+    '<div class="att ' + (a.error ? "err" : "") + '" title="' + esc(a.name) + (a.error ? "\n" + a.error : "") + '" data-i="' + i + '">' +
+    (a.preview ? '<img src="' + esc(a.preview) + '">' : '<span class="att-ic">' + esc(a.ext || "📄") + "</span>") +
+    '<span class="att-n">' + esc(a.name) + "</span>" +
+    (a.error ? '<span class="att-e">' + esc(a.error) + "</span>" : "") +
+    '<span class="att-x" data-rm="' + i + '">×</span></div>').join("");
+  box.querySelectorAll("[data-rm]").forEach((n) => (n.onclick = (e) => { e.stopPropagation(); S.attachments.splice(+n.dataset.rm, 1); renderAttachments(); }));
+}
+async function addFiles(files) {
+  for (const f of files) await addAttachment({ name: f.name, ext: (f.name.split(".").pop() || "").toLowerCase(), file: f });
+}
+async function addAttachment(a) {
+  if (S.attachments.some((x) => x.name === a.name && x.path === a.path)) return;
+  if (a.file && a.ext && ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(a.ext)) {
+    a.preview = await new Promise((res) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.readAsDataURL(a.file);
+    });
+    const m = a.preview.match(/^data:([^;]+);base64,(.+)$/);
+    if (m) { a.kind = "image"; a.mediaType = m[1]; a.data = m[2]; }
+  } else if (a.file) {
+    a.preview = "";
+    if (a.file.size > 200_000) { a.error = "too large to inline (" + fmtB(a.file.size) + ")"; }
+    else { a.data = await a.file.text(); a.kind = "text"; }
+  }
+  if (!a.error && !a.kind) a.error = "unreadable attachment";
+  S.attachments.push(a);
+  renderAttachments();
+  const ta2 = $("#input"); ta2.focus(); if (!ta2.value.trim()) ta2.placeholder = S.attachments.length + " file" + (S.attachments.length > 1 ? "s" : "") + " attached — type a message or press ↵";
+}
+
 async function send() {
   const ta = $("#input");
   const text = ta.value.trim();
@@ -801,7 +921,7 @@ async function send() {
   const ats = S.attachments;
   if ((!text && !ats.length) || !tab) return;
   ta.value = ""; ta.style.height = "auto";
-  const msg = { kind: "user", text: text, attachments: ats.slice(), ts: Date.now() };
+  const msg = { kind: "user", text: text, attachments: ats.map((a) => ({ name: a.name, path: a.path, kind: a.kind, mediaType: a.mediaType, data: a.data, error: a.error })), ts: Date.now() };
   S.attachments = []; renderAttachments();
   tab.msgs.push(msg);
   // a turn already running is no reason to stop typing: queue it, same as the terminal
@@ -815,6 +935,10 @@ async function send() {
 }
 async function runTurn(tab, text, attachments) {
   tab.streaming = true;
+  // Show a thinking row immediately — the CLI can take a long time (hooks, session
+  // start) before its first byte, and silence reads as "nothing happened".
+  const statusIdx = tab.msgs.push({ kind: "status", text: "Thinking", ts: Date.now(), live: true }) - 1;
+  const status = tab.msgs[statusIdx];
   if (T() === tab) renderStream();
   renderTabs(); sendBtn(); scrollDown(true);
 
@@ -828,10 +952,47 @@ async function runTurn(tab, text, attachments) {
     attachments: attachments || [],
   };
   let blocks = {};
-  const flush = () => { if (T() === tab) { renderStream(); scrollDown(); } };
+  // Coalesce redraws to one per animation frame. renderStream() rebuilds the whole
+  // transcript (innerHTML + markdown re-parse + re-wiring), and a streaming turn used to
+  // call it once per token delta, which is what made long turns feel like sludge.
+  let flushQueued = false;
+  const flush = () => {
+    if (T() !== tab || flushQueued) return;
+    flushQueued = true;
+    requestAnimationFrame(() => {
+      flushQueued = false;
+      if (T() === tab) { renderStream(); scrollDown(); }
+    });
+  };
+  // Text/thinking deltas only touch one message, so update that row in place
+  // instead of rebuilding the transcript — this is what makes streaming smooth.
+  const dirty = new Set();
+  let deltaQueued = false;
+  const flushDelta = (idx) => {
+    if (T() !== tab) return;
+    dirty.add(idx);
+    if (deltaQueued || flushQueued) return;
+    deltaQueued = true;
+    requestAnimationFrame(() => {
+      deltaQueued = false;
+      if (T() !== tab) { dirty.clear(); return; }
+      let miss = false;
+      for (const i of dirty) {
+        const el = document.querySelector('#streamInner [data-mi="' + i + '"]');
+        if (el && tab.msgs[i]) { el.innerHTML = renderMsg(tab.msgs[i]); wireMsgHandlers(el); }
+        else miss = true;
+      }
+      dirty.clear();
+      if (miss) renderStream();
+      scrollDown();
+    });
+  };
+  const setStatus = (txt) => { if (status.done) return; status.text = txt; flushDelta(statusIdx); };
+  const endStatus = () => { if (status.done) return; status.done = true; clearInterval(tick); flushDelta(statusIdx); };
+  const tick = setInterval(() => { if (status.done) clearInterval(tick); else flushDelta(statusIdx); }, 1000);
 
   function onEvent(p) {
-    if (p.t === "start") { tab.live = tab.live || p.sessionId; return; }
+    if (p.t === "start") { tab.live = tab.live || p.sessionId; setStatus("Starting Claude Code"); return; }
     if (p.t === "stderr") {
       const line = String(p.d).trim();
       if (line && !/hook|deprecat|warning/i.test(line)) { tab.msgs.push({ kind: "assistant", text: "```\n" + line + "\n```", ts: Date.now() }); flush(); }
@@ -845,13 +1006,17 @@ async function runTurn(tab, text, attachments) {
       tab.live = d.session_id || tab.live;
       tab.id = tab.id || tab.live;
       tab.model = d.model || tab.model;
+      setStatus("Thinking");
       return;
     }
+    if (d.type === "system" && d.subtype === "hook_started") { setStatus("Running " + (d.hook_name || "hook")); return; }
+    if (d.type === "system" && d.subtype === "hook_response") { setStatus("Thinking"); return; }
     if (d.type === "stream_event") {
       const ev = d.event, side = !!d.parent_tool_use_id;
       if (!ev) return;
-      if (ev.type === "message_start") { blocks = {}; return; }
+      if (ev.type === "message_start") { blocks = {}; setStatus("Composing"); return; }
       if (ev.type === "content_block_start") {
+        endStatus();
         const cb = ev.content_block || {};
         if (cb.type === "text") blocks[ev.index] = tab.msgs.push({ kind: side ? "agent_text" : "assistant", text: "", ts: Date.now(), live: true, model: tab.model }) - 1;
         else if (cb.type === "thinking") blocks[ev.index] = tab.msgs.push({ kind: "thinking", text: "", ts: Date.now(), live: true, open: true, side: side }) - 1;
@@ -863,15 +1028,19 @@ async function runTurn(tab, text, attachments) {
         if (ev.delta.type === "text_delta") m.text += ev.delta.text;
         else if (ev.delta.type === "thinking_delta") m.text += ev.delta.thinking;
         else return;
-        flush();
+        flushDelta(idx);
       } else if (ev.type === "content_block_stop") {
         const idx = blocks[ev.index];
-        if (idx !== undefined) { tab.msgs[idx].live = false; if (tab.msgs[idx].kind === "thinking") tab.msgs[idx].open = false; }
-        flush();
+        if (idx !== undefined) {
+          tab.msgs[idx].live = false;
+          if (tab.msgs[idx].kind === "thinking") tab.msgs[idx].open = false;
+          flushDelta(idx);
+        }
       }
       return;
     }
     if (d.type === "assistant") {
+      endStatus();
       const side = !!d.parent_tool_use_id;
       const streamed = Object.keys(blocks).length > 0;
       ((d.message && d.message.content) || []).forEach((c) => {
@@ -927,6 +1096,7 @@ async function runTurn(tab, text, attachments) {
   } catch (e) {
     tab.msgs.push({ kind: "assistant", text: "**Bridge error** — " + String(e), ts: Date.now() });
   }
+  endStatus();
   tab.streaming = false;
   tab.msgs.forEach((m) => (m.live = false));
   sendBtn(); renderTabs(); flush();
@@ -944,11 +1114,10 @@ async function runTurn(tab, text, attachments) {
   }
 }
 function sendBtn() {
-  const t = T(), b = $("#btnSend"), on = !!(t && t.streaming);
-  b.classList.toggle("stop", on);
-  b.innerHTML = on
-    ? '<svg viewBox="0 0 24 24" fill="currentColor" style="width:12px;height:12px"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>'
-    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
+  // Send never turns into Stop: a running turn is no reason to stop typing, the
+  // message just queues. Cancelling is a separate, quieter control on the left.
+  const t = T(), on = !!(t && t.streaming);
+  $("#btnCancel").hidden = !on;
 }
 function accUsage(u, x) {
   if (!x) return u;
@@ -1131,10 +1300,25 @@ function toggleTheme() {
   S.skills = configs.filter((c) => c.group === "Skills");
   S.cwd = localStorage.bridgeCwd && roots.indexOf(localStorage.bridgeCwd) >= 0 ? localStorage.bridgeCwd : roots[0];
 
-  $("#selModel").innerHTML = '<option value="">model</option>' + b.models.map((m) => "<option>" + m + "</option>").join("");
-  $("#selPerm").innerHTML = b.permissionModes.map((m) => "<option " + (m === "acceptEdits" ? "selected" : "") + ">" + m + "</option>").join("");
-  $("#selEffort").innerHTML = b.efforts.map((e) => '<option value="' + e + '">' + (e || "effort") + "</option>").join("");
-  $("#selAgent").innerHTML = '<option value="">no agent</option>' + agents.map((a) => "<option>" + esc(a.name) + "</option>").join("");
+  const opt = (v, label, help, sel) => '<option value="' + esc(v) + '"' + (sel ? " selected" : "") + (help ? ' title="' + esc(help) + '"' : "") + ">" + esc(label) + "</option>";
+  $("#selModel").innerHTML = opt("", "model", HELP.model[""]) + b.models.map((m) => opt(m, m, HELP.model[m])).join("");
+  $("#selPerm").innerHTML = b.permissionModes.map((m) => opt(m, m, HELP.perm[m], m === "acceptEdits")).join("");
+  $("#selEffort").innerHTML = b.efforts.map((e) => opt(e, e || "effort", HELP.effort[e])).join("");
+  $("#selAgent").innerHTML = opt("", "no agent", HELP.agent[""]) + agents.map((a) => opt(a.name, a.name, a.description ? String(a.description).slice(0, 160) : "")).join("");
+  // the label's tooltip explains the control, then what the current choice means
+  const explain = (labId, selId, group, head) => {
+    const lab = $("#" + labId), sel = $("#" + selId);
+    const upd = () => {
+      const v = sel.value, o = sel.options[sel.selectedIndex];
+      const d = (HELP[group] && HELP[group][v]) || (o && o.title) || "";
+      lab.title = head + (d ? "\n\nNow: " + (o ? o.textContent : v) + " — " + d : "");
+    };
+    sel.addEventListener("change", upd); upd();
+  };
+  explain("labModel", "selModel", "model", "Model — which Claude answers this turn. Leave blank to use the default from your settings.json.");
+  explain("labPerm", "selPerm", "perm", "Permission mode — how much Claude Code may do without asking you first.");
+  explain("labEffort", "selEffort", "effort", "Effort — how long the model thinks before it answers. Higher is slower and more thorough; blank uses the default.");
+  explain("labAgent", "selAgent", "agent", "Agent — run this turn as one of your custom agents (its own instructions, tools and model) instead of plain Claude Code.");
 
   if (S.roots[0]) await selectDir(S.roots[0]);
   loadNotes();
@@ -1176,7 +1360,8 @@ function toggleTheme() {
     else if (e.key === "Enter") { closePalette(); if (palItems[palSel]) palItems[palSel].run(); }
     else if (e.key === "Escape") closePalette();
   };
-  $("#btnSend").onclick = () => { const t = T(); if (t && t.streaming) abortTab(t); else send(); };
+  $("#btnSend").onclick = () => send();
+  $("#btnCancel").onclick = () => abortTab(T());
 
   const ta = $("#input");
   ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 260) + "px"; updateAc(); };
@@ -1189,6 +1374,29 @@ function toggleTheme() {
     }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   };
+  ta.onpaste = (e) => {
+    const files = Array.from(e.clipboardData.files);
+    if (files.length) { e.preventDefault(); addFiles(files); }
+  };
+
+  const composer = $("#composer");
+  composer.ondragover = (e) => { e.preventDefault(); composer.classList.add("drag"); };
+  composer.ondragleave = (e) => { composer.classList.remove("drag"); };
+  composer.ondrop = (e) => {
+    e.preventDefault(); composer.classList.remove("drag");
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length) addFiles(files);
+    else if (e.dataTransfer.getData("text/plain")) {
+      const p = e.dataTransfer.getData("text/plain").trim();
+      if (p && !p.includes("\n")) fetch("/api/file?path=" + encodeURIComponent(p))
+        .then((r) => r.json()).then((d) => { if (!d.error) addAttachment({ name: d.path.split("/").pop(), path: d.path }); });
+    }
+  };
+
+  const fi = $("#fileInput");
+  $("#btnAttach").onclick = () => fi.click();
+  fi.onchange = () => { if (fi.files.length) addFiles(Array.from(fi.files)); fi.value = ""; };
+
   document.onkeydown = (e) => {
     const meta = e.metaKey || e.ctrlKey;
     const edDoc = PAGE();
