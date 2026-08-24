@@ -17,6 +17,16 @@ const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
 const PORT = Number(process.env.BRIDGE_PORT || 4270);
 const UI_DIR = join(dirname(Bun.fileURLToPath(import.meta.url)), "public");
 const CLAUDE_BIN = process.env.BRIDGE_CLAUDE_BIN || "claude";
+/** Bridge is a GUI: interactive tools (AskUserQuestion, ExitPlanMode) are unavailable in -p mode,
+ *  so the model hands choices and plans back in a shape the client renders as buttons and cards. */
+const BRIDGE_PROTOCOL = [
+  "You are running inside Bridge, a desktop GUI for Claude Code. The session is non-interactive: AskUserQuestion and",
+  "ExitPlanMode are not available. Two conventions replace them:",
+  "1. When you need the user to choose between options, end your reply with a fenced block whose info string is",
+  "   `choices`, one short option per line (2-6 lines). Bridge renders them as buttons; the click becomes the next message.",
+  "2. In plan mode, finish your reply with the complete plan as markdown under a heading that starts with `Plan`.",
+  "   Bridge renders it as a plan card with Approve / Revise buttons; Approve sends the next message with edits enabled.",
+].join("\n");
 
 /* ────────────────────────────── helpers ────────────────────────────── */
 
@@ -541,7 +551,8 @@ try {
 
 async function runClaude(req: any, send: (o: any) => void, done: () => void) {
   const sessionId: string = req.sessionId || randomUUID();
-  const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose"];
+  const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+    "--append-system-prompt", BRIDGE_PROTOCOL];
   if (req.resume) args.push("--resume", req.resume);
   else args.push("--session-id", sessionId);
   args.push("--permission-mode", req.permissionMode || "acceptEdits");

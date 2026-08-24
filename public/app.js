@@ -184,20 +184,31 @@ function renderMsg(m) {
       '<div class="msg-body ' + (side ? "sidechain" : "") + '"><div class="msg-name">' + (side ? "subagent" : esc(name)) +
       (m.model ? ' <span class="tag">' + esc(String(m.model).replace("claude-", "")) + "</span>" : "") +
       '<span class="ts">' + fmtTime(m.ts) + "</span></div>" +
-      '<div class="prose">' + md(m.text) + (m.live ? '<span class="typing"></span>' : "") + "</div></div></div>";
+      '<div class="prose"><div class="md">' + md(m.live ? m.text : extractChoices(m.text).body) + "</div>" + (m.live ? '<span class="typing"></span>' : "") + "</div>" +
+      (m.live ? "" : renderChoices(extractChoices(m.text).choices)) + "</div></div>";
+  }
+  if (m.kind === "plan") {
+    return '<div class="msg"><div class="av a">' + esc(name.slice(0, 1).toUpperCase()) + "</div>" +
+      '<div class="msg-body"><div class="msg-name">' + esc(name) + ' <span class="tag plan">plan</span><span class="ts">' + fmtTime(m.ts) + "</span></div>" +
+      '<div class="plan-card"><div class="prose"><div class="md">' + md(m.text) + "</div></div>" +
+      (m.file ? '<div class="plan-file">' + esc(short(m.file, 60)) + "</div>" : "") +
+      (m.decided ? '<div class="plan-decided">' + esc(m.decided) + "</div>" :
+        '<div class="plan-actions"><button class="choice primary" data-plan="approve">Approve &amp; build</button><button class="choice" data-plan="revise">Revise</button></div>') +
+      "</div></div></div>";
   }
   if (m.kind === "status") {
     if (m.done) return "";
     const secs = Math.max(0, Math.round((Date.now() - m.ts) / 1000));
     return '<div class="msg"><div class="av a">' + esc(name.slice(0, 1).toUpperCase()) + "</div>" +
       '<div class="msg-body"><div class="msg-name">' + esc(name) + '<span class="ts">' + fmtTime(m.ts) + "</span></div>" +
-      '<div class="prose status-line"><span class="typing"></span> ' + esc(m.text) +
-      (secs >= 2 ? ' <span class="status-secs">' + secs + "s</span>" : "") + "</div></div></div>";
+      '<div class="prose status-line"><span class="typing"></span> <span class="status-t">' + esc(m.text) + "</span>" +
+      ' <span class="status-secs">' + (secs >= 2 ? secs + "s" : "") + "</span></div></div></div>";
   }
   if (m.kind === "thinking")
     return '<div class="think ' + (m.open ? "open" : "") + '" data-think><div class="think-h">✦ thinking' +
-      '<span style="color:var(--fg-faint);font-weight:400">' + (m.text.length > 60 ? " · " + fmtN(m.text.length) + " chars" : "") + "</span></div>" +
-      '<div class="think-b">' + esc(m.text) + (m.live ? '<span class="typing"></span>' : "") + "</div></div>";
+      '<span class="think-count" style="color:var(--fg-faint);font-weight:400">' + (m.text.length > 60 ? " · " + fmtN(m.text.length) + " chars" : "") + "</span>" +
+      '<span class="think-x" title="Collapse">×</span></div>' +
+      '<div class="think-b"><span class="md">' + esc(m.text) + "</span>" + (m.live ? '<span class="typing"></span>' : "") + "</div></div>";
   if (m.kind === "tool") {
     const ok = m.result && !m.result.isError, bad = m.result && m.result.isError;
     return '<div class="tool ' + (m.open ? "open" : "") + " " + (m.side ? "sidechain" : "") + '" data-tool>' +
@@ -209,6 +220,47 @@ function renderMsg(m) {
   }
   return "";
 }
+/** options the user can answer with one click: an explicit ```choices block, or a short list under a question */
+function extractChoices(text) {
+  const m = /```choices\s*\n([\s\S]*?)```/.exec(text || "");   // anywhere: a closing line may follow the block
+  if (m) return { body: (text.slice(0, m.index) + text.slice(m.index + m[0].length)).replace(/\n{3,}/g, "\n\n").trim(), choices: m[1].split("\n").map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim()).filter(Boolean).slice(0, 6) };
+  const t = String(text || "").trimEnd();
+  if (!/\?\s*$/.test(t) && !/\?\s*\n[^\n]*$/.test(t)) return { body: text, choices: [] };
+  const lines = t.split("\n"), opts = [];
+  for (let i = lines.length - 1; i >= 0 && opts.length < 6; i--) {
+    const mm = /^\s*(?:\d+[.)]|[-*•])\s+(.{2,70})$/.exec(lines[i]);
+    if (mm) opts.unshift(mm[1].replace(/\*\*/g, "").trim()); else if (opts.length) break;
+  }
+  return { body: text, choices: opts.length >= 2 ? opts : [] };
+}
+function renderChoices(list) {
+  return list.length ? '<div class="choices">' + list.map((c) => '<button class="choice" data-choice="' + esc(c) + '">' + esc(c) + "</button>").join("") + "</div>" : "";
+}
+/** update only what changed in a live row; false = caller must rebuild the row */
+function patchRow(el, m) {
+  const cursor = (host) => {
+    const c = host.querySelector(".typing");
+    if (m.live && !c) { const t = document.createElement("span"); t.className = "typing"; host.appendChild(t); }
+    else if (!m.live && c) c.remove();
+  };
+  if (m.kind === "assistant" || m.kind === "agent_text") {
+    if (!m.live) return false;                       // final: full row render adds the choice chips
+    const box = el.querySelector(".prose .md"); if (!box) return false;
+    box.innerHTML = md(m.text); cursor(box.parentElement); return true;
+  }
+  if (m.kind === "thinking") {
+    const box = el.querySelector(".think-b .md"), n = el.querySelector(".think-count"); if (!box || !n) return false;
+    box.textContent = m.text; n.textContent = m.text.length > 60 ? " · " + fmtN(m.text.length) + " chars" : "";
+    cursor(box.parentElement); return true;
+  }
+  if (m.kind === "status") {
+    if (m.done) { el.innerHTML = ""; return true; }
+    const t = el.querySelector(".status-t"), sec = el.querySelector(".status-secs"); if (!t || !sec) return false;
+    const secs = Math.max(0, Math.round((Date.now() - m.ts) / 1000));
+    t.textContent = m.text; sec.textContent = secs >= 2 ? secs + "s" : ""; return true;
+  }
+  return false;
+}
 function wireMsgHandlers(root) {
   // open/closed is written back onto the message so a later rebuild keeps it
   const persist = (h, cls) => (h.onclick = () => {
@@ -218,6 +270,17 @@ function wireMsgHandlers(root) {
   });
   root.querySelectorAll("[data-tool] .tool-h").forEach((h) => persist(h));
   root.querySelectorAll("[data-think] .think-h").forEach((h) => persist(h));
+  root.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => { const t = T(); if (t) runTurn(t, b.dataset.choice, []); }));
+  root.querySelectorAll("[data-plan]").forEach((b) => (b.onclick = () => {
+    const t = T(), row = b.closest("[data-mi]"), m = t && row && t.msgs[+row.dataset.mi];
+    if (!m) return;
+    if (b.dataset.plan === "approve") {
+      m.decided = "Approved — building with edits enabled";
+      if (DIALS.perm) DIALS.perm.set("acceptEdits");
+      renderStream();
+      runTurn(t, "Approved. Implement the plan" + (m.file ? " in " + m.file : " above") + " exactly as written, then report what changed.", []);
+    } else { m.decided = "Revising"; renderStream(); const ta = $("#input"); ta.focus(); ta.placeholder = "What should change in the plan?"; }
+  }));
   root.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => {
     navigator.clipboard.writeText(b.parentElement.innerText.replace(/^copy\n?/, "")); toast("Copied");
   }));
@@ -944,6 +1007,8 @@ async function runTurn(tab, text, attachments) {
   renderTabs(); sendBtn(); scrollDown(true);
 
   const ultra = !!(window.BridgeEffort && window.BridgeEffort.ultra);
+  const planning = $("#selPerm").value === "plan";
+  let planFile = null;
   const body = {
     prompt: (ultra ? "ultracode " : "") + text, cwd: tab.path,   // the keyword switches on multi-agent orchestration in the CLI
     resume: tab.live || tab.id || null,
@@ -980,9 +1045,15 @@ async function runTurn(tab, text, attachments) {
       if (T() !== tab) { dirty.clear(); return; }
       let miss = false;
       for (const i of dirty) {
-        const el = document.querySelector('#streamInner [data-mi="' + i + '"]');
-        if (el && tab.msgs[i]) { el.innerHTML = renderMsg(tab.msgs[i]); wireMsgHandlers(el); }
-        else miss = true;
+        const box = $("#streamInner"), m = tab.msgs[i];
+        let el = box.querySelector('[data-mi="' + i + '"]');
+        if (!el && m && box.querySelectorAll("[data-mi]").length === i) {
+          // a brand-new message at the end: append its row instead of rebuilding everything
+          el = document.createElement("div"); el.className = "mrow"; el.dataset.mi = i;
+          el.innerHTML = renderMsg(m); wireMsgHandlers(el); box.appendChild(el); continue;
+        }
+        if (!el || !m) { miss = true; continue; }
+        if (!patchRow(el, m)) { el.innerHTML = renderMsg(m); wireMsgHandlers(el); }
       }
       dirty.clear();
       if (miss) renderStream();
@@ -1012,7 +1083,7 @@ async function runTurn(tab, text, attachments) {
       return;
     }
     if (d.type === "system" && d.subtype === "hook_started") { setStatus("Running " + (d.hook_name || "hook")); return; }
-    if (d.type === "system" && d.subtype === "hook_response") { setStatus("Thinking"); return; }
+    if (d.type === "system" && d.subtype === "hook_response") { setStatus(planning ? "Planning" : "Thinking"); return; }
     if (d.type === "stream_event") {
       const ev = d.event, side = !!d.parent_tool_use_id;
       if (!ev) return;
@@ -1022,7 +1093,7 @@ async function runTurn(tab, text, attachments) {
         const cb = ev.content_block || {};
         if (cb.type === "text") blocks[ev.index] = tab.msgs.push({ kind: side ? "agent_text" : "assistant", text: "", ts: Date.now(), live: true, model: tab.model }) - 1;
         else if (cb.type === "thinking") blocks[ev.index] = tab.msgs.push({ kind: "thinking", text: "", ts: Date.now(), live: true, open: true, side: side }) - 1;
-        flush();
+        if (blocks[ev.index] !== undefined) flushDelta(blocks[ev.index]); else flush();
       } else if (ev.type === "content_block_delta") {
         const idx = blocks[ev.index];
         if (idx === undefined) return;
@@ -1035,7 +1106,6 @@ async function runTurn(tab, text, attachments) {
         const idx = blocks[ev.index];
         if (idx !== undefined) {
           tab.msgs[idx].live = false;
-          if (tab.msgs[idx].kind === "thinking") tab.msgs[idx].open = false;
           flushDelta(idx);
         }
       }
@@ -1046,12 +1116,14 @@ async function runTurn(tab, text, attachments) {
       const side = !!d.parent_tool_use_id;
       const streamed = Object.keys(blocks).length > 0;
       ((d.message && d.message.content) || []).forEach((c) => {
-        if (c.type === "tool_use") tab.msgs.push({ kind: "tool", name: c.name, input: c.input, id: c.id, ts: Date.now(), side: side, result: null });
+        if (c.type === "tool_use") {
+          if (c.name === "Write" && c.input && /\/Plans\/[^/]+\.md$/.test(String(c.input.file_path || ""))) planFile = c.input.file_path;
+          flushDelta(tab.msgs.push({ kind: "tool", name: c.name, input: c.input, id: c.id, ts: Date.now(), side: side, result: null }) - 1);
+        }
         else if (c.type === "text" && !streamed && c.text && c.text.trim())
-          tab.msgs.push({ kind: side ? "agent_text" : "assistant", text: c.text, ts: Date.now(), model: d.message.model });
+          flushDelta(tab.msgs.push({ kind: side ? "agent_text" : "assistant", text: c.text, ts: Date.now(), model: d.message.model }) - 1);
       });
       tab.usage = accUsage(tab.usage, d.message && d.message.usage);
-      flush();
       return;
     }
     if (d.type === "user") {
@@ -1064,11 +1136,11 @@ async function runTurn(tab, text, attachments) {
               content: typeof c.content === "string" ? c.content : (c.content || []).map((z) => z.text || "[" + z.type + "]").join("\n"),
               isError: !!c.is_error,
             };
+            flushDelta(i);
             break;
           }
         }
       });
-      flush();
       return;
     }
     if (d.type === "result") {
@@ -1100,8 +1172,14 @@ async function runTurn(tab, text, attachments) {
   }
   endStatus();
   tab.streaming = false;
-  tab.msgs.forEach((m) => (m.live = false));
-  sendBtn(); renderTabs(); flush();
+  tab.msgs.forEach((m, i) => { if (m.live) { m.live = false; flushDelta(i); } });
+  if (planning) {
+    // the plan is the last assistant text with a "Plan" heading (or whatever was written to Plans/)
+    const last = tab.msgs.filter((m) => m.kind === "assistant").pop();
+    const planText = last && /^#{1,4}\s*\**Plan/m.test(last.text) ? last.text.slice(last.text.search(/^#{1,4}\s*\**Plan/m)) : null;
+    if (planText || planFile) flushDelta(tab.msgs.push({ kind: "plan", text: planText || "Plan written to `" + planFile + "`.", file: planFile, ts: Date.now() }) - 1);
+  }
+  sendBtn(); renderTabs(); if (T() === tab) renderPhases();
   if (T() === tab) renderInspector();
   else note(tab, tab.lastResult ? "done" : "error", tab.lastResult ? "$" + (tab.lastResult.total_cost_usd || 0).toFixed(3) : "");
   // drain anything typed while that turn was running
@@ -1176,7 +1254,7 @@ function makeDial(o) {
   dial.addEventListener("focusin", openSoon);
   dial.addEventListener("focusout", (e) => { if (!dial.contains(e.relatedTarget)) closeSoon(); });
   choose(cur, false);
-  return { get value() { return cur; }, dial };
+  return { get value() { return cur; }, set: (v) => choose(v, false), dial };
 }
 
 /* effort: auto … max, then ULTRACODE "God mode" (max + the multi-agent keyword) */
@@ -1219,9 +1297,10 @@ const GUARDRAILS = [
   { v: "acceptEdits", label: "edit freely", help: "edits alone, asks before commands" },
   { v: "bypassPermissions", label: "no limits", cls: "danger", help: "never asks, runs everything" },
 ];
+const DIALS = {};
 function initPermDial(modes) {
   const tiers = GUARDRAILS.filter((g) => modes.indexOf(g.v) >= 0);
-  makeDial({
+  DIALS.perm = makeDial({
     name: "Mode — what it may do without asking", ascending: true, dial: "#labPerm", track: "#permTrack", select: "#selPerm", key: "bridgePerm", initial: "acceptEdits", tiers,
     onChoose: (v) => $("#labPerm").classList.toggle("danger", v === "bypassPermissions"),
   });

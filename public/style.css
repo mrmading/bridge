@@ -682,3 +682,21 @@ body::after{
 
 .edial.open .ed-p{flex:none}
 .edial.open .ed-track{max-height:min(70vh,560px)}
+
+/* thinking blocks stay open; the × in the header folds them */
+.think-x{margin-left:auto;font-size:14px;line-height:1;color:var(--fg-faint);padding:0 4px;border-radius:5px;opacity:0;transition:opacity .15s}
+.think.open .think-x{opacity:.8}
+.think-x:hover{color:var(--fg);background:var(--bg-hover)}
+.think-b .md{white-space:pre-wrap}
+
+/* one-click answers under a question, and the plan card */
+.choices{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.choice{height:28px;padding:0 12px;border-radius:8px;border:1px solid var(--border-strong);background:var(--bg-raised);color:var(--fg);font-size:12.5px;cursor:pointer;transition:.14s}
+.choice:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.choice.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.choice.primary:hover{filter:brightness(1.08);color:var(--accent-fg)}
+.tag.plan{background:var(--think-soft);color:var(--think)}
+.plan-card{border:1px solid color-mix(in srgb,var(--think) 40%,var(--border-strong));border-radius:12px;padding:12px 14px;background:color-mix(in srgb,var(--think) 5%,var(--bg-raised))}
+.plan-file{font-family:var(--mono);font-size:11px;color:var(--fg-faint);margin-top:8px}
+.plan-actions{display:flex;gap:8px;margin-top:12px}
+.plan-decided{margin-top:10px;font-size:12px;color:var(--fg-muted);font-style:italic}
