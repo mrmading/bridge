@@ -33,7 +33,7 @@ func freePort(from start: Int) -> Int {
     return start
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     var window: NSWindow!
     var web: WKWebView!
     var server: Process?
@@ -84,6 +84,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let js = "document.documentElement.dataset.native = 'mac';"
         cfg.userContentController.addUserScript(
             WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // window.webkit.messageHandlers.pickFolder.postMessage("") → native folder chooser
+        cfg.userContentController.add(self, name: "pickFolder")
 
         web = WKWebView(frame: frame, configuration: cfg)
         web.autoresizingMask = [.width, .height]
@@ -199,6 +201,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func applicationWillTerminate(_ note: Notification) {
         server?.terminate()
         server?.waitUntilExit()
+    }
+
+    // ── JS dialogs: WKWebView shows none of these unless the host implements them ──
+    func webView(_ w: WKWebView, runJavaScriptAlertPanelWithMessage msg: String,
+                 initiatedByFrame f: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        let a = NSAlert(); a.messageText = "Bridge"; a.informativeText = msg; a.runModal(); completionHandler()
+    }
+    func webView(_ w: WKWebView, runJavaScriptConfirmPanelWithMessage msg: String,
+                 initiatedByFrame f: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let a = NSAlert(); a.messageText = "Bridge"; a.informativeText = msg
+        a.addButton(withTitle: "OK"); a.addButton(withTitle: "Cancel")
+        completionHandler(a.runModal() == .alertFirstButtonReturn)
+    }
+    func webView(_ w: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
+                 initiatedByFrame f: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        let a = NSAlert(); a.messageText = "Bridge"; a.informativeText = prompt
+        a.addButton(withTitle: "OK"); a.addButton(withTitle: "Cancel")
+        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24)); tf.stringValue = defaultText ?? ""
+        a.accessoryView = tf; a.window.initialFirstResponder = tf
+        completionHandler(a.runModal() == .alertFirstButtonReturn ? tf.stringValue : nil)
+    }
+
+    // ── native folder chooser, result handed back to the page ──
+    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+        guard m.name == "pickFolder" else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false; panel.prompt = "Use this folder"
+        panel.message = "Choose the folder Claude Code should work in"
+        if let s = m.body as? String, !s.isEmpty { panel.directoryURL = URL(fileURLWithPath: s) }
+        panel.beginSheetModal(for: window) { [weak self] r in
+            guard r == .OK, let url = panel.url, let web = self?.web else { return }
+            let path = url.path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+            web.evaluateJavaScript("window.bridgeFolderPicked && window.bridgeFolderPicked('\(path)')", completionHandler: nil)
+        }
     }
 
     // ── menus (WKWebView needs the standard responders to exist) ──────────
