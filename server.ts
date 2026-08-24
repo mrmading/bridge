@@ -539,7 +539,7 @@ try {
   settingsEnv = JSON.parse(raw).env || {};
 } catch {}
 
-function runClaude(req: any, send: (o: any) => void, done: () => void) {
+async function runClaude(req: any, send: (o: any) => void, done: () => void) {
   const sessionId: string = req.sessionId || randomUUID();
   const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose"];
   if (req.resume) args.push("--resume", req.resume);
@@ -548,16 +548,61 @@ function runClaude(req: any, send: (o: any) => void, done: () => void) {
   if (req.model) args.push("--model", req.model);
   if (req.agent) args.push("--agent", req.agent);
   if (req.effort) args.push("--effort", req.effort);
-  args.push(req.prompt);
+
+  const attachments = Array.isArray(req.attachments) ? req.attachments : [];
+  for (const a of attachments) {
+    if (a.path) {
+      const abs = guard(a.path);
+      if (!abs) { a.error = "outside Bridge folders"; continue; }
+      if (isSensitive(abs)) { a.error = "protected path"; continue; }
+      try {
+        const st = await stat(abs);
+        if (!st.isFile()) { a.error = "not a file"; continue; }
+        const ext = extname(abs).toLowerCase();
+        if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext)) {
+          const data = (await readFile(abs)).toString("base64");
+          const mt = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".gif" ? "image/gif" : ext === ".webp" ? "image/webp" : "image/svg+xml";
+          a.kind = "image"; a.mediaType = mt; a.data = data;
+        } else if (st.size > 200_000) {
+          a.error = "too large to inline (" + Math.round(st.size / 1024) + " KB)";
+        } else {
+          a.kind = "text"; a.data = await readFile(abs, "utf8");
+        }
+      } catch (e) { a.error = String(e); }
+    } else if (!a.data || !a.kind) {
+      a.error = "unreadable attachment";
+    }
+  }
+
+  const usable = attachments.filter((a) => !a.error);
+  let inputEnvelope: any = null;
+  if (usable.length) {
+    args.push("--input-format", "stream-json");
+    const content: any[] = [];
+    if (req.prompt) content.push({ type: "text", text: String(req.prompt) });
+    for (const a of usable) {
+      if (a.kind === "image") content.push({ type: "image", source: { type: "base64", media_type: a.mediaType, data: a.data } });
+      else content.push({ type: "text", text: "File: " + (a.name || basename(a.path || "attachment")) + "\n```\n" + a.data + "\n```" });
+    }
+    inputEnvelope = { type: "user", message: { role: "user", content } };
+  } else {
+    args.push(req.prompt);
+  }
 
   const cwd = guard(req.cwd || HOME) || HOME;
-  const child = spawn(CLAUDE_BIN, args, { cwd, env: { ...process.env, ...settingsEnv, FORCE_COLOR: "0" }, stdio: ["ignore", "pipe", "pipe"] });
+  const stdio = inputEnvelope ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"];
+  const child = spawn(CLAUDE_BIN, args, { cwd, env: { ...process.env, ...settingsEnv, FORCE_COLOR: "0" }, stdio });
   const key = req.resume || sessionId;
   live.set(key, child);
   const prompt = String(req.prompt).replace(/\s+/g, " ").trim().slice(0, 140);
   running.set(key, { id: key, cwd, model: req.model, started: Date.now(), prompt });
   logRow({ ts: Date.now(), kind: "turn.start", msg: prompt, session: key, cwd, model: req.model });
-  send({ t: "start", sessionId: key, cwd, args: args.slice(0, -1) });
+  send({ t: "start", sessionId: key, cwd, args });
+
+  if (inputEnvelope && child.stdin) {
+    child.stdin.write(JSON.stringify(inputEnvelope) + "\n");
+    child.stdin.end();
+  }
 
   let buf = "";
   child.stdout.on("data", (chunk) => {

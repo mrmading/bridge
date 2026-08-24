@@ -23,6 +23,7 @@ const S = {
   group: "Core",            // which Configs group the cards are showing
   agentCat: "All",          // which area of expertise the Agents pills are showing
   tree: {}, sel: "", preview: true, // Directory listings + selection; md editor preview pane
+  attachments: [],          // files staged in the composer for the next turn
 };
 /** the active session tab */
 const T = () => S.tabs[S.active] || null;
@@ -797,9 +798,11 @@ async function send() {
   const ta = $("#input");
   const text = ta.value.trim();
   const tab = T();
-  if (!text || !tab) return;
+  const ats = S.attachments;
+  if ((!text && !ats.length) || !tab) return;
   ta.value = ""; ta.style.height = "auto";
-  const msg = { kind: "user", text: text, ts: Date.now() };
+  const msg = { kind: "user", text: text, attachments: ats.slice(), ts: Date.now() };
+  S.attachments = []; renderAttachments();
   tab.msgs.push(msg);
   // a turn already running is no reason to stop typing: queue it, same as the terminal
   if (tab.streaming) {
@@ -808,9 +811,9 @@ async function send() {
     if (T() === tab) { renderStream(); scrollDown(true); }
     return;
   }
-  runTurn(tab, text);
+  runTurn(tab, text, msg.attachments);
 }
-async function runTurn(tab, text) {
+async function runTurn(tab, text, attachments) {
   tab.streaming = true;
   if (T() === tab) renderStream();
   renderTabs(); sendBtn(); scrollDown(true);
@@ -822,6 +825,7 @@ async function runTurn(tab, text) {
     permissionMode: $("#selPerm").value,
     effort: $("#selEffort").value || null,
     agent: $("#selAgent").value || null,
+    attachments: attachments || [],
   };
   let blocks = {};
   const flush = () => { if (T() === tab) { renderStream(); scrollDown(); } };
@@ -936,7 +940,7 @@ async function runTurn(tab, text) {
     const at = tab.msgs.indexOf(next);
     if (at >= 0) { tab.msgs.splice(at, 1); tab.msgs.push(next); }
     if (T() === tab) renderStream();
-    return runTurn(tab, next.text);
+    return runTurn(tab, next.text, next.attachments || []);
   }
 }
 function sendBtn() {

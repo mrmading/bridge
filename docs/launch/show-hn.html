@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Show HN — Bridge launch draft</title>
+<link rel="icon" href="../img/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@900&display=swap">
+<style>
+:root{
+  --bg:#080a0f; --raise:#11141b; --fg:#e9edf4; --muted:#98a3b4; --faint:#667184;
+  --line:#1d222c; --line2:#2b3240; --accent:#4aa8ff; --accent2:#7fd0ff; --ok:#35d07f; --warn:#e3a955;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.65;-webkit-font-smoothing:antialiased}
+.glow{position:fixed;inset:0;pointer-events:none;z-index:0;background:
+  radial-gradient(900px 380px at 50% -12%, rgba(74,168,255,.26), transparent 68%),
+  radial-gradient(820px 560px at 105% 106%, rgba(74,168,255,.08), transparent 72%)}
+main{position:relative;z-index:1;max-width:860px;margin:0 auto;padding:56px 26px 100px}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:rgba(255,255,255,.05);border:1px solid var(--line);padding:1px 5px;border-radius:5px}
+
+.kicker{font-family:"Orbitron",var(--mono);font-weight:900;letter-spacing:.3em;font-size:12px;color:transparent;
+  background:linear-gradient(180deg,#fff,var(--accent));-webkit-background-clip:text;background-clip:text;
+  filter:drop-shadow(0 0 12px rgba(74,168,255,.5));margin-bottom:14px}
+h1{font-size:34px;letter-spacing:-.02em;font-weight:660;margin-bottom:10px}
+.deck{color:var(--muted);font-size:15px;margin-bottom:14px}
+.when{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:40px}
+.pill{font-size:12px;padding:4px 11px;border-radius:20px;border:1px solid var(--line2);color:var(--muted)}
+.pill b{color:var(--fg);font-weight:600}
+
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);font-weight:700;
+  margin:44px 0 14px;display:flex;align-items:center;gap:12px}
+h2::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+
+.box{border:1px solid var(--line);border-radius:12px;background:rgba(17,20,27,.75);padding:18px 20px;position:relative;margin-bottom:14px}
+.box::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;border-radius:12px 12px 0 0;
+  background:linear-gradient(90deg,transparent,rgba(74,168,255,.7),transparent);opacity:.5}
+.box.pick{border-color:rgba(74,168,255,.45);box-shadow:0 0 34px rgba(74,168,255,.10)}
+.label{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);font-weight:700;margin-bottom:9px}
+.title-line{font-family:var(--mono);font-size:15px;line-height:1.5;overflow-wrap:anywhere}
+.count{font-family:var(--mono);font-size:11.5px;color:var(--ok);margin-top:9px}
+.count.over{color:var(--warn)}
+.alt{font-family:var(--mono);font-size:13px;color:var(--muted);padding:7px 0;border-top:1px solid var(--line);display:flex;gap:12px;align-items:baseline}
+.alt:first-of-type{border-top:none}
+.alt .n{margin-left:auto;font-size:11px;color:var(--faint)}
+
+.copy{position:absolute;top:12px;right:12px;font-size:11px;font-family:var(--sans);color:var(--muted);
+  background:rgba(255,255,255,.04);border:1px solid var(--line2);border-radius:7px;padding:4px 10px;cursor:pointer;transition:.13s}
+.copy:hover{color:var(--accent);border-color:var(--accent);background:rgba(74,168,255,.10)}
+.copy.done{color:var(--ok);border-color:rgba(53,208,127,.5)}
+
+.comment{border-left:2px solid var(--accent);background:rgba(74,168,255,.04);border-radius:0 12px 12px 0;
+  padding:20px 22px;position:relative}
+.comment p{margin-bottom:14px}
+.comment p:last-child{margin-bottom:0}
+.comment ul{margin:0 0 14px 20px}
+.comment li{margin-bottom:8px;color:var(--muted)}
+.comment li b{color:var(--fg)}
+.comment strong{color:#fff}
+.comment em{color:var(--accent2);font-style:italic}
+
+.qa{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:10px;background:rgba(17,20,27,.55)}
+.q{font-weight:620;font-size:14.5px;margin-bottom:6px}
+.q::before{content:"“";color:var(--faint)}
+.q::after{content:"”";color:var(--faint)}
+.a{color:var(--muted);font-size:14px}
+
+ul.rules{list-style:none;display:flex;flex-direction:column;gap:9px}
+ul.rules li{padding-left:26px;position:relative;color:var(--muted)}
+ul.rules li::before{content:"→";position:absolute;left:0;color:var(--accent)}
+ul.rules li b{color:var(--fg)}
+
+.check{list-style:none;display:flex;flex-direction:column;gap:10px}
+.check li{display:flex;gap:11px;align-items:flex-start;color:var(--muted)}
+.check .mark{width:17px;height:17px;border-radius:5px;border:1px solid var(--line2);flex:none;margin-top:3px;
+  display:grid;place-items:center;font-size:10px;color:var(--faint)}
+.check li.done .mark{background:rgba(53,208,127,.16);border-color:rgba(53,208,127,.5);color:var(--ok)}
+.check li.done{color:var(--fg)}
+.check li.open .mark{border-color:rgba(227,169,85,.6);color:var(--warn)}
+
+.danger{border:1px solid rgba(227,169,85,.4);background:rgba(227,169,85,.07);border-radius:12px;padding:14px 18px;color:var(--fg);font-size:14.5px}
+footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);color:var(--faint);font-size:13px}
+</style>
+
+<div class="glow"></div>
+<main>
+  <div class="kicker">BRIDGE</div>
+  <h1>Show HN, ready to post</h1>
+  <p class="deck">Submit at <a href="https://news.ycombinator.com/submit">news.ycombinator.com/submit</a>
+    as a URL post, then paste the first comment immediately and stay in the thread.</p>
+  <div class="when">
+    <span class="pill"><b>Tue–Thu</b></span>
+    <span class="pill"><b>6–9am</b> Pacific</span>
+    <span class="pill">first <b>2 hours</b> decide it</span>
+    <span class="pill">clear <b>3 hours</b> after posting</span>
+  </div>
+
+  <h2>The link</h2>
+  <div class="box">
+    <button class="copy" data-copy="https://github.com/mrmading/bridge">Copy</button>
+    <div class="label">URL</div>
+    <div class="title-line">https://github.com/mrmading/bridge</div>
+    <p style="color:var(--muted);font-size:13.5px;margin-top:10px">The repo, not the landing page.
+      HN trusts a README over a marketing site.</p>
+  </div>
+
+  <h2>The title</h2>
+  <div class="box pick">
+    <button class="copy" data-copy="Show HN: Bridge – a Mac client for Claude Code that searches every past session">Copy</button>
+    <div class="label">Recommended</div>
+    <div class="title-line" id="t">Show HN: Bridge – a Mac client for Claude Code that searches every past session</div>
+    <div class="count" id="c"></div>
+    <p style="color:var(--muted);font-size:13.5px;margin-top:10px">Names the wedge (search) rather than
+      the category (client). States what it is, not why it is good, so a moderator has no reason to rewrite it.</p>
+  </div>
+  <div class="box">
+    <div class="label">Alternates</div>
+    <div class="alt">Show HN: Bridge – a desktop client for Claude Code, with full transcript search<span class="n">79</span></div>
+    <div class="alt">Show HN: Bridge – a Mac client for Claude Code with search over every transcript<span class="n">80</span></div>
+    <div class="alt">Show HN: Bridge – a desktop client for Claude Code with search over all sessions<span class="n">80</span></div>
+  </div>
+  <div class="danger">Never ask anyone to upvote, anywhere, including privately. It is detected,
+    penalised hard, and it is the most common way a launch kills itself. Telling people the post exists is fine.</div>
+
+  <h2>The first comment — post it yourself, immediately</h2>
+  <div class="comment">
+    <button class="copy" data-copy="#first">Copy</button>
+    <div id="first">
+      <p>Hey HN, Nestor here, I built this.</p>
+      <p>Backstory: I use Claude Code all day and kept losing work in it. Not losing files, losing
+        <em>context</em> — I knew I had fixed a Cloudflare deploy bug some Tuesday three weeks earlier, and
+        the only way back was <code>claude --resume</code> and arrow keys through a list of AI-generated
+        titles. Meanwhile <code>~/.claude/projects</code> had 600 MB of JSONL transcripts sitting on disk
+        that nothing could search. Bridge started as a grep over that directory and turned into the window
+        I now work in.</p>
+      <p>Under the hood, the decision that shaped everything: <strong>it does not reimplement Claude
+        Code.</strong> Every turn shells out to the real CLI with <code>claude -p --output-format
+        stream-json --include-partial-messages --session-id|--resume</code>, and stdout is piped to the
+        browser over SSE. So hooks, skills, MCP servers, permission modes and your <code>settings.json</code>
+        env behave exactly as they do in the terminal, and a session started in Bridge is an ordinary session
+        you can pick up with <code>claude --resume</code>. The cost is real: no access to the agent loop, I
+        cannot render anything the stream does not emit, and I inherit every CLI flag change. The alternative
+        was the Agent SDK, which would have given me control and cost me the entire existing ecosystem, plus
+        a second thing to keep in sync. Not worth it for a client.</p>
+      <p>Two bits that were more interesting than expected. <strong>Search:</strong> ripgrep ships inside the
+        <code>claude</code> binary, so invoking it with <code>argv0: "rg"</code> gives you rg with no
+        dependency; one pass per term in parallel, then rank on how many of your terms a session actually
+        covers rather than raw hit count — the difference between finding the right session and finding the
+        longest one. ~350 ms over 626 MB. <strong>Transcript parsing:</strong> the JSONL is an append-only
+        event log, not a conversation, so tool results have to be re-joined to their <code>tool_use_id</code>,
+        usage de-duplicated by <code>requestId</code>, and sub-agent turns separated by
+        <code>isSidechain</code>, or token counts come out wrong by 3x.</p>
+      <p>Known limitations, and they are real:</p>
+      <ul>
+        <li><b>macOS only.</b> The server is portable Bun and the UI is a web page, so Linux works today via
+          <code>bun server.ts</code> and localhost. Only the native shell is Mac-specific. Windows untested.</li>
+        <li><b>Not notarised yet</b>, so the .dmg needs one trip through System Settings → Privacy &amp;
+          Security. Building from source avoids that entirely.</li>
+        <li><b>No sandbox.</b> File access is confined to folders you explicitly add and credential-shaped
+          paths are refused inside them, but Claude Code does whatever you permit it to. This is a client,
+          not a safety layer.</li>
+        <li><b>v0.1, one user.</b> Daily use by exactly me. Expect rough edges and tell me about them.</li>
+        <li>It is a local web view in a native window, not AppKit. If that offends you, this is the wrong
+          tool and I understand.</li>
+      </ul>
+      <p>Happy to go deep on the stream-json protocol, the transcript format, the ripgrep scoring, or why the
+        native shell has to spawn Bun through a login shell — a Finder-launched app inherits dead std streams
+        and Bun wedges in <code>openat</code> before it ever listens.</p>
+    </div>
+  </div>
+
+  <h2>Answers to have ready</h2>
+  <div class="qa"><div class="q">You could just do this with a shell script / fzf over the JSONL</div>
+    <div class="a">Agree, genuinely, then be precise about where it stops. You can absolutely <code>rg</code>
+      the transcripts. What you cannot easily do is re-join tool results to their calls, de-duplicate usage by
+      request, and rank on term coverage rather than hit count. My own grep kept surfacing the longest session
+      rather than the right one.</div></div>
+  <div class="qa"><div class="q">Why not just use the terminal?</div>
+    <div class="a">For one conversation the terminal is better and I still use it. This is for the other
+      thing: five sessions in flight, and eighteen months of them behind you.</div></div>
+  <div class="qa"><div class="q">Anthropic will ship this</div>
+    <div class="a">Probably, and it is 2,000 lines of MIT code that reads a directory. If the official one is
+      better I will use the official one.</div></div>
+  <div class="qa"><div class="q">Is my data going anywhere?</div>
+    <div class="a">No. No telemetry, no analytics, no account, localhost-only bind. Which is also why I cannot
+      tell you how many people use it.</div></div>
+  <div class="qa"><div class="q">Electron?</div>
+    <div class="a">No. <code>swiftc</code> and a WKWebView, 128 KB of Swift. The whole .dmg is 1.4 MB.</div></div>
+
+  <h2>In the thread</h2>
+  <ul class="rules">
+    <li><b>Reply to every substantive comment</b> for the first three hours.</li>
+    <li><b>Concede real points immediately and specifically.</b> Defending an indefensible point is read by thousands of people.</li>
+    <li><b>Never mention votes.</b> Not downvotes, not rankings. It is the surest tell of an outsider.</li>
+    <li><b>Do not sell.</b> The README sells. In the thread you are an engineer talking about a thing you made.</li>
+    <li><b>Fix a reported bug during the thread</b> and say so. Nothing converts an HN reader faster.</li>
+  </ul>
+
+  <h2>Before you post</h2>
+  <ul class="check">
+    <li class="open"><span class="mark">○</span><span><b>Notarise the .dmg</b> so the first thing a visitor does is not fight Gatekeeper</span></li>
+    <li class="open"><span class="mark">○</span><span><b>A GIF of ⌘F</b> finding an old session, above the fold in the README</span></li>
+    <li class="open"><span class="mark">○</span><span><b>Verify <code>bun server.ts</code></b> on a clean machine</span></li>
+    <li class="done"><span class="mark">✓</span><span>Landing page can take a spike (GitHub Pages)</span></li>
+    <li class="done"><span class="mark">✓</span><span>Repo public, MIT, release published</span></li>
+    <li class="open"><span class="mark">○</span><span><b>Three hours clear</b> in the calendar after posting</span></li>
+  </ul>
+
+  <footer>Source of truth: <code>docs/launch/show-hn.md</code> in the repo · this page is generated from it by hand, so edit the markdown too.</footer>
+</main>
+
+<script>
+  const t = document.getElementById("t").textContent.trim();
+  const c = document.getElementById("c");
+  c.textContent = t.length + " / 80 characters" + (t.length > 80 ? " — too long, HN truncates" : " — fits");
+  c.classList.toggle("over", t.length > 80);
+
+  document.querySelectorAll(".copy").forEach((b) => {
+    b.onclick = async () => {
+      const src = b.dataset.copy;
+      const text = src.startsWith("#")
+        ? document.querySelector(src).innerText.trim()
+        : src;
+      try { await navigator.clipboard.writeText(text); } catch (e) {}
+      const was = b.textContent;
+      b.textContent = "Copied";
+      b.classList.add("done");
+      setTimeout(() => { b.textContent = was; b.classList.remove("done"); }, 1400);
+    };
+  });
+</script>
