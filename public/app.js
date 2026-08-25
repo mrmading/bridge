@@ -353,11 +353,34 @@ function tabTitle(t) {
   const first = t.msgs.filter((m) => m.kind === "user")[0];
   return first ? first.text.slice(0, 40) : "New session";
 }
+/** Rename a session. The name lives in Bridge's sidecar, never in Claude Code's transcript,
+ *  so it survives resume and compaction. Sessions with no id yet are renamed locally only. */
+async function renameSession(t) {
+  if (!t) return;
+  const next = prompt("Name this session", tabTitle(t));
+  if (next === null) return;
+  const name = next.trim();
+  t.title = name || "New session";
+  t.named = !!name;
+  if (t.id) {
+    await fetch("/api/rename", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: t.id, title: name }) });
+    const hit = S.recent.find((x) => x.id === t.id); if (hit) hit.title = t.title;
+    const ses = S.sessions && S.sessions.find((x) => x.id === t.id); if (ses) ses.title = t.title;
+  }
+  paint();
+  toast(name ? "Renamed" : "Name cleared");
+}
+
 function renderTabs() {
   $("#tabs").innerHTML = S.tabs.map((t, i) =>
     '<div class="tab ' + (i === S.active ? "on" : "") + '" data-tab="' + i + '" title="' + esc(t.path || "") + '">' +
     (t.streaming ? '<span class="tab-live"></span>' : "") +
     '<span class="tab-t">' + esc(tabTitle(t)) + '</span><span class="tab-x" data-close="' + i + '">×</span></div>').join("");
+  $("#tabs").querySelectorAll(".tab").forEach((n) => (n.ondblclick = (e) => {
+    if (e.target.dataset.close !== undefined) return;
+    e.preventDefault(); renameSession(S.tabs[+n.dataset.tab]);
+  }));
   $("#tabs").querySelectorAll("[data-tab]").forEach((n) => (n.onclick = (e) => {
     if (e.target.dataset.close !== undefined) { e.stopPropagation(); closeTab(+e.target.dataset.close); return; }
     activate(+n.dataset.tab);
@@ -852,7 +875,11 @@ function renderTop() {
   const t = T(), c = PAGE();
   const chat = S.view === "chat";
   const label = S.view === "files" ? (S.dir ? S.dir.path.split("/").pop() : "Directory") : S.view === "agents" ? "Agents" : S.view === "activity" ? "Activity" : "Configs";
-  $("#crumbTitle").textContent = chat ? (t ? tabTitle(t) : "Bridge") : c ? c.title : label;
+  const crumb = $("#crumbTitle");
+  crumb.textContent = chat ? (t ? tabTitle(t) : "Bridge") : c ? c.title : label;
+  crumb.title = chat && t ? "Double-click to rename this session" : "";
+  crumb.classList.toggle("renamable", chat && !!t);
+  crumb.ondblclick = chat && t ? () => renameSession(t) : null;
   const cp = $("#crumbPath");
   if (chat && t) {
     cp.innerHTML = '<span class="cwd-lab">Working directory:</span> <button class="cwd-pick caret-r" title="Working directory — the folder Claude Code runs in for this session. Click to change it.">' +

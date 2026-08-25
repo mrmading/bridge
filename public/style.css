@@ -700,3 +700,7 @@ body::after{
 .plan-file{font-family:var(--mono);font-size:11px;color:var(--fg-faint);margin-top:8px}
 .plan-actions{display:flex;gap:8px;margin-top:12px}
 .plan-decided{margin-top:10px;font-size:12px;color:var(--fg-muted);font-style:italic}
+
+/* a session name you can edit: only hints at it on hover, never shouts */
+.crumb .t.renamable { cursor: text; border-radius: 4px; padding: 0 4px; margin: 0 -4px; }
+.crumb .t.renamable:hover { background: var(--bg-hover, rgba(127,127,127,.12)); }

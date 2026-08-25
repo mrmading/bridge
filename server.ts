@@ -75,7 +75,7 @@ const LANGS: Record<string, string> = {
 
 type SessionMeta = {
   id: string; key: string; title: string; preview: string; mtime: number;
-  size: number; turns: number; model?: string; cwd?: string; branch?: string;
+  size: number; turns: number; model?: string; cwd?: string; branch?: string; named?: boolean;
 };
 
 async function firstLines(file: string, bytes = 65536): Promise<string[]> {
@@ -95,6 +95,20 @@ async function lastLines(file: string, bytes = 40000): Promise<string[]> {
 const DATA_DIR = process.env.BRIDGE_DATA || join(dirname(Bun.fileURLToPath(import.meta.url)), ".cache");
 const ROOTS_FILE = join(DATA_DIR, "roots.json");
 const CACHE_FILE = join(DATA_DIR, "session-meta.json");
+/** user-chosen session names. Claude Code owns the transcripts, so Bridge never rewrites
+ *  them; a sidecar keyed by session id survives resume, compaction and cache eviction. */
+const TITLES_FILE = join(DATA_DIR, "titles.json");
+const customTitles = new Map<string, string>();
+try {
+  const disk = JSON.parse(await Bun.file(TITLES_FILE).text());
+  for (const [k, v] of Object.entries(disk)) if (typeof v === "string") customTitles.set(k, v);
+} catch {}
+async function setTitle(id: string, title: string) {
+  const t = title.trim().slice(0, 120);
+  if (t) customTitles.set(id, t); else customTitles.delete(id);
+  await Bun.write(TITLES_FILE, JSON.stringify(Object.fromEntries(customTitles), null, 2));
+  return t;
+}
 const metaCache = new Map<string, { m: number; v: SessionMeta }>();
 try {
   const disk = JSON.parse(await Bun.file(CACHE_FILE).text());
@@ -130,7 +144,14 @@ function persistCache() {
     try { await Bun.write(CACHE_FILE, JSON.stringify(Object.fromEntries(metaCache))); } catch {}
   }, 1500);
 }
+/** derived title + custom name, applied after the cache so a rename shows up without a rescan */
 async function sessionMeta(key: string, file: string): Promise<SessionMeta | null> {
+  const m = await computeMeta(key, file);
+  if (!m) return null;
+  const custom = customTitles.get(m.id);
+  return custom ? { ...m, title: custom, named: true } : m;
+}
+async function computeMeta(key: string, file: string): Promise<SessionMeta | null> {
   const st = await stat(file).catch(() => null);
   if (!st || st.size === 0) return null;
   const cached = metaCache.get(file);
@@ -682,7 +703,10 @@ const server = Bun.serve({
         const file = join(PROJECTS_DIR, q.get("key") || "", (q.get("id") || "") + ".jsonl");
         if (!existsSync(file)) return json({ error: "not found" }, 404);
         const lines = (await readFile(file, "utf8")).split("\n").filter(Boolean);
-        return json(normalizeTranscript(lines));
+        const out = normalizeTranscript(lines);
+        const custom = customTitles.get(q.get("id") || "");
+        if (custom) { out.meta.title = custom; (out.meta as any).named = true; }
+        return json(out);
       }
       if (p === "/api/agents") return json(await collectAgents());
       if (p === "/api/skills") return json(await collectSkills());
@@ -829,6 +853,13 @@ const server = Bun.serve({
         return json(hits.sort((a, b) => b.mtime - a.mtime));
       }
 
+      if (p === "/api/rename" && req.method === "POST") {
+        const { id, title } = await req.json();
+        if (!id || typeof id !== "string") return json({ error: "id required" }, 400);
+        const t = await setTitle(id, String(title ?? ""));
+        logRow({ ts: Date.now(), kind: "session.rename", msg: t || "(cleared)", session: id });
+        return json({ ok: true, id, title: t, named: !!t });
+      }
       if (p === "/api/abort" && req.method === "POST") {
         const { sessionId } = await req.json();
         const c = live.get(sessionId);
