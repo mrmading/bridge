@@ -24,6 +24,8 @@ const S = {
   agentCat: "All",          // which area of expertise the Agents pills are showing
   tree: {}, sel: "", preview: true, // Directory listings + selection; md editor preview pane
   attachments: [],          // files staged in the composer for the next turn
+  editingTab: null,         // index of the tab whose title is being edited inline
+  lastTabClick: null,       // {i, ts} — hand-rolled double-click detection on tabs
 };
 /** the active session tab */
 const T = () => S.tabs[S.active] || null;
@@ -196,19 +198,17 @@ function renderMsg(m) {
         '<div class="plan-actions"><button class="choice primary" data-plan="approve">Approve &amp; build</button><button class="choice" data-plan="revise">Revise</button></div>') +
       "</div></div></div>";
   }
-  if (m.kind === "status") {
-    if (m.done) return "";
-    const secs = Math.max(0, Math.round((Date.now() - m.ts) / 1000));
-    return '<div class="msg"><div class="av a">' + esc(name.slice(0, 1).toUpperCase()) + "</div>" +
-      '<div class="msg-body"><div class="msg-name">' + esc(name) + '<span class="ts">' + fmtTime(m.ts) + "</span></div>" +
-      '<div class="prose status-line"><span class="typing"></span> <span class="status-t">' + esc(m.text) + "</span>" +
-      ' <span class="status-secs">' + (secs >= 2 ? secs + "s" : "") + "</span></div></div></div>";
-  }
-  if (m.kind === "thinking")
+  if (m.kind === "status") return "";   // the live turn state lives above the composer, not in the transcript
+  if (m.kind === "thinking") {
+    /* Thinking blocks arrive with an empty `thinking` field and a signature only — the
+       reasoning text is not exposed — so a card would be an empty box. Show none until
+       real text turns up; the pulsing state above the composer carries the waiting. */
+    if (!m.text.trim()) return "";
     return '<div class="think ' + (m.open ? "open" : "") + '" data-think><div class="think-h">✦ thinking' +
       '<span class="think-count" style="color:var(--fg-faint);font-weight:400">' + (m.text.length > 60 ? " · " + fmtN(m.text.length) + " chars" : "") + "</span>" +
       '<span class="think-x" title="Collapse">×</span></div>' +
       '<div class="think-b"><span class="md">' + esc(m.text) + "</span>" + (m.live ? '<span class="typing"></span>' : "") + "</div></div>";
+  }
   if (m.kind === "tool") {
     const ok = m.result && !m.result.isError, bad = m.result && m.result.isError;
     return '<div class="tool ' + (m.open ? "open" : "") + " " + (m.side ? "sidechain" : "") + '" data-tool>' +
@@ -270,7 +270,9 @@ function wireMsgHandlers(root) {
   });
   root.querySelectorAll("[data-tool] .tool-h").forEach((h) => persist(h));
   root.querySelectorAll("[data-think] .think-h").forEach((h) => persist(h));
-  root.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => { const t = T(); if (t) runTurn(t, b.dataset.choice, []); }));
+  /* A click on an option is the user speaking: record it as their message, exactly as
+     typing it would, before the turn starts — otherwise the answer vanishes from the thread. */
+  root.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => { const t = T(); if (t) sendText(t, b.dataset.choice); }));
   root.querySelectorAll("[data-plan]").forEach((b) => (b.onclick = () => {
     const t = T(), row = b.closest("[data-mi]"), m = t && row && t.msgs[+row.dataset.mi];
     if (!m) return;
@@ -278,12 +280,30 @@ function wireMsgHandlers(root) {
       m.decided = "Approved — building with edits enabled";
       if (DIALS.perm) DIALS.perm.set("acceptEdits");
       renderStream();
-      runTurn(t, "Approved. Implement the plan" + (m.file ? " in " + m.file : " above") + " exactly as written, then report what changed.", []);
+      sendText(t, "Approved. Implement the plan" + (m.file ? " in " + m.file : " above") + " exactly as written, then report what changed.");
     } else { m.decided = "Revising"; renderStream(); const ta = $("#input"); ta.focus(); ta.placeholder = "What should change in the plan?"; }
   }));
   root.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => {
     navigator.clipboard.writeText(b.parentElement.innerText.replace(/^copy\n?/, "")); toast("Copied");
   }));
+}
+/** Draw only the messages the transcript does not have yet. Appending a row leaves every
+ *  existing node untouched; rebuilding the list re-parses all the markdown and re-creates
+ *  every sender row, which is seen as the whole thread flashing when a message arrives.
+ *  Falls back to a full render whenever the DOM and the model could have drifted. */
+function appendRows(t) {
+  const box = $("#streamInner");
+  const have = box.querySelectorAll("[data-mi]").length;
+  if (!t || !t.msgs.length || !have || have >= t.msgs.length) { renderStream(); return; }
+  for (let i = have; i < t.msgs.length; i++) {
+    const el = document.createElement("div");
+    el.className = "mrow";
+    el.dataset.mi = i;
+    el.innerHTML = renderMsg(t.msgs[i]);
+    wireMsgHandlers(el);
+    box.appendChild(el);
+  }
+  renderPhases();
 }
 function renderStream() {
   const t = T();
@@ -293,23 +313,72 @@ function renderStream() {
   wireStart(box);
   renderPhases();
 }
+/** A project is the folder one level below a workspace root, never a container and never a
+ *  subfolder: ballers-society/app and ballers-society/assets-src are both "ballers-society". */
+function projectRootOf(path) {
+  const home = String((S.boot && S.boot.home) || "").replace(/\/+$/, "");
+  const GENERIC = ["Desktop", "Documents", "Downloads", "Developer", "Projects", "Code", "dev", "repos", "src", "workspace"];
+  const containers = S.roots.concat(GENERIC.map((d) => home + "/" + d), [home])
+    .map((d) => String(d).replace(/\/+$/, "")).filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  if (path.indexOf(home + "/.claude") === 0) return null;   // Bridge's own config tree is not a project
+  for (const c of containers) {
+    if (path === c) return null;                            // the container itself is not a project
+    if (path.indexOf(c + "/") === 0) return c + "/" + path.slice(c.length + 1).split("/")[0];
+  }
+  return path;
+}
+/** the distinct projects behind the recent sessions, newest first */
+function recentProjects(n) {
+  const by = new Map();
+  for (const s of S.recent) {
+    const root = s.projectPath && projectRootOf(s.projectPath);
+    if (!root) continue;
+    const hit = by.get(root);
+    if (hit) { hit.count++; if (s.mtime > hit.mtime) hit.mtime = s.mtime; }
+    else by.set(root, { path: root, name: root.split("/").pop(), mtime: s.mtime, count: 1 });
+  }
+  return [...by.values()].sort((a, b) => b.mtime - a.mtime).slice(0, n || 10);
+}
 function startScreen(t) {
-  const recents = S.recent.slice(0, 6);
+  const picked = t && t.pick;
+  const projects = picked ? [picked] : recentProjects(10);
+  const head = picked ? "What are we going to do in " + esc(picked.name) + "?" : "What are we working on?";
   return '<div class="start"><div class="wordmark">BRIDGE</div>' +
     '<p class="start-sub">Working in <code>' + esc((t && t.path) || (S.boot && S.boot.home) || "") +
     "</code> · the real <code>claude</code> CLI, with your hooks, skills and PAI context intact.</p>" +
     '<button class="start-search" data-find><span>⌕</span><span>Search everything you have ever run…</span><kbd>⌘F</kbd></button>' +
-    (recents.length ? '<div class="start-recent"><div class="section-h">Recent sessions</div>' +
-      recents.map((s, i) => '<div class="start-row" data-recent="' + i + '"><span class="sr-t">' + esc(s.title) + "</span>" +
-        '<span class="sr-m">' + esc(s.projectName) + " · " + fmtAgo(s.mtime) + "</span></div>").join("") + "</div>" : "") +
+    (projects.length ? '<div class="start-recent"><div class="section-h">' + head + "</div>" +
+      '<div class="start-projects' + (picked ? " one" : "") + '">' + projects.map((pr, i) =>
+        '<div class="pcard' + (picked ? " on" : "") + '" data-project="' + i + '" title="' +
+        esc(picked ? "Click to pick a different project" : pr.path) + '">' +
+        '<span class="pc-n">' + esc(pr.name) + "</span>" +
+        '<span class="pc-m">' + esc(fmtAgo(pr.mtime)) + " · " + pr.count + (pr.count === 1 ? " session" : " sessions") + "</span>" +
+        '<span class="pc-p">' + esc(short(pr.path, 40)) + "</span></div>").join("") + "</div></div>" : "") +
     "</div>";
+}
+/** Picking a project names the tab after it, points the session at its folder and
+ *  collapses the grid to the one card, so the start screen becomes the question. */
+async function pickProject(pr) {
+  const t = T();
+  if (!t) return;
+  t.pick = { path: pr.path, name: pr.name, mtime: pr.mtime, count: pr.count };
+  t.title = pr.name.charAt(0).toUpperCase() + pr.name.slice(1);
+  t.named = true;
+  await useFolder(pr.path);
+  paint();
+  const ta = $("#input");
+  if (ta) { ta.placeholder = "What are we going to do in " + pr.name + "?"; ta.focus(); }
 }
 function wireStart(box) {
   const fb = box.querySelector("[data-find]");
   if (fb) fb.onclick = () => openFinder("");
-  box.querySelectorAll("[data-recent]").forEach((n) => (n.onclick = () => {
-    const s = S.recent[+n.dataset.recent];
-    openSessionIn(s.project, s.id, s.projectPath, s.title);
+  const t = T();
+  const projects = t && t.pick ? [t.pick] : recentProjects(10);
+  box.querySelectorAll("[data-project]").forEach((n) => (n.onclick = () => {
+    if (t && t.pick) { t.pick = null; paint(); return; }   // clicking the chosen card reopens the grid
+    const pr = projects[+n.dataset.project];
+    if (pr) pickProject(pr);
   }));
 }
 function scrollDown(force) {
@@ -330,7 +399,7 @@ function renderPhases() {
 function makeTab(opts) {
   const path = (opts && opts.path) || (T() && T().path) || S.cwd || S.roots[0] || (S.boot && S.boot.home);
   const t = Object.assign({
-    id: null, key: null, path: path, name: String(path).split("/").pop() || "~",
+    id: null, key: null, path: path, name: String(path).split("/").pop() || "~", pick: null,
     title: "New session", msgs: [], usage: null, model: "", branch: "",
     live: null, streaming: false, lastResult: null,
   }, opts || {});
@@ -355,38 +424,63 @@ function tabTitle(t) {
 }
 /** Rename a session. The name lives in Bridge's sidecar, never in Claude Code's transcript,
  *  so it survives resume and compaction. Sessions with no id yet are renamed locally only. */
-async function renameSession(t) {
-  if (!t) return;
-  const next = prompt("Name this session", tabTitle(t));
-  if (next === null) return;
-  const name = next.trim();
+function beginRename(i) {
+  if (S.tabs[i]) { S.editingTab = i; renderTabs(); }
+}
+async function commitRename(i, value) {
+  const t = S.tabs[i];
+  S.editingTab = null;
+  if (!t) { paint(); return; }
+  const name = String(value == null ? "" : value).trim();
+  const was = t.title;
   t.title = name || "New session";
   t.named = !!name;
+  paint();
+  if (was === t.title) return;
   if (t.id) {
     await fetch("/api/rename", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: t.id, title: name }) });
     const hit = S.recent.find((x) => x.id === t.id); if (hit) hit.title = t.title;
     const ses = S.sessions && S.sessions.find((x) => x.id === t.id); if (ses) ses.title = t.title;
   }
-  paint();
   toast(name ? "Renamed" : "Name cleared");
 }
 
 function renderTabs() {
+  const editing = S.editingTab;
+  const live = $("#tabs .tab-edit");
+  if (live && document.activeElement === live && +live.dataset.edit === editing) return;  // never clobber the open field
   $("#tabs").innerHTML = S.tabs.map((t, i) =>
-    '<div class="tab ' + (i === S.active ? "on" : "") + '" data-tab="' + i + '" title="' + esc(t.path || "") + '">' +
+    '<div class="tab ' + (i === S.active ? "on" : "") + '" data-tab="' + i + '" title="' + esc(t.path || "") + ' · double-click the title to rename">' +
     (t.streaming ? '<span class="tab-live"></span>' : "") +
-    '<span class="tab-t">' + esc(tabTitle(t)) + '</span><span class="tab-x" data-close="' + i + '">×</span></div>').join("");
-  $("#tabs").querySelectorAll(".tab").forEach((n) => (n.ondblclick = (e) => {
-    if (e.target.dataset.close !== undefined) return;
-    e.preventDefault(); renameSession(S.tabs[+n.dataset.tab]);
-  }));
+    (i === editing
+      ? '<input class="tab-edit" data-edit="' + i + '" value="' + esc(tabTitle(t)) + '" spellcheck="false">'
+      : '<span class="tab-t">' + esc(tabTitle(t)) + "</span>") +
+    '<span class="tab-x" data-close="' + i + '">×</span></div>').join("");
+  /* Double-click is detected by hand: the first click repaints and replaces every
+     tab node, so a native dblclick lands on #tabs, never on the tab itself. */
   $("#tabs").querySelectorAll("[data-tab]").forEach((n) => (n.onclick = (e) => {
     if (e.target.dataset.close !== undefined) { e.stopPropagation(); closeTab(+e.target.dataset.close); return; }
-    activate(+n.dataset.tab);
+    const i = +n.dataset.tab, now = Date.now();
+    if (S.lastTabClick && S.lastTabClick.i === i && now - S.lastTabClick.ts < 450) {
+      S.lastTabClick = null; e.preventDefault(); beginRename(i); return;
+    }
+    S.lastTabClick = { i: i, ts: now };
+    activate(i);
   }));
+  const inp = $("#tabs .tab-edit");
+  if (inp) {
+    inp.onclick = (e) => e.stopPropagation();
+    inp.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") { e.preventDefault(); commitRename(+inp.dataset.edit, inp.value); }
+      else if (e.key === "Escape") { e.preventDefault(); S.editingTab = null; inp.onblur = null; paint(); }
+    };
+    inp.onblur = () => { if (S.editingTab !== null) commitRename(+inp.dataset.edit, inp.value); };
+    inp.focus(); inp.select();
+  }
   const at = $("#tabs .tab.on");
-  if (at) at.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if (at && editing === null) at.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 const unread = () => S.notes.filter((x) => !x.read).length;
 function saveNotes() { try { localStorage.bridgeNotes = JSON.stringify(S.notes.slice(0, 60)); } catch (e) {} }
@@ -879,7 +973,7 @@ function renderTop() {
   crumb.textContent = chat ? (t ? tabTitle(t) : "Bridge") : c ? c.title : label;
   crumb.title = chat && t ? "Double-click to rename this session" : "";
   crumb.classList.toggle("renamable", chat && !!t);
-  crumb.ondblclick = chat && t ? () => renameSession(t) : null;
+  crumb.ondblclick = chat && t ? () => beginRename(S.active) : null;
   const cp = $("#crumbPath");
   if (chat && t) {
     cp.innerHTML = '<span class="cwd-lab">Working directory:</span> <button class="cwd-pick caret-r" title="Working directory — the folder Claude Code runs in for this session. Click to change it.">' +
@@ -934,7 +1028,20 @@ function renderInspector() {
   $("#inspBody").querySelectorAll("[data-out]").forEach((n) => (n.onclick = () => { S.view = "files"; openPage(n.dataset.out, n.dataset.out.split("/").pop(), "Directory"); }));
 }
 
-function paint() { renderRail(); renderTabs(); renderPanel(); renderMain(); renderTop(); renderInspector(); sendBtn(); }
+/** The live turn state: a pulsing dot and a label above the composer, replacing the row of
+ *  empty thinking cards that used to march down the transcript while a turn ran. */
+function renderTurnState() {
+  const el = $("#turnState");
+  if (!el) return;
+  const t = T();
+  const s = t && S.view === "chat" ? t.msgs.filter((m) => m.kind === "status" && !m.done).pop() : null;
+  if (!s) { el.hidden = true; el.innerHTML = ""; return; }
+  const secs = Math.max(0, Math.round((Date.now() - s.ts) / 1000));
+  el.hidden = false;
+  el.innerHTML = '<span class="ts-dot"></span><span class="ts-t">' + esc(s.text) + "</span>" +
+    (secs >= 2 ? '<span class="ts-s">' + secs + "s</span>" : "");
+}
+function paint() { renderRail(); renderTabs(); renderPanel(); renderMain(); renderTop(); renderInspector(); sendBtn(); renderTurnState(); }
 
 /* ─────────────────────────── actions ──────────────────────────── */
 
@@ -1005,6 +1112,22 @@ async function addAttachment(a) {
   const ta2 = $("#input"); ta2.focus(); if (!ta2.value.trim()) ta2.placeholder = S.attachments.length + " file" + (S.attachments.length > 1 ? "s" : "") + " attached — type a message or press ↵";
 }
 
+/** Send `text` as the user's own message on `tab` — the shared path for typed input,
+ *  clicked options and plan decisions, so every one of them shows up in the thread. */
+function sendText(tab, text) {
+  if (!tab || !String(text || "").trim()) return;
+  const msg = { kind: "user", text: String(text).trim(), ts: Date.now() };
+  tab.msgs.push(msg);
+  if (tab.streaming) {
+    msg.queued = true;
+    (tab.queue = tab.queue || []).push(msg);
+    if (T() === tab) { appendRows(tab); scrollDown(true); }
+    return;
+  }
+  if (T() === tab) { appendRows(tab); scrollDown(true); }
+  runTurn(tab, msg.text, []);
+}
+
 async function send() {
   const ta = $("#input");
   const text = ta.value.trim();
@@ -1019,7 +1142,7 @@ async function send() {
   if (tab.streaming) {
     msg.queued = true;
     (tab.queue = tab.queue || []).push(msg);
-    if (T() === tab) { renderStream(); scrollDown(true); }
+    if (T() === tab) { appendRows(tab); scrollDown(true); }
     return;
   }
   runTurn(tab, text, msg.attachments);
@@ -1030,7 +1153,7 @@ async function runTurn(tab, text, attachments) {
   // start) before its first byte, and silence reads as "nothing happened".
   const statusIdx = tab.msgs.push({ kind: "status", text: "Thinking", ts: Date.now(), live: true }) - 1;
   const status = tab.msgs[statusIdx];
-  if (T() === tab) renderStream();
+  if (T() === tab) appendRows(tab);
   renderTabs(); sendBtn(); scrollDown(true);
 
   const ultra = !!(window.BridgeEffort && window.BridgeEffort.ultra);
@@ -1046,18 +1169,6 @@ async function runTurn(tab, text, attachments) {
     attachments: attachments || [],
   };
   let blocks = {};
-  // Coalesce redraws to one per animation frame. renderStream() rebuilds the whole
-  // transcript (innerHTML + markdown re-parse + re-wiring), and a streaming turn used to
-  // call it once per token delta, which is what made long turns feel like sludge.
-  let flushQueued = false;
-  const flush = () => {
-    if (T() !== tab || flushQueued) return;
-    flushQueued = true;
-    requestAnimationFrame(() => {
-      flushQueued = false;
-      if (T() === tab) { renderStream(); scrollDown(); }
-    });
-  };
   // Text/thinking deltas only touch one message, so update that row in place
   // instead of rebuilding the transcript — this is what makes streaming smooth.
   const dirty = new Set();
@@ -1065,7 +1176,7 @@ async function runTurn(tab, text, attachments) {
   const flushDelta = (idx) => {
     if (T() !== tab) return;
     dirty.add(idx);
-    if (deltaQueued || flushQueued) return;
+    if (deltaQueued) return;
     deltaQueued = true;
     requestAnimationFrame(() => {
       deltaQueued = false;
@@ -1084,6 +1195,7 @@ async function runTurn(tab, text, attachments) {
       }
       dirty.clear();
       if (miss) renderStream();
+      renderTurnState();
       scrollDown();
     });
   };
@@ -1095,7 +1207,7 @@ async function runTurn(tab, text, attachments) {
     if (p.t === "start") { tab.live = tab.live || p.sessionId; setStatus("Starting Claude Code"); return; }
     if (p.t === "stderr") {
       const line = String(p.d).trim();
-      if (line && !/hook|deprecat|warning/i.test(line)) { tab.msgs.push({ kind: "assistant", text: "```\n" + line + "\n```", ts: Date.now() }); flush(); }
+      if (line && !/hook|deprecat|warning/i.test(line)) { tab.msgs.push({ kind: "assistant", text: "```\n" + line + "\n```", ts: Date.now() }); flushDelta(tab.msgs.length - 1); }
       return;
     }
     if (p.t === "end" || p.t === "error" || p.t === "raw") return;
@@ -1120,7 +1232,10 @@ async function runTurn(tab, text, attachments) {
         const cb = ev.content_block || {};
         if (cb.type === "text") blocks[ev.index] = tab.msgs.push({ kind: side ? "agent_text" : "assistant", text: "", ts: Date.now(), live: true, model: tab.model }) - 1;
         else if (cb.type === "thinking") blocks[ev.index] = tab.msgs.push({ kind: "thinking", text: "", ts: Date.now(), live: true, open: true, side: side }) - 1;
-        if (blocks[ev.index] !== undefined) flushDelta(blocks[ev.index]); else flush();
+        // Blocks we do not render (tool_use, server_tool_use, redacted_thinking) push no
+        // message, so there is nothing new to draw. Rebuilding the whole transcript here is
+        // what made earlier messages and their sender rows flash on every tool call.
+        if (blocks[ev.index] !== undefined) flushDelta(blocks[ev.index]);
       } else if (ev.type === "content_block_delta") {
         const idx = blocks[ev.index];
         if (idx === undefined) return;

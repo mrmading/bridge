@@ -260,6 +260,8 @@ kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--border);bord
 .tab:hover{background:var(--bg-hover);color:var(--fg)}
 .tab.on{background:var(--bg);border-color:var(--border);color:var(--fg);font-weight:560;margin-bottom:-1px;padding-bottom:1px}
 .tab-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.tab-edit{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--accent,#4c8dff);border-radius:5px;
+  padding:1px 5px;margin:-1px 0;min-width:70px;max-width:190px;outline:none}
 .tab-x{width:16px;height:16px;border-radius:4px;display:grid;place-items:center;font-size:13px;line-height:1;color:var(--fg-faint);opacity:0;flex:none}
 .tab:hover .tab-x,.tab.on .tab-x{opacity:1}
 .tab-x:hover{background:var(--bg-active);color:var(--fg)}
@@ -448,6 +450,16 @@ body::after{
 .start-row:hover{background:var(--bg-hover)}
 .sr-t{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sr-m{margin-left:auto;font-size:11.5px;color:var(--fg-faint);white-space:nowrap;font-family:var(--mono)}
+.start-projects{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;margin-top:4px}
+.start-projects.one{grid-template-columns:minmax(190px,260px)}
+.pcard.on{border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 1px var(--accent) inset}
+.pcard.on .pc-n{color:var(--accent)}
+.pcard{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;
+  cursor:pointer;background:var(--bg-raised);transition:background .12s,border-color .12s,transform .12s}
+.pcard:hover{background:var(--bg-hover);border-color:var(--fg-faint);transform:translateY(-1px)}
+.pc-n{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pc-m{font-size:11px;color:var(--fg-muted);font-family:var(--mono)}
+.pc-p{font-size:10.5px;color:var(--fg-faint);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .tab-fill{flex:1;min-width:8px}
 .theme-ic{font-size:15px;line-height:1}
@@ -704,3 +716,12 @@ body::after{
 /* a session name you can edit: only hints at it on hover, never shouts */
 .crumb .t.renamable { cursor: text; border-radius: 4px; padding: 0 4px; margin: 0 -4px; }
 .crumb .t.renamable:hover { background: var(--bg-hover, rgba(127,127,127,.12)); }
+
+/* live turn state above the composer */
+.turnstate{max-width:840px;margin:0 auto;display:flex;align-items:center;gap:8px;padding:0 4px 7px;font-size:12px;color:var(--fg-muted)}
+.turnstate .ts-dot{width:9px;height:9px;border-radius:50%;background:#a855f7;box-shadow:0 0 0 0 rgba(168,85,247,.55);
+  animation:tsPulse 1.4s ease-out infinite}
+.turnstate .ts-t{letter-spacing:.01em}
+.turnstate .ts-s{color:var(--fg-faint);font-family:var(--mono);font-size:11px}
+@keyframes tsPulse{0%{box-shadow:0 0 0 0 rgba(168,85,247,.55);opacity:1}
+  70%{box-shadow:0 0 0 7px rgba(168,85,247,0);opacity:.65}100%{box-shadow:0 0 0 0 rgba(168,85,247,0);opacity:1}}

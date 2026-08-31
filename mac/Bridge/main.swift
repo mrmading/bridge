@@ -108,13 +108,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         port = freePort(from: PORT_START)
 
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Bridge")
-        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-
+        // No BRIDGE_DATA override: the server defaults to ~/.claude/bridge so the app and a
+        // checkout share one set of roots and session names instead of drifting apart.
         var env = ProcessInfo.processInfo.environment
         env["BRIDGE_PORT"] = String(port)
-        env["BRIDGE_DATA"] = support.path
         env["PATH"] = (env["PATH"] ?? "") + ":\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin"
 
         // Launch through a login shell: a Finder-launched app inherits a bare environment,

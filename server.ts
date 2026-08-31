@@ -6,7 +6,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
@@ -90,9 +90,22 @@ async function lastLines(file: string, bytes = 40000): Promise<string[]> {
   return slice.split("\n").slice(start ? 1 : 0).filter(Boolean);
 }
 
-/** where Bridge keeps its own state: alongside the source when run from a checkout,
- *  under Application Support when running inside the packaged .app */
-const DATA_DIR = process.env.BRIDGE_DATA || join(dirname(Bun.fileURLToPath(import.meta.url)), ".cache");
+/** Where Bridge keeps its own state. One store under ~/.claude, shared by the checkout and the
+ *  packaged .app: a bundle-local dir would give the two copies different roots and titles, and
+ *  would be wiped by every reinstall. A legacy .cache beside the source is migrated once. */
+const LEGACY_DATA_DIRS = [
+  join(dirname(Bun.fileURLToPath(import.meta.url)), ".cache"),                 // a checkout
+  join(HOME, "Library", "Application Support", "Bridge"),                      // the pre-7.x packaged app
+];
+const DATA_DIR = process.env.BRIDGE_DATA || join(CLAUDE_DIR, "bridge");
+try {
+  await mkdir(DATA_DIR, { recursive: true });
+  for (const f of ["roots.json", "titles.json", "session-meta.json"]) {
+    if (existsSync(join(DATA_DIR, f))) continue;
+    const from = LEGACY_DATA_DIRS.find((d) => existsSync(join(d, f)));
+    if (from) await Bun.write(join(DATA_DIR, f), Bun.file(join(from, f)));
+  }
+} catch {}
 const ROOTS_FILE = join(DATA_DIR, "roots.json");
 const CACHE_FILE = join(DATA_DIR, "session-meta.json");
 /** user-chosen session names. Claude Code owns the transcripts, so Bridge never rewrites
