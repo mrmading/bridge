@@ -771,3 +771,8 @@ body::after{
   background:color-mix(in srgb,var(--accent-soft) 70%,transparent)}
 .start-auth h3{font-size:14.5px;margin-bottom:6px}
 .start-auth p{font-size:12.5px;color:var(--fg-muted);margin-bottom:14px}
+
+/* AUTO agent routing: the dial rung, and the agent a message was handed to */
+.ed-p.auto{font-weight:640;letter-spacing:.04em}
+.ed-p.auto[aria-checked="true"]{color:var(--accent)}
+.tag.agent{background:var(--accent-soft);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);font-family:var(--mono);font-size:10.5px}

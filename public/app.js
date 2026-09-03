@@ -56,7 +56,8 @@ const HELP = {
     max: "maximum budget, slowest",
     ultracode: "max effort plus multi-agent orchestration: Claude Code fans the task out to a team of agents. Slowest, most thorough, most expensive",
   },
-  agent: { "": "plain Claude Code with your CLAUDE.md and hooks" },
+  agent: { "": "plain Claude Code with your CLAUDE.md and hooks",
+    auto: "Bridge reads each message and hands it to the agent that fits, switching as the work moves. No match means plain Claude Code" },
 };
 
 /* ─────────────────────────── markdown ─────────────────────────── */
@@ -178,7 +179,8 @@ function renderMsg(m) {
   if (m.kind === "user")
     return '<div class="msg user' + (m.queued ? " queued" : "") + '"><div class="av u">' + esc(((S.boot && S.boot.user) || "You").slice(0, 1).toUpperCase()) + "</div>" +
       '<div class="msg-body"><div class="msg-name">You <span class="ts">' + fmtTime(m.ts) + "</span>" +
-      (m.queued ? '<span class="tag">queued</span>' : "") + (m.ultra ? '<span class="tag ultra">ultracode</span>' : "") + "</div>" +
+      (m.queued ? '<span class="tag">queued</span>' : "") + (m.ultra ? '<span class="tag ultra">ultracode</span>' : "") +
+      (m.routedTo ? '<span class="tag agent" title="AUTO routed this message to the ' + esc(m.routedTo) + ' agent">→ ' + esc(m.routedTo) + "</span>" : "") + "</div>" +
       '<div class="bubble prose">' + md(m.text) + "</div></div></div>";
   if (m.kind === "assistant" || m.kind === "agent_text") {
     const side = m.kind === "agent_text";
@@ -1233,6 +1235,7 @@ async function runTurn(tab, text, attachments) {
       if (line && !/hook|deprecat|warning/i.test(line)) { tab.msgs.push({ kind: "assistant", text: "```\n" + line + "\n```", ts: Date.now() }); flushDelta(tab.msgs.length - 1); }
       return;
     }
+    if (p.t === "ping") return;                 // heartbeat: keeps a long fan-out from timing out
     if (p.t === "end" || p.t === "error" || p.t === "raw") return;
     const d = p.d;
     if (!d || !d.type) return;
@@ -1277,12 +1280,16 @@ async function runTurn(tab, text, attachments) {
       return;
     }
     if (d.type === "assistant") {
+      if (tab.flow && !tab.flow.done && tab.lastResult) tab.flow.done = true;   // the report is landing
       endStatus();
       const side = !!d.parent_tool_use_id;
       const streamed = Object.keys(blocks).length > 0;
       ((d.message && d.message.content) || []).forEach((c) => {
         if (c.type === "tool_use") {
           if (c.name === "Write" && c.input && /\/Plans\/[^/]+\.md$/.test(String(c.input.file_path || ""))) planFile = c.input.file_path;
+          // A workflow returns a task id in milliseconds and then the turn goes quiet for as
+          // long as the agents run. Track it so the wait reads as work, not as a hang.
+          if (c.name === "Workflow") tab.flow = { at: Date.now(), id: null, name: (c.input && c.input.name) || "", done: false };
           flushDelta(tab.msgs.push({ kind: "tool", name: c.name, input: c.input, id: c.id, ts: Date.now(), side: side, result: null }) - 1);
         }
         else if (c.type === "text" && !streamed && c.text && c.text.trim())
@@ -1301,6 +1308,13 @@ async function runTurn(tab, text, attachments) {
               content: typeof c.content === "string" ? c.content : (c.content || []).map((z) => z.text || "[" + z.type + "]").join("\n"),
               isError: !!c.is_error,
             };
+            if (m.name === "Workflow" && tab.flow) {
+              const idm = /Task ID:\s*(\S+)/.exec(m.result.content || "");
+              const sm = /Summary:\s*(.+)/.exec(m.result.content || "");
+              if (idm) tab.flow.id = idm[1];
+              if (sm) tab.flow.summary = sm[1].trim();
+              if (m.result.isError) tab.flow.done = true;
+            }
             flushDelta(i);
             break;
           }
@@ -1310,9 +1324,30 @@ async function runTurn(tab, text, attachments) {
     }
     if (d.type === "result") {
       tab.lastResult = { total_cost_usd: d.total_cost_usd, duration_ms: d.duration_ms, turns: d.num_turns };
+      // `claude -p` stays alive past this result to report a workflow back, so the turn is only
+      // over when the process closes. Until then, say what is being waited on.
+      if (tab.flow && !tab.flow.done) setStatus("Workflow running" + (tab.flow.name ? " · " + tab.flow.name : "") + " — agents are working");
       if (T() === tab) { renderTop(); renderInspector(); }
       refreshSessions();
     }
+  }
+
+  // AUTO resolves here, one message before the turn: the pick is shown, kept on the tab so the
+  // next message can stay with it, and sent as the agent for this turn only.
+  if (body.agent === "auto") {
+    setStatus("Choosing an agent");
+    let r = { agent: "" };
+    try {
+      r = await (await fetch("/api/route", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: text, previous: tab.agent || "" }) })).json();
+    } catch (e) {}
+    body.agent = r.agent || null;
+    tab.agent = r.agent || "";
+    tab.route = r;
+    const um = tab.msgs.filter((m) => m.kind === "user").pop();
+    if (um) { um.routedTo = r.agent || ""; flushDelta(tab.msgs.indexOf(um)); }
+    setStatus(r.agent ? "Handing this to " + r.agent : "Thinking");
+    if (T() === tab) renderTop();
   }
 
   try {
@@ -1453,7 +1488,15 @@ function initModelDial(models) {
 function initAgentDial(agents) {
   const tiers = [{ v: "", label: "none", help: "plain Claude Code" }]
     .concat(agents.map((a) => ({ v: a.name, label: a.name, help: a.description ? String(a.description).replace(/\s+/g, " ").slice(0, 70) : "" })));
-  makeDial({ name: "Agent — run as a custom agent", dial: "#labAgent", track: "#agentTrack", select: "#selAgent", key: "bridgeAgent", initial: "", tiers });
+  // AUTO leads and is the default: the agent is chosen per message from what you actually
+  // wrote, and changes as the work changes, instead of staying pinned wherever you left it.
+  tiers.unshift({ v: "auto", label: "AUTO", cls: "auto", help: "Bridge picks the agent for each message" });
+  // one-time move to AUTO: a stored "" is the old default, not a choice anyone made
+  if (!localStorage.bridgeAgentV2) {
+    if (!localStorage.bridgeAgent) localStorage.bridgeAgent = "auto";
+    localStorage.bridgeAgentV2 = "1";
+  }
+  makeDial({ name: "Agent — run as a custom agent", dial: "#labAgent", track: "#agentTrack", select: "#selAgent", key: "bridgeAgent", initial: "auto", tiers });
 }
 /* guardrails: four rungs in plain words, mapped onto the CLI's permission modes */
 const GUARDRAILS = [
@@ -1786,7 +1829,7 @@ function toggleTheme() {
   initPermDial(b.permissionModes);
   $("#selEffort").innerHTML = b.efforts.map((e) => opt(e, e || "effort", HELP.effort[e])).join("") + opt("ultracode", "ULTRACODE", HELP.effort.ultracode);
   initEffortDial(b.efforts);
-  $("#selAgent").innerHTML = opt("", "no agent", HELP.agent[""]) + agents.map((a) => opt(a.name, a.name, a.description ? String(a.description).slice(0, 160) : "")).join("");
+  $("#selAgent").innerHTML = opt("auto", "auto", HELP.agent.auto) + opt("", "no agent", HELP.agent[""]) + agents.map((a) => opt(a.name, a.name, a.description ? String(a.description).slice(0, 160) : "")).join("");
   // Model and Agent are dials too (after the selects have options, since the dial sets sel.value)
   initModelDial(b.models);
   initAgentDial(agents);

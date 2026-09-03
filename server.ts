@@ -603,13 +603,23 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void) {
   const auth = await authStatus();
   if (!auth.loggedIn) { send({ t: "auth", d: auth }); send({ t: "end", code: 0 }); done(); return null; }
   const sessionId: string = req.sessionId || randomUUID();
+  // `--agent` does not reach a -p turn (see § agent routing), so the agent is asked for in the
+  // system prompt, where the main loop can act on it with the Agent tool. The flag goes along
+  // too: it costs nothing and starts working the day the CLI honours it.
+  const agent = typeof req.agent === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(req.agent) ? req.agent : "";
+  const protocol = agent ? BRIDGE_PROTOCOL + "\n" + [
+    "",
+    "3. This turn belongs to the `" + agent + "` agent. Dispatch it with the Agent tool",
+    "   (subagent_type: \"" + agent + "\"), give it the request in full with the context it needs, and answer",
+    "   from what it returns. Handle the turn yourself only if that agent plainly cannot do this work.",
+  ].join("\n") : BRIDGE_PROTOCOL;
   const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-    "--append-system-prompt", BRIDGE_PROTOCOL];
+    "--append-system-prompt", protocol];
   if (req.resume) args.push("--resume", req.resume);
   else args.push("--session-id", sessionId);
   args.push("--permission-mode", req.permissionMode || "acceptEdits");
   if (req.model) args.push("--model", req.model);
-  if (req.agent) args.push("--agent", req.agent);
+  if (agent) args.push("--agent", agent);
   if (req.effort) args.push("--effort", req.effort);
 
   const attachments = Array.isArray(req.attachments) ? req.attachments : [];
@@ -694,6 +704,87 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void) {
   return sessionId;
 }
 
+
+
+/* ────────────────────────── agent routing ──────────────────────────
+ * Two facts shape this. First, `--agent` is parsed but does nothing to a `-p` turn on
+ * CLI 2.1.259: a custom agent's prompt and tool limits are not applied (verified with a
+ * throwaway agent whose prompt was "reply only ZEBRA" — the reply came back in the main
+ * voice). So an agent is put to work the way it actually works, by asking the main loop
+ * to dispatch it. Second, choosing the agent has to be free: a model call in front of
+ * every message costs ~6s of CLI boot, which is more than most turns take. So the choice
+ * is made here, on the agent descriptions the user already wrote. */
+const RT_STOP = new Set(("the a an and or of to in on for with that this it is was were be been are am " +
+  "we i you my our your me us they them he she about from what where when how why did do does done " +
+  "can could would should will shall may might must have has had get got make made use used using " +
+  "please just now then than there here all any some more most very really need needs want wants " +
+  "let lets like into out up down over under again also too but if so as at by no not only own same").split(/\s+/));
+const words = (s: string) => (s.toLowerCase().match(/[a-z][a-z0-9+.#_-]{1,}/g) || []).filter((w) => w.length > 2 && !RT_STOP.has(w));
+
+type AgentDoc = { name: string; nameW: string[]; descW: Set<string>; catW: Set<string>; bodyW: Set<string>; df: string[] };
+let agentIndex: { at: number; docs: AgentDoc[]; idf: Map<string, number> } | null = null;
+
+async function agentDocs() {
+  if (agentIndex && Date.now() - agentIndex.at < 60_000) return agentIndex;
+  const agents = await collectAgents();
+  // Team agents share a blurb almost word for word ("Setpoint marketing team — …"), so the
+  // description alone leaves three of them tied. What separates them is their instructions.
+  const docs: AgentDoc[] = await Promise.all(agents.map(async (a: any) => {
+    const nameW = words(String(a.name).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[:_-]/g, " "));
+    const descW = new Set(words(String(a.description || "")));
+    const catW = new Set(words(String(a.category || a.source || "")));
+    const raw = await readFile(a.path, "utf8").catch(() => "");
+    const body = raw.startsWith("---") ? raw.slice(raw.indexOf("\n---", 3) + 4) : raw;
+    const bodyW = new Set(words(body.slice(0, 12_000)));
+    return { name: a.name, nameW, descW, catW, bodyW, df: [...new Set([...nameW, ...descW, ...catW, ...bodyW])] };
+  }));
+  // a term that shows up in every agent's blurb says nothing about which one to pick
+  const seen = new Map<string, number>();
+  for (const d of docs) for (const t of d.df) seen.set(t, (seen.get(t) || 0) + 1);
+  const idf = new Map<string, number>();
+  for (const [t, n] of seen) idf.set(t, Math.log(1 + docs.length / n));
+  agentIndex = { at: Date.now(), docs, idf };
+  return agentIndex;
+}
+
+/** Score every agent against the message, keep the previous pick unless something clearly beats it. */
+async function routeAgent(prompt: string, previous = "") {
+  const { docs, idf } = await agentDocs();
+  if (!docs.length) return { agent: "", score: 0, why: "no agents installed", runnerUp: "" };
+  const q = [...new Set(words(prompt))];
+  if (!q.length) return { agent: previous, score: 0, why: "nothing to route on", runnerUp: "" };
+
+  const scored = docs.map((d) => {
+    let s = 0;
+    const hit: string[] = [];
+    for (const t of q) {
+      const w = idf.get(t) || 0;
+      if (!w) continue;
+      let f = 0;
+      if (d.nameW.includes(t)) f += 3;
+      if (d.descW.has(t)) f += 2;
+      if (d.catW.has(t)) f += 1.5;
+      if (d.bodyW.has(t)) f += 0.8;
+      if (f) { s += w * f; hit.push(t); }
+    }
+    // normalising by query length keeps long messages from scoring every agent highly
+    s = s / Math.sqrt(q.length);
+    if (d.name === previous) s *= 1.18;          // a follow-up stays with the agent already on the job
+    return { name: d.name, score: s, hit };
+  }).sort((a, b) => b.score - a.score);
+
+  const top = scored[0], next = scored[1];
+  const top3 = scored.slice(0, 3).map((x) => x.name + " " + x.score.toFixed(2));
+  // Below the floor nothing really matched, and a dead heat is a coin toss — both mean plain
+  // Claude Code, which can still dispatch a subagent itself. A narrow win is a real win though:
+  // siblings on one team score within a few percent of each other by construction.
+  if (top.score < 1.6 || (next && top.score - next.score < 0.02)) {
+    return { agent: previous && top.name !== previous ? "" : previous, score: +top.score.toFixed(2),
+      why: "no clear match", runnerUp: next ? next.name : "", top3 };
+  }
+  return { agent: top.name, score: +top.score.toFixed(2), runnerUp: next ? next.name : "",
+    why: top.hit.slice(0, 6).join(", "), top3 };
+}
 
 /* ─────────────────────────── sign-in ───────────────────────────────
  * Claude Code's own login is a terminal flow: it prints an OAuth URL, opens the
@@ -860,6 +951,10 @@ const server = Bun.serve({
         const custom = customTitles.get(q.get("id") || "");
         if (custom) { out.meta.title = custom; (out.meta as any).named = true; }
         return json(out);
+      }
+      if (p === "/api/route" && req.method === "POST") {
+        const { prompt, previous } = await req.json().catch(() => ({}) as any);
+        return json(await routeAgent(String(prompt ?? ""), String(previous ?? "")));
       }
       if (p === "/api/agents") return json(await collectAgents());
       if (p === "/api/skills") return json(await collectSkills());
@@ -1038,7 +1133,14 @@ const server = Bun.serve({
               if (closed) return;
               try { ctrl.enqueue(enc.encode("data: " + JSON.stringify(o) + "\n\n")); } catch { closed = true; }
             };
-            runClaude(body, send, () => { if (!closed) { closed = true; try { ctrl.close(); } catch {} } });
+            // A turn that launches a workflow goes quiet for as long as the agents run, and Bun
+            // drops an idle connection at 255s. A tick every 20s is what lets a long fan-out
+            // finish and report back into the same turn instead of dying half-way.
+            const beat = setInterval(() => send({ t: "ping", ts: Date.now() }), 20_000);
+            runClaude(body, send, () => {
+              clearInterval(beat);
+              if (!closed) { closed = true; try { ctrl.close(); } catch {} }
+            });
           },
         });
         return new Response(stream, {
