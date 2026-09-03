@@ -114,8 +114,8 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
       <button class="chip" id="finderClose">Esc</button>
     </div>
     <div class="finder-scope">
-      <button class="seg on" data-scope="all">All projects</button>
-      <button class="seg" data-scope="project">This folder</button>
+      <button class="seg on" data-scope="folder" id="segFolder">This folder</button>
+      <button class="seg" data-scope="all">Everything</button>
       <span class="finder-note" id="finderNote">Type a few words and press ↵ — Bridge reads every transcript, not just titles.</span>
     </div>
   </div>
@@ -130,6 +130,14 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
   </div>
   <div class="notes-list" id="notesList"></div>
 </div>
+<div class="sheet-bg" id="signinBg"><div class="sheet">
+  <div class="sheet-head">
+    <span class="sheet-t" id="signinTitle">Sign in to Claude Code</span>
+    <span style="flex:1"></span>
+    <button class="chip" id="signinClose">✕</button>
+  </div>
+  <div class="sheet-body" id="signinBody"></div>
+</div></div>
 <div id="grain"></div>
 <div class="toast" id="toast"></div>
 <script src="/app.js"></script>

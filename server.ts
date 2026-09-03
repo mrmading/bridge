@@ -512,16 +512,31 @@ async function buildDigest(file: string, st: any) {
   return { texts, first: clean(first).slice(0, 240), last: clean(last).slice(0, 240), tools, files: [...files].slice(0, 8) };
 }
 
-async function findSessions(q: string, scope: string, key: string) {
+/** Which transcript directories a scope covers. "folder" is the working directory of the
+ *  session you are in, plus everything nested under it — searching ~/code finds the work you
+ *  did in ~/code/api. An empty list means the folder has no history, so the caller widens. */
+async function scopeDirs(scope: string, key: string, cwd: string): Promise<string[]> {
+  if (scope === "project" && key) return [join(PROJECTS_DIR, key)];
+  if (scope === "folder" && cwd) {
+    const abs = resolve(cwd);
+    return (await listProjects())
+      .filter((p) => p.path === abs || p.path.startsWith(abs + sep))
+      .map((p) => join(PROJECTS_DIR, p.key));
+  }
+  return [PROJECTS_DIR];
+}
+
+async function findSessions(q: string, scope: string, key: string, cwd = "") {
   const tokens = q.toLowerCase().split(/[^a-z0-9_.-]+/).filter((w) => w.length > 2 && !STOP.has(w));
   const terms = (tokens.length ? tokens : q.trim() ? [q.trim()] : []).slice(0, 8);
   if (!terms.length) return [];
-  const root = scope === "project" && key ? join(PROJECTS_DIR, key) : PROJECTS_DIR;
+  const roots = await scopeDirs(scope, key, cwd);
+  if (!roots.length) return [];
 
   // one pass per term, in parallel — per-term counts let us rank on coverage,
   // not on which transcript happens to repeat a single word the most
   const perTerm = await Promise.all(terms.map((t) =>
-    ripgrep(["-c", "-i", "--no-messages", "-g", "*.jsonl", "-e", reEsc(t), root])));
+    ripgrep(["-c", "-i", "--no-messages", "-g", "*.jsonl", "-e", reEsc(t), ...roots])));
 
   const files = new Map<string, number[]>();
   perTerm.forEach((out, ti) => {
@@ -584,6 +599,9 @@ try {
 } catch {}
 
 async function runClaude(req: any, send: (o: any) => void, done: () => void) {
+  // a signed-out CLI fails deep inside the stream; catch it here and hand the UI the sign-in sheet
+  const auth = await authStatus();
+  if (!auth.loggedIn) { send({ t: "auth", d: auth }); send({ t: "end", code: 0 }); done(); return null; }
   const sessionId: string = req.sessionId || randomUUID();
   const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
     "--append-system-prompt", BRIDGE_PROTOCOL];
@@ -676,6 +694,116 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void) {
   return sessionId;
 }
 
+
+/* ─────────────────────────── sign-in ───────────────────────────────
+ * Claude Code's own login is a terminal flow: it prints an OAuth URL, opens the
+ * browser, then blocks on stdin for the code the callback page shows. Bridge drives
+ * that same process — URL out to the UI, pasted code back down stdin — so signing in
+ * never means finding a terminal. Nothing here touches the credential store itself;
+ * the CLI owns that. */
+type AuthStatus = {
+  loggedIn: boolean; authMethod?: string; apiProvider?: string; email?: string;
+  orgName?: string; subscriptionType?: string; keyAuth?: boolean; cli?: boolean; error?: string;
+};
+const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+let authCache: { at: number; v: AuthStatus } | null = null;
+
+async function authStatus(force = false): Promise<AuthStatus> {
+  if (!force && authCache && Date.now() - authCache.at < 30_000) return authCache.v;
+  const keyAuth = !!(process.env.ANTHROPIC_API_KEY || settingsEnv.ANTHROPIC_API_KEY ||
+    process.env.ANTHROPIC_AUTH_TOKEN || settingsEnv.ANTHROPIC_AUTH_TOKEN);
+  let v: AuthStatus;
+  try {
+    const proc = Bun.spawn([CLAUDE_BIN, "auth", "status", "--json"], { stdout: "pipe", stderr: "pipe" });
+    const raw = stripAnsi(await new Response(proc.stdout).text());
+    await proc.exited;
+    const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
+    if (a < 0 || b < a) throw new Error(raw.trim().slice(0, 200) || "no output");
+    v = { ...JSON.parse(raw.slice(a, b + 1)), keyAuth, cli: true };
+    if (keyAuth) v.loggedIn = true;   // an API key in the environment is a valid login
+  } catch (e) {
+    v = {
+      loggedIn: keyAuth, keyAuth, cli: !!Bun.which(CLAUDE_BIN),
+      error: "could not read `claude auth status` — " + String((e as any)?.message || e),
+    };
+  }
+  authCache = { at: Date.now(), v };
+  return v;
+}
+
+type Login = { child: ChildProcess; url: string; out: string; done: boolean; code: number | null; wasIn: boolean };
+let login: Login | null = null;
+function endLogin() {
+  if (!login) return;
+  try { if (!login.done) login.child.kill("SIGTERM"); } catch {}
+  login = null;
+}
+/** the CLI writes its prompt and its errors without a trailing newline, so match on content */
+const badCode = (s: string) => /invalid code|expired|failed|not authorized|error:/i.test(s);
+
+async function startLogin(mode: string, email?: string) {
+  endLogin();
+  const before = await authStatus(true);
+  const args = ["auth", "login", mode === "console" ? "--console" : "--claudeai"];
+  if (email && /^[^\s@]+@[^\s@]+$/.test(email)) args.push("--email", email);
+  let child: ChildProcess;
+  try {
+    child = spawn(CLAUDE_BIN, args, {
+      env: { ...process.env, ...settingsEnv, FORCE_COLOR: "0", NO_COLOR: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (e) { return { error: "could not start `claude auth login` — " + String(e) }; }
+  const L: Login = { child, url: "", out: "", done: false, code: null, wasIn: !!before.loggedIn };
+  login = L;
+  const grab = (c: any) => {
+    L.out = (L.out + stripAnsi(String(c))).slice(-8000);
+    if (!L.url) { const m = L.out.match(/https?:\/\/[^\s"'<>]+/); if (m) L.url = m[0]; }
+  };
+  child.stdout?.on("data", grab);
+  child.stderr?.on("data", grab);
+  child.on("close", (code) => { L.done = true; L.code = code; });
+  child.on("error", (e) => { L.done = true; grab(e); });
+  for (let i = 0; i < 200 && !L.url && !L.done; i++) await Bun.sleep(50);   // up to 10s for the link
+  if (!L.url) {
+    const why = L.out.trim() || "`claude auth login` printed no sign-in link";
+    endLogin();
+    return { error: why.slice(-400) };
+  }
+  logRow({ ts: Date.now(), kind: "auth.login", msg: "sign-in started (" + (mode === "console" ? "console" : "claude.ai") + ")" });
+  return { url: L.url, mode };
+}
+
+/** paste the code from the callback page into the waiting CLI, then confirm from the CLI itself */
+async function submitCode(code: string) {
+  const L = login;
+  if (!L || L.done) return { error: "that sign-in link expired — start again", restart: true };
+  const clean = String(code).trim();
+  if (!clean || clean.length > 400 || /\s/.test(clean)) return { error: "that doesn't look like the code — copy the whole string" };
+  const mark = L.out.length;
+  try { L.child.stdin?.write(clean + "\n"); } catch (e) { endLogin(); return { error: String(e), restart: true }; }
+  for (let i = 0; i < 240; i++) {                       // up to 120s; the browser half is already done
+    await Bun.sleep(500);
+    if (L.done) break;
+    if (badCode(L.out.slice(mark))) break;
+    if (!L.wasIn && i % 4 === 3 && (await authStatus(true)).loggedIn) break;
+  }
+  const st = await authStatus(true);
+  const tail = L.out.slice(mark).trim().split("\n").filter(Boolean).pop() || "";
+  const ok = !!st.loggedIn && !badCode(L.out.slice(mark));
+  endLogin();
+  logRow({ ts: Date.now(), kind: ok ? "auth.ok" : "auth.fail", msg: ok ? "signed in as " + (st.email || "Claude") : tail.slice(0, 120) });
+  return ok ? { ok: true, status: st } : { error: tail.slice(0, 300) || "sign-in did not complete", restart: true, status: st };
+}
+
+async function doLogout() {
+  const proc = Bun.spawn([CLAUDE_BIN, "auth", "logout"], { stdout: "pipe", stderr: "pipe" });
+  const out = stripAnsi(await new Response(proc.stdout).text());
+  await proc.exited;
+  const st = await authStatus(true);
+  logRow({ ts: Date.now(), kind: "auth.logout", msg: st.loggedIn ? "logout failed" : "signed out" });
+  return { ok: !st.loggedIn, status: st, out: out.trim().slice(-200) };
+}
+
 /* ───────────────────────────── routing ─────────────────────────────── */
 
 const server = Bun.serve({
@@ -699,8 +827,20 @@ const server = Bun.serve({
           models: ["opus", "sonnet", "haiku", "fable"],
           permissionModes: ["acceptEdits", "auto", "plan", "bypassPermissions", "manual", "dontAsk"],
           efforts: ["", "low", "medium", "high", "xhigh", "max"],
+          auth: await authStatus(),
         });
       }
+      if (p === "/api/auth") return json(await authStatus(q.get("fresh") === "1"));
+      if (p === "/api/auth/login" && req.method === "POST") {
+        const { mode, email } = await req.json().catch(() => ({}) as any);
+        return json(await startLogin(String(mode || "claudeai"), email ? String(email) : undefined));
+      }
+      if (p === "/api/auth/code" && req.method === "POST") {
+        const { code } = await req.json().catch(() => ({}) as any);
+        return json(await submitCode(String(code ?? "")));
+      }
+      if (p === "/api/auth/cancel" && req.method === "POST") { endLogin(); return json({ ok: true }); }
+      if (p === "/api/auth/logout" && req.method === "POST") return json(await doLogout());
       if (p === "/api/projects") return json(await listProjects());
       if (p === "/api/sessions") return json(await listSessions(q.get("key") || ""));
       if (p === "/api/recent") {
@@ -848,7 +988,7 @@ const server = Bun.serve({
         return json({ ok: true });
       }
       if (p === "/api/find") {
-        const res = await findSessions(q.get("q") || "", q.get("scope") || "all", q.get("key") || "");
+        const res = await findSessions(q.get("q") || "", q.get("scope") || "all", q.get("key") || "", q.get("cwd") || "");
         return json(res);
       }
       if (p === "/api/search") {

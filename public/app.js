@@ -15,7 +15,7 @@ const fmtB = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024
 const short = (p, n = 46) => (String(p).length > n ? "…" + String(p).slice(-n + 1) : String(p));
 
 const S = {
-  view: "chat", boot: null, recent: [], agents: [], skills: [], configs: [],
+  view: "chat", boot: null, auth: { loggedIn: true }, recent: [], agents: [], skills: [], configs: [],
   cwd: "", roots: [], dir: null, acDir: null, filter: "", inspector: false,
   tabs: [], active: 0,      // session tabs, across the top
   page: {},                 // the open detail page, per view
@@ -344,6 +344,14 @@ function startScreen(t) {
   const picked = t && t.pick;
   const projects = picked ? [picked] : recentProjects(10);
   const head = picked ? "What are we going to do in " + esc(picked.name) + "?" : "What are we working on?";
+  // signed out, there is exactly one thing worth offering — everything below needs the CLI
+  if (!authed()) {
+    return '<div class="start"><div class="wordmark">BRIDGE</div>' +
+      '<p class="start-sub">Bridge drives the real <code>claude</code> CLI on this machine, and it is not signed in yet.</p>' +
+      '<div class="start-auth"><h3>Sign in to Claude Code</h3>' +
+      "<p>Opens the Claude sign-in page in your browser and finishes right here. No terminal.</p>" +
+      '<button class="btn-go" data-signin>Sign in</button></div></div>';
+  }
   return '<div class="start"><div class="wordmark">BRIDGE</div>' +
     '<p class="start-sub">Working in <code>' + esc((t && t.path) || (S.boot && S.boot.home) || "") +
     "</code> · the real <code>claude</code> CLI, with your hooks, skills and PAI context intact.</p>" +
@@ -371,6 +379,8 @@ async function pickProject(pr) {
   if (ta) { ta.placeholder = "What are we going to do in " + pr.name + "?"; ta.focus(); }
 }
 function wireStart(box) {
+  const sb = box.querySelector("[data-signin]");
+  if (sb) sb.onclick = () => openSignin();
   const fb = box.querySelector("[data-find]");
   if (fb) fb.onclick = () => openFinder("");
   const t = T();
@@ -636,9 +646,15 @@ function renderRail() {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="' + r.icon + '"/></svg>' +
     '<span class="tip">' + r.label + "</span></button>").join("") +
     '<div class="rail-spacer"></div>' +
+    '<button class="rail-btn ' + (authed() ? "in" : "") + '" id="railAuth">' +
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M12 2a5 5 0 0 1 5 5v1a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5zM4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>' +
+    '<span class="dot"></span><span class="tip">' +
+    (authed() ? esc((S.auth && S.auth.email) || "Signed in") : "Not signed in — click to sign in") + "</span></button>" +
     '<button class="rail-btn" id="railTheme"><span class="theme-ic" id="themeIc"></span><span class="tip">Theme (⌘J)</span></button>';
   $("#rail").querySelectorAll("[data-view]").forEach((b) => (b.onclick = () => go(b.dataset.view)));
   $("#railHome").onclick = goChat;
+  $("#railAuth").onclick = () => openSignin();
   $("#railTheme").onclick = toggleTheme;
 }
 
@@ -1134,6 +1150,8 @@ async function send() {
   const tab = T();
   const ats = S.attachments;
   if ((!text && !ats.length) || !tab) return;
+  // nothing can run signed out; keep what was typed and ask for the sign-in instead
+  if (!authed()) { await refreshAuth(true); paint(); if (!authed()) { openSignin("Sign in first — Claude Code has no account on this machine yet."); return; } }
   ta.value = ""; ta.style.height = "auto";
   const msg = { kind: "user", text: text, ultra: !!(window.BridgeEffort && window.BridgeEffort.ultra), attachments: ats.map((a) => ({ name: a.name, path: a.path, kind: a.kind, mediaType: a.mediaType, data: a.data, error: a.error })), ts: Date.now() };
   S.attachments = []; renderAttachments();
@@ -1205,6 +1223,11 @@ async function runTurn(tab, text, attachments) {
 
   function onEvent(p) {
     if (p.t === "start") { tab.live = tab.live || p.sessionId; setStatus("Starting Claude Code"); return; }
+    if (p.t === "auth") {                    // the CLI is signed out — the turn never started
+      S.auth = p.d || S.auth; endStatus(); paint();
+      openSignin("Claude Code is not signed in, so that message did not run. Sign in and send it again.");
+      return;
+    }
     if (p.t === "stderr") {
       const line = String(p.d).trim();
       if (line && !/hook|deprecat|warning/i.test(line)) { tab.msgs.push({ kind: "assistant", text: "```\n" + line + "\n```", ts: Date.now() }); flushDelta(tab.msgs.length - 1); }
@@ -1521,13 +1544,20 @@ async function updateAc() {
 
 
 /* ────────────────── full-screen session finder (⌘F) ───────────────── */
-let findScope = "all", findSeq = 0;
+/** Search starts where you are working. "folder" covers this session's directory and everything
+ *  under it; when that finds nothing the search widens to every project on its own, so a miss in
+ *  the near scope never costs a second query. */
+let findScope = "folder", findSeq = 0;
+const findCwd = () => (T() && T().path) || S.cwd || "";
 function openFinder(seed) {
   $("#finder").classList.add("on");
+  const seg = $("#segFolder");
+  const name = String(findCwd()).split("/").pop();
+  if (seg) { seg.textContent = name ? "In " + name : "This folder"; seg.title = findCwd(); }
   const inp = $("#finderInput");
   if (seed !== undefined) inp.value = seed;
   inp.focus(); inp.select();
-  if (inp.value.trim()) runFind(); else runFind();
+  runFind();
 }
 function closeFinder() { $("#finder").classList.remove("on"); }
 function hl(text, terms) {
@@ -1542,20 +1572,27 @@ async function runFind() {
   const q = $("#finderInput").value.trim();
   const body = $("#finderBody");
   if (!q) {
-    body.innerHTML = '<div class="finder-empty">Say what you are after in your own words. Bridge reads every transcript on this machine, then summarises what each session actually did.</div>';
+    body.innerHTML = '<div class="finder-empty">Say what you are after in your own words. Bridge searches the folder you are working in first, then everywhere else if nothing matches — reading whole transcripts, not just titles.</div>';
     $("#finderNote").textContent = "Type a few words and press ↵";
     return;
   }
   const seq = ++findSeq;
   $("#finderSpin").style.display = "";
-  const url = "/api/find?q=" + encodeURIComponent(q) + "&scope=" + findScope +
-    (T() && T().key ? "&key=" + encodeURIComponent(T().key) : "");
-  let res = [];
-  try { res = await (await fetch(url)).json(); } catch (e) { res = []; }
+  const hit = async (scope) => {
+    const url = "/api/find?q=" + encodeURIComponent(q) + "&scope=" + scope +
+      "&cwd=" + encodeURIComponent(findCwd()) +
+      (T() && T().key ? "&key=" + encodeURIComponent(T().key) : "");
+    try { return await (await fetch(url)).json(); } catch (e) { return []; }
+  };
+  let res = await hit(findScope), widened = false;
+  if (!res.length && findScope !== "all") { res = await hit("all"); widened = res.length > 0; }
   if (seq !== findSeq) return;
   $("#finderSpin").style.display = "none";
   const terms = q.toLowerCase().split(/[^a-z0-9_.-]+/).filter((w) => w.length > 2);
-  $("#finderNote").textContent = res.length + " sessions match, best first";
+  const here = String(findCwd()).split("/").pop() || "this folder";
+  $("#finderNote").textContent = widened
+    ? "Nothing in " + here + " — " + res.length + " matches everywhere else"
+    : res.length + " sessions match, best first";
   body.innerHTML = res.length ? res.map((r, i) =>
     '<div class="res" data-i="' + i + '">' +
     '<div class="res-t">' + hl(r.title, terms) + "</div>" +
@@ -1568,7 +1605,7 @@ async function runFind() {
     (r.last ? '<div class="res-s"><b>ended</b>' + hl(r.last, terms) + "</div>" : "") +
     r.snippets.map((s) => '<div class="res-snip">' + hl(s, terms) + "</div>").join("") +
     "</div>").join("") :
-    '<div class="finder-empty">Nothing matched “' + esc(q) + '”.</div>';
+    '<div class="finder-empty">Nothing matched “' + esc(q) + '” — not in ' + esc(here) + ', and not in any other project.</div>';
   body.querySelectorAll(".res").forEach((n) => (n.onclick = () => {
     const r = res[+n.dataset.i];
     closeFinder();
@@ -1593,6 +1630,8 @@ function palFill(q) {
     { label: "Back to the conversation", desc: "Esc", run: goChat },
     { label: "Toggle theme", desc: "⌘J", run: toggleTheme },
     { label: "Toggle inspector", desc: "⌘I", run: () => { S.inspector = !S.inspector; renderInspector(); } },
+    { label: authed() ? "Claude account" : "Sign in to Claude Code",
+      desc: authed() ? (S.auth && S.auth.email) || "signed in" : "not signed in", run: () => openSignin() },
   ]
     .concat(RAIL.filter((r) => r.id !== "chat").map((r) => ({ label: "Go to " + r.label, desc: "", run: () => go(r.id) })))
     .concat(S.roots.map((r) => ({ label: "Folder · " + r.split("/").pop(), desc: r, run: () => setCwd(r) })))
@@ -1607,6 +1646,113 @@ function palRender() {
     (c.desc ? '<div class="item-s">' + esc(c.desc) + "</div>" : "") + "</div>").join("") ||
     '<div style="padding:16px;color:var(--fg-faint);font-size:13px">No matches</div>';
   $("#paletteList").querySelectorAll("[data-i]").forEach((n) => (n.onclick = () => { closePalette(); palItems[+n.dataset.i].run(); }));
+}
+
+/* ─────────────────────── sign in to Claude Code ─────────────────────
+ * The CLI's login is a terminal conversation: it prints a link, opens the browser, and
+ * waits on stdin for the code the callback page shows. Bridge runs that same conversation
+ * through this sheet, so a fresh machine gets from "not signed in" to a working session
+ * without ever opening a terminal. */
+const AUTH = { view: "idle", mode: "claudeai", url: "", err: "", busy: false };
+const authed = () => !!(S.auth && S.auth.loggedIn);
+
+async function refreshAuth(fresh) {
+  try { S.auth = await (await fetch("/api/auth" + (fresh ? "?fresh=1" : ""))).json(); } catch (e) {}
+  return S.auth;
+}
+function openSignin(why) {
+  AUTH.view = "idle"; AUTH.err = why || ""; AUTH.url = ""; AUTH.busy = false;
+  $("#signinBg").classList.add("on");
+  renderSignin();
+}
+function closeSignin() {
+  $("#signinBg").classList.remove("on");
+  if (AUTH.view === "code") fetch("/api/auth/cancel", { method: "POST" });
+  AUTH.view = "idle"; AUTH.url = "";
+}
+const post = (u, b) => fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b || {}) }).then((r) => r.json());
+
+function renderSignin() {
+  const a = S.auth || {};
+  const body = $("#signinBody");
+  const err = AUTH.err ? '<div class="sheet-err">' + esc(AUTH.err) + "</div>" : "";
+  $("#signinTitle").textContent = AUTH.view === "code" ? "Finish signing in"
+    : authed() ? "Your Claude account" : "Sign in to Claude Code";
+
+  if (AUTH.view === "code") {
+    body.innerHTML = err +
+      '<p class="sheet-p">Your browser is open on the Claude sign-in page. Approve it, then paste the code it gives you back here.</p>' +
+      '<ol class="sheet-steps"><li>Approve the sign-in in the browser.</li>' +
+      "<li>Copy the code shown on the page it lands on.</li><li>Paste it below.</li></ol>" +
+      '<a class="sheet-link" href="' + esc(AUTH.url) + '" target="_blank" rel="noreferrer" title="Open the sign-in page again">' + esc(AUTH.url) + "</a>" +
+      '<input class="sheet-in" id="authCode" placeholder="Paste the code here" spellcheck="false" autocomplete="off">' +
+      '<div class="sheet-row" style="margin-top:12px"><button class="btn-go" id="authGo"' + (AUTH.busy ? " disabled" : "") + ">" +
+      (AUTH.busy ? "Signing in…" : "Finish sign-in") + '</button><button class="btn-ghost" id="authBack">Cancel</button></div>';
+    const inp = $("#authCode");
+    inp.onkeydown = (e) => { if (e.key === "Enter") finishSignin(); };
+    setTimeout(() => inp.focus(), 30);
+    $("#authGo").onclick = finishSignin;
+    $("#authBack").onclick = () => { fetch("/api/auth/cancel", { method: "POST" }); AUTH.view = "idle"; AUTH.err = ""; renderSignin(); };
+    return;
+  }
+
+  if (authed()) {
+    body.innerHTML = err +
+      '<p class="sheet-p">Bridge runs the real <b>claude</b> CLI as this account. Signing out here signs out every Claude Code session on this machine.</p>' +
+      '<div class="sheet-kv"><span>Account</span><b>' + esc(a.email || (a.keyAuth ? "API key in the environment" : "signed in")) + "</b></div>" +
+      '<div class="sheet-kv"><span>Plan</span><b>' + esc(a.subscriptionType || a.authMethod || "—") + "</b></div>" +
+      (a.orgName ? '<div class="sheet-kv"><span>Organisation</span><b>' + esc(a.orgName) + "</b></div>" : "") +
+      '<div class="sheet-row" style="margin-top:16px"><button class="btn-ghost" id="authOut"' + (a.keyAuth ? " disabled" : "") + ">Sign out</button>" +
+      '<button class="btn-ghost" id="authAgain">Sign in as someone else</button></div>';
+    const out = $("#authOut");
+    if (out && !a.keyAuth) out.onclick = async () => {
+      out.disabled = true; out.textContent = "Signing out…";
+      const r = await post("/api/auth/logout");
+      S.auth = r.status || (await refreshAuth(true));
+      AUTH.err = r.ok ? "" : r.out || "logout did not take";
+      toast(r.ok ? "Signed out" : "Could not sign out"); paint(); renderSignin();
+    };
+    $("#authAgain").onclick = () => beginSignin(AUTH.mode);
+    return;
+  }
+
+  const seg = (v, label, help) => '<button class="seg ' + (AUTH.mode === v ? "on" : "") + '" data-mode="' + v + '" title="' + esc(help) + '">' + label + "</button>";
+  body.innerHTML = err +
+    '<p class="sheet-p">Bridge drives the <b>claude</b> CLI, and the CLI is not signed in yet. This does the whole thing here — no terminal.</p>' +
+    '<div class="sheet-row">' + seg("claudeai", "Claude subscription", "Pro or Max — the usual choice") +
+    seg("console", "Anthropic Console", "Pay per token against an API account") + "</div>" +
+    '<button class="btn-go" id="authStart"' + (AUTH.busy ? " disabled" : "") + ">" +
+    (AUTH.busy ? "Opening your browser…" : "Sign in") + "</button>" +
+    (S.auth && S.auth.cli === false ? '<p class="sheet-p" style="margin-top:14px">The <code>claude</code> command was not found on this machine. Install Claude Code first.</p>' : "");
+  body.querySelectorAll("[data-mode]").forEach((n) => (n.onclick = () => { AUTH.mode = n.dataset.mode; renderSignin(); }));
+  $("#authStart").onclick = () => beginSignin(AUTH.mode);
+}
+
+async function beginSignin(mode) {
+  AUTH.busy = true; AUTH.err = ""; AUTH.mode = mode || "claudeai";
+  AUTH.view = "idle"; renderSignin();
+  const r = await post("/api/auth/login", { mode: AUTH.mode });
+  AUTH.busy = false;
+  if (r.error || !r.url) { AUTH.err = r.error || "could not start the sign-in"; renderSignin(); return; }
+  AUTH.url = r.url; AUTH.view = "code"; renderSignin();
+}
+async function finishSignin() {
+  const inp = $("#authCode");
+  const code = inp ? inp.value.trim() : "";
+  if (!code) { AUTH.err = "paste the code from the browser first"; renderSignin(); return; }
+  AUTH.busy = true; AUTH.err = ""; renderSignin();
+  const r = await post("/api/auth/code", { code: code });
+  AUTH.busy = false;
+  S.auth = r.status || (await refreshAuth(true));
+  if (r.ok) {
+    AUTH.view = "idle"; AUTH.err = "";
+    closeSignin(); paint();
+    toast("Signed in" + (S.auth && S.auth.email ? " as " + S.auth.email : ""));
+    return;
+  }
+  AUTH.err = r.error || "that did not go through";
+  AUTH.view = r.restart ? "idle" : "code";
+  renderSignin();
 }
 
 /* ──────────────────────────── misc ────────────────────────────── */
@@ -1630,7 +1776,7 @@ function toggleTheme() {
 
   const urls = ["/api/bootstrap", "/api/recent?limit=80", "/api/agents", "/api/configs", "/api/roots"];
   const [b, recent, agents, configs, roots] = await Promise.all(urls.map((u) => fetch(u).then((r) => r.json())));
-  Object.assign(S, { boot: b, recent: recent, agents: agents, configs: configs, roots: roots });
+  Object.assign(S, { boot: b, recent: recent, agents: agents, configs: configs, roots: roots, auth: b.auth || { loggedIn: false } });
   S.skills = configs.filter((c) => c.group === "Skills");
   S.cwd = localStorage.bridgeCwd && roots.indexOf(localStorage.bridgeCwd) >= 0 ? localStorage.bridgeCwd : roots[0];
 
@@ -1664,6 +1810,9 @@ function toggleTheme() {
   makeTab();
   paint(); renderBell();
 
+  if (!authed()) openSignin();               // first run: the sheet is the app until there is an account
+  $("#signinClose").onclick = closeSignin;
+  $("#signinBg").onclick = (e) => { if (e.target.id === "signinBg") closeSignin(); };
   $("#btnPalette").onclick = openPalette;
   $("#btnInspector").onclick = () => { S.inspector = !S.inspector; renderInspector(); };
   $("#inspClose").onclick = () => { S.inspector = false; renderInspector(); };
@@ -1749,7 +1898,8 @@ function toggleTheme() {
     else if (meta && e.key === "j") { e.preventDefault(); toggleTheme(); }
     else if (meta && e.key === "i") { e.preventDefault(); S.inspector = !S.inspector; renderInspector(); }
     else if (e.key === "Escape") {
-      if ($("#notes").classList.contains("on")) toggleNotes(false);
+      if ($("#signinBg").classList.contains("on")) closeSignin();
+      else if ($("#notes").classList.contains("on")) toggleNotes(false);
       else if ($("#finder").classList.contains("on")) closeFinder();
       else if ($("#recents").classList.contains("on")) toggleRecents(false);
           else if (PAGE()) closePage();

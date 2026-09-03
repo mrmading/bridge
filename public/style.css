@@ -725,3 +725,49 @@ body::after{
 .turnstate .ts-s{color:var(--fg-faint);font-family:var(--mono);font-size:11px}
 @keyframes tsPulse{0%{box-shadow:0 0 0 0 rgba(168,85,247,.55);opacity:1}
   70%{box-shadow:0 0 0 7px rgba(168,85,247,0);opacity:.65}100%{box-shadow:0 0 0 0 rgba(168,85,247,0);opacity:1}}
+
+/* ── sign-in sheet ─────────────────────────────────────────────────── */
+.sheet-bg{position:fixed;inset:0;background:rgba(6,8,12,.55);backdrop-filter:blur(4px);z-index:140;
+  display:none;align-items:flex-start;justify-content:center;padding-top:11vh}
+.sheet-bg.on{display:flex}
+.sheet{width:min(520px,92vw);background:var(--bg-raised);border:1px solid var(--border-strong);
+  border-radius:14px;box-shadow:0 28px 80px rgba(0,0,0,.45);overflow:hidden}
+.sheet-head{display:flex;align-items:center;gap:10px;padding:13px 15px;border-bottom:1px solid var(--border)}
+.sheet-t{font-size:13.5px;font-weight:620}
+.sheet-body{padding:16px 18px 18px}
+.sheet-p{font-size:13px;color:var(--fg-muted);margin-bottom:14px}
+.sheet-p b{color:var(--fg);font-weight:560}
+.sheet-row{display:flex;gap:8px;margin-bottom:14px}
+.sheet-err{font-size:12.5px;color:var(--err);background:var(--err-soft);border:1px solid color-mix(in srgb,var(--err) 30%,transparent);
+  border-radius:8px;padding:8px 11px;margin-bottom:13px;overflow-wrap:anywhere}
+.sheet-link{display:block;font-family:var(--mono);font-size:11px;color:var(--accent);background:var(--bg-inset);
+  border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-bottom:12px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none}
+.sheet-link:hover{border-color:var(--accent)}
+.sheet-in{width:100%;height:38px;padding:0 12px;border-radius:9px;border:1px solid var(--border-strong);
+  background:var(--bg-inset);outline:none;font-family:var(--mono);font-size:12.5px}
+.sheet-in:focus{border-color:var(--accent)}
+.btn-go{height:38px;padding:0 18px;border-radius:9px;background:var(--accent);color:var(--accent-fg);
+  font-size:13px;font-weight:600;transition:.12s}
+.btn-go:hover{filter:brightness(1.08)}
+.btn-go[disabled]{opacity:.5;cursor:default}
+.btn-ghost{height:38px;padding:0 14px;border-radius:9px;border:1px solid var(--border);color:var(--fg-muted);font-size:13px}
+.btn-ghost:hover{background:var(--bg-hover);color:var(--fg)}
+.sheet-kv{display:flex;justify-content:space-between;gap:14px;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--border)}
+.sheet-kv:last-of-type{border-bottom:none}
+.sheet-kv span{color:var(--fg-faint)}
+.sheet-kv b{font-weight:560;font-family:var(--mono);font-size:12px;overflow-wrap:anywhere;text-align:right}
+.sheet-steps{font-size:12.5px;color:var(--fg-muted);margin-bottom:12px;padding-left:17px}
+.sheet-steps li{margin-bottom:4px}
+
+/* the account button in the rail, and the signed-out dot on it */
+#railAuth{position:relative}
+#railAuth .dot{position:absolute;right:5px;top:5px;width:7px;height:7px;border-radius:50%;
+  background:var(--warn);box-shadow:0 0 0 2px var(--bg-sunken)}
+#railAuth.in .dot{background:var(--ok)}
+
+/* signed-out call to action, in place of the project grid on the start screen */
+.start-auth{margin-top:22px;padding:20px;border:1px solid var(--accent);border-radius:14px;text-align:left;
+  background:color-mix(in srgb,var(--accent-soft) 70%,transparent)}
+.start-auth h3{font-size:14.5px;margin-bottom:6px}
+.start-auth p{font-size:12.5px;color:var(--fg-muted);margin-bottom:14px}
