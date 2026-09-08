@@ -423,13 +423,6 @@ function makeTab(opts) {
   S.active = S.tabs.length - 1;
   return t;
 }
-/** The desk is the assistant's own tab: first, pinned, never closed. */
-function makeDeskTab() {
-  const t = { da: true, id: null, key: null, path: (S.boot && S.boot.home) || "", name: "~", title: (S.boot && S.boot.assistant) || "Desk", msgs: [], usage: null, model: "", branch: "", live: null, streaming: false, lastResult: null };
-  S.tabs.unshift(t);
-  S.active = 0;
-  return t;
-}
 function closeTab(i) {
   const t = S.tabs[i];
   if (!t || t.da) return;
@@ -571,10 +564,7 @@ function renderTabs() {
   const editing = S.editingTab;
   const live = $("#tabs .tab-edit");
   if (live && document.activeElement === live && +live.dataset.edit === editing) return;  // never clobber the open field
-  const deskPhase = (window.Desk && window.Desk.phase()) || "idle";
   $("#tabs").innerHTML = S.tabs.map((t, i) => {
-    if (t.da) return '<div class="tab desk-tab ' + (i === S.active ? "on" : "") + ' ph-' + deskPhase + '" data-tab="' + i + '" title="' + esc(tabTitle(t)) + ' — your assistant. Ask about anything; it watches every session.">' +
-      '<span class="tab-orb"></span><span class="tab-t">' + esc(tabTitle(t)) + "</span></div>";
     const m = t.mirror;
     const busy = t.streaming || (m && !m.ended && m.status === "busy");
     const wait = m && !m.ended && m.waiting;
@@ -755,6 +745,7 @@ function setCwd(path) {
 /* ───────────────────────────── views ──────────────────────────── */
 const GROUPS = ["Core", "Memory", "Skills"];
 const RAIL = [
+  { id: "copilot", label: "Copilot", icon: "" },
   { id: "chat", label: "Work sessions", icon: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" },
   { id: "activity", label: "Activity", icon: "M3 12h4l3 8 4-16 3 8h4" },
   { id: "agents", label: "Agents", icon: "M12 2a5 5 0 0 1 5 5v2a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5zM4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" },
@@ -763,10 +754,14 @@ const RAIL = [
 ];
 const railOn = (id) => S.view === id;
 function renderRail() {
+  const deskPhase = (window.Desk && window.Desk.phase()) || "idle";
   $("#rail").innerHTML = '<button class="logo" id="railHome" title="Back to the conversation"><span>B</span></button>' + RAIL.map((r) =>
-    '<button class="rail-btn ' + (railOn(r.id) ? "on" : "") + '" data-view="' + r.id + '">' +
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="' + r.icon + '"/></svg>' +
-    '<span class="tip">' + r.label + "</span></button>").join("") +
+    r.id === "copilot"
+      ? '<button class="rail-btn copilot ' + (railOn(r.id) ? "on" : "") + ' ph-' + deskPhase + '" data-view="copilot"><span class="rail-orb"></span>' +
+        '<span class="tip">' + esc((S.boot && S.boot.assistant) || "Copilot") + " — Copilot</span></button>"
+      : '<button class="rail-btn ' + (railOn(r.id) ? "on" : "") + '" data-view="' + r.id + '">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="' + r.icon + '"/></svg>' +
+        '<span class="tip">' + r.label + "</span></button>").join("") +
     '<div class="rail-spacer"></div>' +
     '<button class="rail-btn ' + (authed() ? "in" : "") + '" id="railAuth">' +
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">' +
@@ -793,11 +788,11 @@ function renderMain() {
   const isChat = S.view === "chat";
   const open = PAGE();
   const t = T();
-  const desk = isChat && !!(t && t.da);
+  const desk = S.view === "copilot";
   const mirror = isChat && !!(t && t.mirror && !t.mirror.ended);
   $("#streamInner").classList.toggle("wide", !isChat);
   $("#streamInner").classList.toggle("editing", !!(open && open.editing));
-  $("#composerWrap").style.display = isChat && !desk && !mirror ? "" : "none";
+  $("#composerWrap").style.display = isChat && !mirror ? "" : "none";
   $("#tabbar").style.display = isChat ? "" : "none";
   $("#desk").hidden = !desk;
   $("#stream").style.display = desk ? "none" : "";
@@ -1114,14 +1109,14 @@ function renderTop() {
   if (showSearch) { ts.placeholder = hint; if (ts.value !== S.filter) ts.value = S.filter; }
   const t = T(), c = PAGE();
   const chat = S.view === "chat";
-  const label = S.view === "files" ? (S.dir ? S.dir.path.split("/").pop() : "Directory") : S.view === "agents" ? "Agents" : S.view === "activity" ? "Activity" : "Configs";
+  const label = S.view === "files" ? (S.dir ? S.dir.path.split("/").pop() : "Directory") : S.view === "agents" ? "Agents" : S.view === "activity" ? "Activity" : S.view === "copilot" ? "Copilot" : "Configs";
   const crumb = $("#crumbTitle");
   crumb.textContent = chat ? (t ? tabTitle(t) : "Bridge") : c ? c.title : label;
   crumb.title = chat && t ? "Double-click to rename this session" : "";
   crumb.classList.toggle("renamable", chat && !!t);
   crumb.ondblclick = chat && t ? () => beginRename(S.active) : null;
   const cp = $("#crumbPath");
-  if (chat && t && t.da) {
+  if (S.view === "copilot") {
     cp.innerHTML = '<span class="cwd-lab">' + (S.live.length ? S.live.length + (S.live.length === 1 ? " terminal session live" : " terminal sessions live") : "no terminal sessions open") + "</span>";
   } else if (chat && t && t.mirror && !t.mirror.ended) {
     cp.innerHTML = '<span class="cwd-lab">Terminal session</span> <span class="cwd-pick" style="cursor:default">' + esc(short(t.path, 40)) + "</span>";
@@ -1213,7 +1208,7 @@ function go(view) {
   clearInterval(actTimer); actTimer = null;
   if (view === "activity") { loadActivity(); actTimer = setInterval(loadActivity, 3000); }
   if (view === "chat") return goChat();
-  if (railOn(view)) return goChat();
+  if (railOn(view) && view !== "copilot") return goChat();
   S.filter = "";
   const ps = $("#topSearch"); if (ps) ps.value = "";
   S.view = view;
@@ -1983,7 +1978,7 @@ function toggleTheme() {
   if (S.roots[0]) await selectDir(S.roots[0]);
   loadNotes();
   makeTab();
-  makeDeskTab();                              // first tab, and the one Bridge opens on
+  S.view = "copilot";                         // Bridge opens on the copilot, above the sessions
   paint(); renderBell();
   syncLive(); setInterval(syncLive, 4000);    // terminals come and go on their own
   window._bridgeBooted();
@@ -2073,7 +2068,7 @@ function toggleTheme() {
     else if (meta && e.key === "p") { e.preventDefault(); goChat(); toggleRecents(true); }
     else if (meta && e.key === "t") { e.preventDefault(); makeTab(); goChat(); $("#input").focus(); }
     else if (meta && e.key === "w") { e.preventDefault(); if (S.view === "chat") closeTab(S.active); else if (PAGE()) closePage(); }
-    else if (e.key === "Escape" && S.view === "chat" && T() && T().da && window.Desk && window.Desk.escape()) { e.preventDefault(); }
+    else if (e.key === "Escape" && S.view === "copilot" && window.Desk && window.Desk.escape()) { e.preventDefault(); }
     else if (meta && e.key === "j") { e.preventDefault(); toggleTheme(); }
     else if (meta && e.key === "i") { e.preventDefault(); S.inspector = !S.inspector; renderInspector(); }
     else if (e.key === "Escape") {

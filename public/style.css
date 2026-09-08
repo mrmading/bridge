@@ -817,13 +817,13 @@ body::after{
 .desk-send{width:34px;height:34px;border-radius:9px;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center}
 .desk-send:hover{filter:brightness(1.08)}
 .desk-hint{max-width:840px;margin:8px auto 0}
-/* the desk tab */
-.tab.desk-tab{min-width:0;padding:0 12px 0 9px;gap:8px}
-.tab.desk-tab .tab-t{font-weight:600;letter-spacing:.01em}
-.tab-orb{width:12px;height:12px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 30%,#bfe3ff,#3B82F6 55%,#1d3fb0);box-shadow:0 0 10px rgba(59,130,246,.55)}
-.desk-tab.ph-listening .tab-orb{background:radial-gradient(circle at 35% 30%,#d5fbff,#22d3ee 55%,#0e7490);box-shadow:0 0 12px rgba(34,211,238,.7);animation:blink 1s ease-in-out infinite}
-.desk-tab.ph-thinking .tab-orb,.desk-tab.ph-working .tab-orb{background:radial-gradient(circle at 35% 30%,#efe6ff,#b79cf5 55%,#5b3fb5);box-shadow:0 0 12px rgba(183,156,245,.7);animation:blink .7s ease-in-out infinite}
-.desk-tab.ph-speaking .tab-orb{animation:ed-breathe 1.2s ease-in-out infinite}
+/* the copilot in the rail: an orb that shows what the assistant is doing */
+.rail-btn.copilot{margin-bottom:2px}
+.rail-orb{width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#bfe3ff,#3B82F6 55%,#1d3fb0);box-shadow:0 0 12px rgba(59,130,246,.55);transition:.3s}
+.rail-btn.copilot:hover .rail-orb,.rail-btn.copilot.on .rail-orb{box-shadow:0 0 18px rgba(59,130,246,.85)}
+.rail-btn.copilot.ph-listening .rail-orb{background:radial-gradient(circle at 35% 30%,#d5fbff,#22d3ee 55%,#0e7490);box-shadow:0 0 14px rgba(34,211,238,.8);animation:blink 1s ease-in-out infinite}
+.rail-btn.copilot.ph-thinking .rail-orb,.rail-btn.copilot.ph-working .rail-orb{background:radial-gradient(circle at 35% 30%,#efe6ff,#b79cf5 55%,#5b3fb5);box-shadow:0 0 14px rgba(183,156,245,.8);animation:blink .7s ease-in-out infinite}
+.rail-btn.copilot.ph-speaking .rail-orb{animation:ed-breathe 1.2s ease-in-out infinite}
 /* mirrored terminals */
 .tab.mirror .tab-term{font-size:10px;color:var(--accent2);flex:none;opacity:.9}
 .tab.mirror.ended .tab-term{color:var(--fg-faint)}

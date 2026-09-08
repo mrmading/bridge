@@ -16,7 +16,7 @@
 
   /* ───────────────────────── phase & label ───────────────────────── */
   function setPhase(p, label) {
-    if (DESK.phase !== p) { DESK.phase = p; renderTabs(); }
+    if (DESK.phase !== p) { DESK.phase = p; renderRail(); }
     DESK.label = label !== undefined ? label : defaultLabel(p);
     paintLabel();
     $("#desk").dataset.phase = p;
@@ -257,7 +257,7 @@
       { shown: "→ " + m.name + ": " + text });
   }
   function ask(text) { activateDesk(); send(text); }
-  function activateDesk() { const i = S.tabs.findIndex((t) => t.da); if (i >= 0 && S.active !== i) activate(i); }
+  function activateDesk() { if (S.view !== "copilot") go("copilot"); }
 
   /* ───────────────────────── listening ───────────────────────── */
   const pickMime = () => ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus", "audio/ogg"].find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";

@@ -1082,8 +1082,8 @@ function followTranscript(file: string, from: number, send: (o: any) => void, si
  * terminals, so the desk can answer "what is going on" without being asked to look. */
 const DA_FILE = join(DATA_DIR, "da.json");
 const DA_PROTOCOL = (assistant: string, user: string) => [
-  "You are " + assistant + ", running as the desk in Bridge — the first tab of the desktop app, a voice-first place where " + user +
-  " asks about anything without opening a session. Bridge speaks your reply aloud.",
+  "You are " + assistant + ", running as the Copilot in Bridge — a voice-first view above the session tabs, with no sessions of its own, where " + user +
+  " asks for summaries and talks through the whole picture without opening a session. Bridge speaks your reply aloud.",
   "",
   "State: every message from Bridge begins with a <bridge> block listing the live Claude Code terminal sessions on this machine — name,",
   "folder, busy or idle, what each last said, whether one is waiting on " + user + ", and the recent events. Treat it as the current truth;",

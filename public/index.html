@@ -53,7 +53,7 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
 
     <section class="stream" id="stream"><div class="stream-inner" id="streamInner"></div></section>
 
-    <!-- the desk: the assistant's own tab. An orb you talk to, the conversation under it. -->
+    <!-- Copilot: the assistant's own view (no session tabs). An orb you talk to, the conversation under it. -->
     <section class="desk" id="desk" hidden>
       <div class="desk-head">
         <span class="desk-state" id="deskState"><span class="dot"></span><span class="t">starting</span></span>
@@ -75,7 +75,7 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
           <button class="desk-mic" id="deskMic" title="Talk (hold Space, or click to toggle)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
           </button>
-          <input id="deskInput" placeholder="Ask about anything — the sessions, the day, what to do next…" spellcheck="false" autocomplete="off">
+          <input id="deskInput" placeholder="Ask for a summary, or talk through what is going on across every session…" spellcheck="false" autocomplete="off">
           <button class="desk-send" id="deskSend" title="Send (↵)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </button>
