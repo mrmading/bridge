@@ -194,6 +194,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return nil
     }
 
+    // ── the desk talks: the page asks for the microphone, the host grants it once macOS has ──
+    @available(macOS 12.0, *)
+    func webView(_ w: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame f: WKFrameInfo,
+                 type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        guard type == .microphone, origin.host == "127.0.0.1" || origin.host == "localhost" else { return decisionHandler(.deny) }
+        decisionHandler(.grant)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { setup == nil }
     func applicationWillTerminate(_ note: Notification) {
         server?.terminate()

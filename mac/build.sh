@@ -21,6 +21,7 @@ swiftc -O \
 
 cp "$ROOT/server.ts" "$APP/Contents/Resources/app/server.ts"
 cp -R "$ROOT/public" "$APP/Contents/Resources/app/public"
+cp -R "$ROOT/stt" "$APP/Contents/Resources/app/stt"
 cp "$HERE/assets/Bridge.icns" "$APP/Contents/Resources/Bridge.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -40,6 +41,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHumanReadableCopyright</key><string>MIT licensed</string>
   <key>NSDesktopFolderUsageDescription</key><string>Bridge shows the folders you add so Claude Code can work in them.</string>
   <key>NSDocumentsFolderUsageDescription</key><string>Bridge shows the folders you add so Claude Code can work in them.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Bridge listens when you talk to your assistant. Audio is transcribed on this Mac and never leaves it.</string>
   <key>NSDownloadsFolderUsageDescription</key><string>Bridge shows the folders you add so Claude Code can work in them.</string>
   <key>NSAppTransportSecurity</key><dict>
     <key>NSAllowsLocalNetworking</key><true/>

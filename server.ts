@@ -234,6 +234,13 @@ async function listSessions(key: string, limit = 200) {
 type Ev = any;
 
 function normalizeTranscript(lines: string[]) {
+  const { events, meta } = normalizeLines(lines);
+  return { events, meta };
+}
+/** One pass over a run of transcript lines. Used for whole files and, by the follower, for
+ *  the lines appended since last time — so a tool result can arrive for a tool_use that was
+ *  emitted in an earlier batch. Those come back as `patches` keyed by tool_use id. */
+function normalizeLines(lines: string[]) {
   const events: Ev[] = [];
   const results = new Map<string, any>();
   const outputs: any[] = [];
@@ -307,7 +314,9 @@ function normalizeTranscript(lines: string[]) {
 
     if (r.type === "attachment" && r.attachment?.type === "hook_success") hookCount++;
   }
-  return { events, meta: { model, cwd, branch, title, usage, outputs, hookCount } };
+  const seenTool = new Set(events.filter((e) => e.kind === "tool").map((e) => e.id));
+  const patches = [...results.entries()].filter(([id]) => !seenTool.has(id)).map(([id, result]) => ({ id, result }));
+  return { events, patches, meta: { model, cwd, branch, title, usage, outputs, hookCount } };
 }
 
 function flattenResult(content: any): string {
@@ -895,6 +904,508 @@ async function doLogout() {
   return { ok: !st.loggedIn, status: st, out: out.trim().slice(-200) };
 }
 
+/* ─────────────── live terminal sessions (the registry the CLI keeps) ───────────────
+ * Every interactive `claude` writes ~/.claude/sessions/<pid>.json — pid, session id, the
+ * folder it started in, a display name and a busy/idle status it keeps current. Bridge reads
+ * that registry, drops anything whose process is gone, and mirrors the rest as tabs. Print-mode
+ * turns (Bridge's own, and anyone's `claude -p`) do not register, so they never show up here. */
+const SESSIONS_DIR = join(CLAUDE_DIR, "sessions");
+/** the CLI names a project folder after the cwd with every non-alphanumeric turned into "-" */
+const projectKey = (cwd: string) => String(cwd).replace(/[^A-Za-z0-9]/g, "-");
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+type Waiting = { kind: "question" | "plan" | "permission"; text: string; options?: string[] } | null;
+type TailState = { last: string; lastTs: number; lastUser: string; waiting: Waiting; turns: number; cwd: string };
+const tailCache = new Map<string, { m: number; v: TailState }>();
+/** What the end of a transcript says: the last thing the model said, and whether it is
+ *  standing on a question. A pending AskUserQuestion / ExitPlanMode (tool_use with no
+ *  tool_result) is the hard signal; an idle session whose last words end in "?" is the soft one. */
+async function tailState(file: string, idle: boolean): Promise<TailState> {
+  const st = await stat(file).catch(() => null);
+  const empty: TailState = { last: "", lastTs: 0, lastUser: "", waiting: null, turns: 0, cwd: "" };
+  if (!st) return empty;
+  const hit = tailCache.get(file);
+  if (hit && hit.m === st.mtimeMs) return { ...hit.v, waiting: softWaiting(hit.v, idle) };
+  const lines = await lastLines(file, 120_000);
+  const pending = new Map<string, any>();
+  const v: TailState = { ...empty };
+  for (const line of lines) {
+    let r: any; try { r = JSON.parse(line); } catch { continue; }
+    if (r.isSidechain) continue;
+    if (r.cwd) v.cwd = r.cwd;                       // where the work is actually happening now
+    const ts = r.timestamp ? Date.parse(r.timestamp) : 0;
+    if (r.type === "assistant") {
+      for (const c of r.message?.content || []) {
+        if (c.type === "text" && c.text?.trim()) { v.last = c.text; v.lastTs = ts; }
+        else if (c.type === "tool_use") pending.set(c.id, { name: c.name, input: c.input });
+      }
+    } else if (r.type === "user") {
+      const c = r.message?.content;
+      if (typeof c === "string") { const t = c.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, "").trim(); if (t) { v.lastUser = t; v.turns++; } }
+      else if (Array.isArray(c)) {
+        for (const x of c) {
+          if (x.type === "tool_result") pending.delete(x.tool_use_id);
+          else if (x.type === "text" && x.text?.trim()) { v.lastUser = x.text; v.turns++; }
+        }
+      }
+    }
+  }
+  const ask = [...pending.values()].find((p) => p.name === "AskUserQuestion");
+  const plan = [...pending.values()].find((p) => p.name === "ExitPlanMode");
+  if (ask) {
+    const q = (ask.input?.questions || [])[0] || {};
+    v.waiting = { kind: "question", text: String(q.question || q.header || "is asking you a question"), options: (q.options || []).map((o: any) => String(o.label || o)).slice(0, 6) };
+  } else if (plan) v.waiting = { kind: "plan", text: "has a plan waiting for your approval" };
+  tailCache.set(file, { m: st.mtimeMs, v: { ...v, waiting: v.waiting } });
+  return { ...v, waiting: softWaiting(v, idle) };
+}
+function softWaiting(v: TailState, idle: boolean): Waiting {
+  if (v.waiting) return v.waiting;
+  if (!idle || !v.last) return null;
+  const tail = v.last.trim().split("\n").map((l) => l.trim()).filter(Boolean).pop() || "";
+  const clean = tail.replace(/[*_`#>]/g, "").trim();
+  if (/\?$/.test(clean) && clean.length > 8 && clean.length < 300) return { kind: "question", text: clean };
+  return null;
+}
+const plain = (t: string, n = 240) => String(t || "").replace(/```[\s\S]*?```/g, " ").replace(/<[^>]+>/g, " ").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
+
+type LiveSession = {
+  pid: number; id: string; key: string; cwd: string; name: string; status: string; startedAt: number; updatedAt: number;
+  file: string; title: string; folder: string; last: string; lastTs: number; lastUser: string; waiting: Waiting; turns: number; version?: string;
+};
+/** pids Bridge itself spawned — never mirrored, even if a future CLI registers them */
+const ownPids = new Set<number>();
+async function liveSessions(): Promise<LiveSession[]> {
+  const files = await readdir(SESSIONS_DIR).catch(() => [] as string[]);
+  const out: LiveSession[] = [];
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    let r: any; try { r = JSON.parse(await readFile(join(SESSIONS_DIR, f), "utf8")); } catch { continue; }
+    if (!r.pid || !r.sessionId || !r.cwd) continue;
+    if (r.kind && r.kind !== "interactive") continue;
+    if (ownPids.has(r.pid) || !alive(r.pid)) continue;
+    const key = projectKey(r.cwd);
+    const file = join(PROJECTS_DIR, key, r.sessionId + ".jsonl");
+    const has = existsSync(file);
+    const meta = has ? await sessionMeta(key, file) : null;
+    const tail = has ? await tailState(file, r.status === "idle") : { last: "", lastTs: 0, lastUser: "", waiting: null, turns: 0, cwd: "" };
+    const work = tail.cwd || r.cwd;
+    out.push({
+      pid: r.pid, id: r.sessionId, key, cwd: r.cwd, name: r.name || ("claude " + r.pid), status: r.status || "idle",
+      startedAt: r.startedAt || 0, updatedAt: r.updatedAt || r.startedAt || 0, file, version: r.version,
+      title: meta?.title || tail.lastUser.slice(0, 60) || basename(work), folder: work === HOME ? "home" : basename(work) || work,
+      last: plain(tail.last, 400), lastTs: tail.lastTs, lastUser: plain(tail.lastUser, 200), waiting: tail.waiting, turns: tail.turns,
+    });
+  }
+  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Watch the registry for the moments worth telling the principal about: a turn finishing
+ *  (busy → idle), a session stopping on a question, a terminal opening or closing. */
+type LiveEvent = { kind: "started" | "ended" | "done" | "waiting"; at: number; pid: number; id: string; key: string; name: string; folder: string; cwd: string; title: string; text: string; options?: string[] };
+const EVENTS: LiveEvent[] = [];
+let lastLive: LiveSession[] = [];
+const seenLive = new Map<number, { status: string; waiting: string; first: boolean }>();
+let watchBooted = false;
+async function watchLive() {
+  let cur: LiveSession[];
+  try { cur = await liveSessions(); } catch { return; }
+  lastLive = cur;
+  const now = Date.now();
+  const emit = (kind: LiveEvent["kind"], s: LiveSession, text: string, options?: string[]) => {
+    const ev: LiveEvent = { kind, at: now, pid: s.pid, id: s.id, key: s.key, name: s.name, folder: s.folder, cwd: s.cwd, title: s.title, text, options };
+    EVENTS.push(ev); if (EVENTS.length > 200) EVENTS.shift();
+    logRow({ ts: now, kind: "live." + kind, msg: (kind === "waiting" ? "needs you: " : "") + (text || s.title), session: s.id, cwd: s.cwd, outcome: s.name });
+    daBroadcast({ t: "event", d: ev });
+  };
+  const present = new Set<number>();
+  for (const s of cur) {
+    present.add(s.pid);
+    const w = s.waiting ? s.waiting.kind + ":" + s.waiting.text : "";
+    const prev = seenLive.get(s.pid);
+    if (!prev) {
+      seenLive.set(s.pid, { status: s.status, waiting: w, first: true });
+      if (watchBooted) emit("started", s, s.title);
+      else if (w && s.waiting) emit("waiting", s, s.waiting.text, s.waiting.options);   // already waiting when Bridge came up
+      continue;
+    }
+    if (prev.status === "busy" && s.status === "idle" && !w) emit("done", s, s.last);
+    if (w && w !== prev.waiting && s.waiting) emit("waiting", s, s.waiting.text, s.waiting.options);
+    prev.status = s.status; prev.waiting = w;
+  }
+  for (const [pid] of seenLive) if (!present.has(pid)) {
+    seenLive.delete(pid);
+    const gone = lastLiveByPid.get(pid);
+    if (gone && watchBooted) emit("ended", gone, gone.title);
+  }
+  lastLiveByPid.clear(); for (const s of cur) lastLiveByPid.set(s.pid, s);
+  watchBooted = true;
+}
+const lastLiveByPid = new Map<number, LiveSession>();
+setInterval(watchLive, 1500);
+watchLive();
+
+/* ────────────────────── following a transcript as it grows ──────────────────────
+ * A mirrored tab is the terminal's transcript, read from the byte the tab already has. The
+ * file is polled for growth; whole lines are normalised and streamed, a partial last line
+ * waits for its newline. Nothing is written — the terminal owns the session. */
+function followTranscript(file: string, from: number, send: (o: any) => void, signal: { closed: boolean }) {
+  let offset = Math.max(0, from | 0);
+  let rest = "";
+  const tick = async () => {
+    if (signal.closed) return;
+    try {
+      const st = await stat(file).catch(() => null);
+      if (!st) { send({ t: "gone" }); return; }
+      if (st.size > offset) {
+        const chunk = await Bun.file(file).slice(offset, st.size).text();
+        offset = st.size;
+        const parts = (rest + chunk).split("\n");
+        rest = parts.pop() || "";
+        const lines = parts.filter(Boolean);
+        if (lines.length) {
+          const { events, patches, meta } = normalizeLines(lines);
+          send({ t: "events", events, patches, usage: meta.usage, model: meta.model, offset });
+        }
+      } else if (st.size < offset) { offset = st.size; rest = ""; }   // rewritten (compaction): resync from the end
+    } catch (e) { send({ t: "error", d: String(e) }); }
+    if (!signal.closed) setTimeout(tick, 650);
+  };
+  tick();
+}
+
+/* ─────────────────────────── the assistant desk ───────────────────────────
+ * The first tab is the principal's own assistant: one `claude` process that stays open for
+ * as long as Bridge runs (stdin in stream-json, never closed), so a turn costs no CLI boot
+ * and events can land between turns. Its session id is kept on disk, so the conversation
+ * survives a restart. Every message carries a <bridge> block with the live state of the
+ * terminals, so the desk can answer "what is going on" without being asked to look. */
+const DA_FILE = join(DATA_DIR, "da.json");
+const DA_PROTOCOL = (assistant: string, user: string) => [
+  "You are " + assistant + ", running as the desk in Bridge — the first tab of the desktop app, a voice-first place where " + user +
+  " asks about anything without opening a session. Bridge speaks your reply aloud.",
+  "",
+  "State: every message from Bridge begins with a <bridge> block listing the live Claude Code terminal sessions on this machine — name,",
+  "folder, busy or idle, what each last said, whether one is waiting on " + user + ", and the recent events. Treat it as the current truth;",
+  "never read it back verbatim and never invent session state that is not in it.",
+  "",
+  "Digging deeper: each session's full transcript is the JSONL file named in the block. When asked what a session did, why, or what it changed,",
+  "Read the end of that file (it is large — use offset/limit or Bash tail) and answer from it. To send a running session a message, use ListAgents",
+  "to find it by its name from the block and SendMessage to send it; then say what you sent. Relay requests (\"tell X to …\") mean exactly that.",
+  "",
+  "Answering: always include one line that starts with 🗣️ — one to three plain spoken sentences that answer the question directly. That line is",
+  "read aloud, so no markdown, lists, paths or code in it. Anything else you show stays short; " + user + " can ask for more. When there is",
+  "nothing new, say so in a sentence.",
+].join("\n");
+
+type DaClient = (o: any) => void;
+const DA = {
+  child: null as ChildProcess | null, sessionId: "", busy: false, queue: [] as { text: string; ctx: string }[],
+  starting: false, seq: 0, ring: [] as any[], clients: new Set<DaClient>(), started: 0, turns: 0, lastError: "",
+  turnStarted: 0, exits: 0, permissionMode: "bypassPermissions", model: "", name: "", user: "",
+};
+function daBroadcast(o: any) {
+  o.seq = ++DA.seq; o.ts = o.ts || Date.now();
+  DA.ring.push(o); if (DA.ring.length > 600) DA.ring.shift();
+  for (const c of DA.clients) { try { c(o); } catch {} }
+}
+async function daIdentity() {
+  const settings = JSON.parse(await readFile(join(CLAUDE_DIR, "settings.json"), "utf8").catch(() => "{}"));
+  const id = settings.daidentity || {};
+  DA.name = id.name || id.displayName || "Claude";
+  DA.user = id.userName || basename(HOME);
+  return { name: DA.name, user: DA.user, color: id.color || "", voice: id.voices?.main || null };
+}
+async function daLoadState() {
+  try {
+    const d = JSON.parse(await readFile(DA_FILE, "utf8"));
+    if (typeof d.sessionId === "string") DA.sessionId = d.sessionId;
+    if (typeof d.permissionMode === "string") DA.permissionMode = d.permissionMode;
+    if (typeof d.model === "string") DA.model = d.model;
+  } catch {}
+}
+async function daSaveState() {
+  try { await Bun.write(DA_FILE, JSON.stringify({ sessionId: DA.sessionId, permissionMode: DA.permissionMode, model: DA.model }, null, 2)); } catch {}
+}
+function daState() {
+  return { alive: !!DA.child, busy: DA.busy, sessionId: DA.sessionId, started: DA.started, turns: DA.turns, queued: DA.queue.length,
+    error: DA.lastError, name: DA.name, model: DA.model, permissionMode: DA.permissionMode };
+}
+let daStarting: Promise<void> | null = null;
+function daStart(fresh = false): Promise<void> {
+  if (DA.child) return Promise.resolve();
+  if (daStarting) return daStarting;          // a second caller waits for the same boot
+  daStarting = daBoot(fresh).finally(() => { daStarting = null; });
+  return daStarting;
+}
+async function daBoot(fresh: boolean) {
+  DA.starting = true;
+  try {
+    const auth = await authStatus();
+    if (!auth.loggedIn) { DA.lastError = "Claude Code is not signed in"; daBroadcast({ t: "state", d: daState() }); return; }
+    await daIdentity();
+    const transcriptExists = (id: string) => existsSync(join(PROJECTS_DIR, projectKey(HOME), id + ".jsonl"));
+    if (fresh || !DA.sessionId || !transcriptExists(DA.sessionId)) { DA.sessionId = randomUUID(); await daSaveState(); fresh = true; }
+    const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+      "--append-system-prompt", DA_PROTOCOL(DA.name, DA.user), "--permission-mode", DA.permissionMode, "--name", DA.name + " desk"];
+    args.push(fresh ? "--session-id" : "--resume", DA.sessionId);
+    if (DA.model) args.push("--model", DA.model);
+    // LIFEOS_NOTIFICATION_CHANNEL: the terminal voice hook speaks every finished turn through
+    // Pulse; Bridge speaks the desk itself, so that hook is told this is not a desktop terminal.
+    const child = spawn(CLAUDE_BIN, args, { cwd: HOME, stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, ...settingsEnv, FORCE_COLOR: "0", BRIDGE_DESK: "1", LIFEOS_NOTIFICATION_CHANNEL: "bridge" } });
+    if (child.pid) ownPids.add(child.pid);
+    DA.child = child; DA.started = Date.now(); DA.busy = false; DA.lastError = "";
+    logRow({ ts: Date.now(), kind: "desk.start", msg: (fresh ? "new" : "resumed") + " desk session", session: DA.sessionId, cwd: HOME });
+    let buf = "";
+    child.stdout!.on("data", (chunk) => {
+      buf += chunk.toString();
+      let i;
+      while ((i = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        if (!line) continue;
+        let parsed: any; try { parsed = JSON.parse(line); } catch { daBroadcast({ t: "raw", d: line }); continue; }
+        if (parsed?.type === "system" && parsed.subtype === "init" && parsed.session_id) DA.sessionId = parsed.session_id;
+        daBroadcast({ t: "da", d: parsed });
+        if (parsed?.type === "result") {
+          DA.busy = false; DA.turns++;
+          logRow({ ts: Date.now(), kind: parsed.is_error ? "desk.error" : "desk.done", msg: parsed.subtype || "turn", session: DA.sessionId,
+            cwd: HOME, cost: parsed.total_cost_usd, ms: parsed.duration_ms });
+          daBroadcast({ t: "state", d: daState() });
+          daDrain();
+        }
+      }
+    });
+    child.stderr!.on("data", (c) => { const s = c.toString().trim(); if (s && !/hook|deprecat|warning/i.test(s)) daBroadcast({ t: "stderr", d: s }); });
+    child.on("close", (code) => {
+      if (child.pid) ownPids.delete(child.pid);
+      if (DA.child === child) { DA.child = null; DA.busy = false; }
+      DA.exits++;
+      logRow({ ts: Date.now(), kind: "desk.exit", msg: "desk process exited", outcome: "exit " + code, session: DA.sessionId, cwd: HOME });
+      daBroadcast({ t: "state", d: daState() });
+      // a desk that died mid-turn or with work queued comes back on its own; a clean exit waits for the next message
+      if (DA.queue.length || DA.exits < 3) setTimeout(() => daStart(), 1200 * DA.exits);
+    });
+    child.on("error", (e) => { DA.lastError = String(e); daBroadcast({ t: "state", d: daState() }); });
+    daBroadcast({ t: "state", d: daState() });
+  } finally { DA.starting = false; }
+}
+function daWrite(text: string, ctx: string) {
+  if (!DA.child?.stdin) return false;
+  DA.busy = true; DA.turnStarted = Date.now();
+  const content = ctx ? ctx + "\n\n" + text : text;
+  DA.child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n");
+  logRow({ ts: Date.now(), kind: "desk.turn", msg: text.replace(/\s+/g, " ").slice(0, 140), session: DA.sessionId, cwd: HOME });
+  daBroadcast({ t: "user", d: { text } });      // every open page shows the message, whichever one sent it
+  daBroadcast({ t: "state", d: daState() });
+  return true;
+}
+function daDrain() {
+  if (DA.busy || !DA.child || !DA.queue.length) return;
+  const next = DA.queue.shift()!;
+  daWrite(next.text, next.ctx);
+}
+/** the situation report that rides in front of every message */
+function bridgeBlock(): string {
+  const lines: string[] = ["<bridge>", "now: " + new Date().toISOString()];
+  if (!lastLive.length) lines.push("live sessions: none — no Claude Code terminal is open right now");
+  else {
+    lines.push("live sessions (" + lastLive.length + "):");
+    for (const s of lastLive) {
+      lines.push("- " + s.name + " · " + s.folder + " (" + s.cwd + ") · " + s.status + (s.waiting ? " · WAITING ON " + DA.user.toUpperCase() + ": " + s.waiting.text : "") +
+        " · started " + new Date(s.startedAt).toISOString().slice(11, 16) + " · " + s.turns + " turns");
+      lines.push("  transcript: " + s.file);
+      if (s.lastUser) lines.push("  last asked: " + s.lastUser.slice(0, 200));
+      if (s.last) lines.push("  last said: " + s.last.slice(0, 300));
+    }
+  }
+  const recent = EVENTS.slice(-8);
+  if (recent.length) {
+    lines.push("recent events:");
+    for (const e of recent) lines.push("- " + new Date(e.at).toISOString().slice(11, 16) + " " + e.kind + " · " + e.name + " · " + e.folder + (e.text ? " · " + e.text.slice(0, 160) : ""));
+  }
+  lines.push("</bridge>");
+  return lines.join("\n");
+}
+async function daSend(text: string) {
+  if (!DA.child) await daStart();
+  if (!DA.child) return { error: DA.lastError || "the desk could not start" };
+  const ctx = bridgeBlock();
+  if (DA.busy) { DA.queue.push({ text, ctx }); daBroadcast({ t: "state", d: daState() }); return { queued: true }; }
+  return { ok: daWrite(text, ctx) };
+}
+function daInterrupt() {
+  if (!DA.child) return false;
+  try { DA.child.kill("SIGINT"); } catch {}
+  return true;
+}
+async function daReset() {
+  const c = DA.child; DA.child = null; DA.queue = []; DA.busy = false;
+  if (c) { try { c.stdin?.end(); c.kill("SIGTERM"); } catch {} }
+  DA.sessionId = ""; await daSaveState();
+  await daStart(true);
+  return daState();
+}
+await daLoadState();
+/** the desk and the transcriber are Bridge's own processes: they go when Bridge goes */
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => {
+  try { DA.child?.stdin?.end(); DA.child?.kill("SIGTERM"); } catch {}
+  try { stt?.proc.kill(); } catch {}
+  setTimeout(() => process.exit(0), 300);
+});
+
+/* ───────────────────────────── voice ─────────────────────────────
+ * Speaking: ElevenLabs directly when the key is in ~/.claude/.env (audio comes back to the
+ * page, so the orb can move to the actual sound); otherwise through Pulse, which plays the
+ * assistant's own voice on the Mac; otherwise the page falls back to the browser voice.
+ * Listening: the page records, the server transcribes offline with whisper. */
+async function dotenvKey(name: string): Promise<string> {
+  if (process.env[name]) return process.env[name]!;
+  try {
+    const txt = await readFile(join(CLAUDE_DIR, ".env"), "utf8");
+    const m = txt.match(new RegExp("^\\s*(?:export\\s+)?" + name + "\\s*=\\s*[\"']?([^\"'\\n#]+)", "m"));
+    return m ? m[1].trim() : "";
+  } catch { return ""; }
+}
+let pulseCache: { at: number; up: boolean } | null = null;
+async function pulseUp(): Promise<boolean> {
+  if (pulseCache && Date.now() - pulseCache.at < 20_000) return pulseCache.up;
+  let up = false;
+  try {
+    const r = await fetch("http://localhost:31337/voice/health", { signal: AbortSignal.timeout(900) });
+    const j: any = await r.json().catch(() => ({}));
+    up = r.ok && (j.api_key_configured !== false);
+  } catch {}
+  pulseCache = { at: Date.now(), up };
+  return up;
+}
+async function voiceHealth() {
+  const id = await daIdentity();
+  const key = await dotenvKey("ELEVENLABS_API_KEY");
+  const tts = key ? "elevenlabs" : (await pulseUp()) ? "pulse" : "browser";
+  return { tts, pulse: pulseCache?.up || false, stt: await sttEngine(), voice: id.voice ? { voiceId: id.voice.voiceId } : null, name: id.name, user: id.user, color: id.color };
+}
+/** split for speech: whole sentences, none over Pulse's 500-character ceiling */
+function speechChunks(text: string, max = 440): string[] {
+  const parts = text.replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g) || [text];
+  const out: string[] = [];
+  let cur = "";
+  for (const p of parts) {
+    const s = p.trim(); if (!s) continue;
+    if ((cur + " " + s).trim().length > max && cur) { out.push(cur.trim()); cur = s; }
+    else cur = (cur + " " + s).trim();
+    while (cur.length > max) { out.push(cur.slice(0, max)); cur = cur.slice(max); }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+async function ttsRespond(text: string): Promise<Response> {
+  const clean = String(text || "").trim().slice(0, 1600);
+  if (!clean) return json({ error: "nothing to say" }, 400);
+  const id = await daIdentity();
+  const v = id.voice || {};
+  const key = await dotenvKey("ELEVENLABS_API_KEY");
+  if (key && v.voiceId) {
+    try {
+      const r = await fetch("https://api.elevenlabs.io/v1/text-to-speech/" + v.voiceId + "?output_format=mp3_44100_128", {
+        method: "POST", headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
+        body: JSON.stringify({ text: clean, model_id: "eleven_turbo_v2_5", voice_settings: {
+          stability: v.stability ?? 0.35, similarity_boost: v.similarityBoost ?? 0.8, style: v.style ?? 0.9, use_speaker_boost: true, speed: v.speed ?? 1.1 } }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (r.ok) return new Response(r.body, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store", "x-bridge-tts": "elevenlabs" } });
+      logRow({ ts: Date.now(), kind: "voice.error", msg: "ElevenLabs " + r.status, outcome: (await r.text()).slice(0, 120) });
+    } catch (e) { logRow({ ts: Date.now(), kind: "voice.error", msg: "ElevenLabs " + String(e).slice(0, 100) }); }
+  }
+  if (await pulseUp()) {
+    const chunks = speechChunks(clean);
+    let ok = 0;
+    for (const c of chunks) {
+      try {
+        const r = await fetch("http://localhost:31337/notify", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "Bridge", message: c, voice_id: v.voiceId || undefined, voice_enabled: true }), signal: AbortSignal.timeout(25_000) });
+        if (r.ok) ok++;
+      } catch {}
+    }
+    if (ok) return json({ played: "pulse", chunks: ok, words: clean.split(/\s+/).length });
+    pulseCache = { at: Date.now(), up: false };
+  }
+  return json({ played: "none", words: clean.split(/\s+/).length });
+}
+
+/* whisper, kept warm: one python worker holding the model, fed file paths over stdin */
+type Stt = { proc: any; engine: string; pending: ((r: any) => void)[]; idle: any };
+let stt: Stt | null = null;
+let sttEngineCache: { at: number; v: string } | null = null;
+const STT_WORKER = join(dirname(Bun.fileURLToPath(import.meta.url)), "stt", "worker.py");
+async function sttPython(): Promise<{ py: string; engine: string } | null> {
+  const cands = [process.env.BRIDGE_STT_PYTHON, join(HOME, ".local", "whisper-venv", "bin", "python3"), "python3"].filter(Boolean) as string[];
+  for (const py of cands) {
+    if (py.includes("/") && !existsSync(py)) continue;
+    for (const mod of ["mlx_whisper", "whisper"]) {
+      try {
+        const p = Bun.spawn([py, "-c", "import " + mod], { stdout: "ignore", stderr: "ignore" });
+        if ((await p.exited) === 0) return { py, engine: mod === "mlx_whisper" ? "mlx" : "whisper" };
+      } catch {}
+    }
+  }
+  if (Bun.which("whisper")) return { py: "", engine: "whisper-cli" };
+  return null;
+}
+async function sttEngine(): Promise<string> {
+  if (stt) return stt.engine;
+  if (sttEngineCache && Date.now() - sttEngineCache.at < 120_000) return sttEngineCache.v;
+  const r = await sttPython();
+  const v = r ? r.engine : "none";
+  sttEngineCache = { at: Date.now(), v };
+  return v;
+}
+async function sttStart(): Promise<Stt | null> {
+  if (stt) return stt;
+  const r = await sttPython();
+  if (!r || !r.py) return null;
+  const proc = spawn(r.py, [STT_WORKER], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, PYTHONUNBUFFERED: "1", HF_HUB_OFFLINE: process.env.HF_HUB_OFFLINE || "0" } });
+  const S: Stt = { proc, engine: r.engine, pending: [], idle: null };
+  let buf = "";
+  proc.stdout.on("data", (c: any) => {
+    buf += c.toString();
+    let i;
+    while ((i = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line) continue;
+      let o: any; try { o = JSON.parse(line); } catch { continue; }
+      if (o.ready) { S.engine = o.engine || S.engine; logRow({ ts: Date.now(), kind: "voice.stt", msg: "whisper ready (" + S.engine + ")", ms: o.ms }); continue; }
+      const cb = S.pending.shift(); if (cb) cb(o);
+    }
+  });
+  proc.stderr.on("data", (c: any) => { const s = c.toString().trim(); if (/error|traceback/i.test(s)) logRow({ ts: Date.now(), kind: "voice.error", msg: s.slice(0, 160) }); });
+  proc.on("close", () => { if (stt === S) stt = null; for (const cb of S.pending) cb({ error: "transcriber exited" }); });
+  stt = S;
+  return S;
+}
+function sttTouch() {
+  if (!stt) return;
+  clearTimeout(stt.idle);
+  stt.idle = setTimeout(() => { try { stt?.proc.kill(); } catch {} stt = null; }, 15 * 60_000);   // let the model go after a quiet quarter hour
+}
+async function transcribe(path: string): Promise<{ text?: string; error?: string; ms?: number }> {
+  const t0 = Date.now();
+  const S = await sttStart();
+  if (S) {
+    sttTouch();
+    const r: any = await new Promise((res) => { S.pending.push(res); S.proc.stdin.write(path + "\n"); });
+    return { ...r, ms: Date.now() - t0 };
+  }
+  if (Bun.which("whisper")) {
+    const outDir = dirname(path);
+    const p = Bun.spawn(["whisper", path, "--model", "base.en", "--language", "en", "--output_format", "txt", "--output_dir", outDir, "--fp16", "False"], { stdout: "ignore", stderr: "pipe" });
+    await p.exited;
+    const txt = await readFile(path.replace(/\.[^.]+$/, ".txt"), "utf8").catch(() => "");
+    return txt ? { text: txt.trim(), ms: Date.now() - t0 } : { error: "whisper produced no text" };
+  }
+  return { error: "no transcriber on this machine — install whisper (mlx_whisper) or type instead" };
+}
+
 /* ───────────────────────────── routing ─────────────────────────────── */
 
 const server = Bun.serve({
@@ -946,11 +1457,89 @@ const server = Bun.serve({
       if (p === "/api/session") {
         const file = join(PROJECTS_DIR, q.get("key") || "", (q.get("id") || "") + ".jsonl");
         if (!existsSync(file)) return json({ error: "not found" }, 404);
-        const lines = (await readFile(file, "utf8")).split("\n").filter(Boolean);
+        const raw = await readFile(file, "utf8");
+        const lines = raw.split("\n").filter(Boolean);
         const out = normalizeTranscript(lines);
         const custom = customTitles.get(q.get("id") || "");
         if (custom) { out.meta.title = custom; (out.meta as any).named = true; }
-        return json(out);
+        // where a follower should start: the bytes up to the last complete line
+        const cut = raw.lastIndexOf("\n");
+        return json({ ...out, offset: cut >= 0 ? Buffer.byteLength(raw.slice(0, cut + 1)) : 0 });
+      }
+      if (p === "/api/live") return json({ now: Date.now(), sessions: lastLive, events: EVENTS.slice(-40) });
+      if (p === "/api/follow") {
+        const file = join(PROJECTS_DIR, q.get("key") || "", (q.get("id") || "") + ".jsonl");
+        if (!existsSync(file)) return json({ error: "not found" }, 404);
+        const from = Number(q.get("from") || 0);
+        const signal = { closed: false };
+        const stream = new ReadableStream({
+          start(ctrl) {
+            const enc = new TextEncoder();
+            const send = (o: any) => { if (signal.closed) return; try { ctrl.enqueue(enc.encode("data: " + JSON.stringify(o) + "\n\n")); } catch { signal.closed = true; } };
+            const beat = setInterval(() => send({ t: "ping" }), 20_000);
+            followTranscript(file, from, (o) => { send(o); if (o.t === "gone") { signal.closed = true; clearInterval(beat); try { ctrl.close(); } catch {} } }, signal);
+            (ctrl as any)._beat = beat;
+          },
+          cancel() { signal.closed = true; },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" } });
+      }
+      if (p === "/api/da/state") return json(daState());
+      if (p === "/api/da/stream") {
+        const since = Number(q.get("since") || 0);
+        let client: DaClient | null = null;
+        const stream = new ReadableStream({
+          start(ctrl) {
+            const enc = new TextEncoder();
+            let closed = false;
+            const send = (o: any) => { if (closed) return; try { ctrl.enqueue(enc.encode("data: " + JSON.stringify(o) + "\n\n")); } catch { closed = true; if (client) DA.clients.delete(client); } };
+            send({ t: "hello", d: daState(), seq: DA.seq });
+            // a fresh page loads the transcript instead of replaying the ring; a reconnect replays what it missed
+            if (q.get("replay") !== "0") for (const o of DA.ring) if (o.seq > since) send(o);
+            client = send; DA.clients.add(client);
+            const beat = setInterval(() => { if (closed) clearInterval(beat); else send({ t: "ping" }); }, 20_000);
+            if (!DA.child && !DA.starting) daStart();   // opening the desk boots it
+          },
+          cancel() { if (client) DA.clients.delete(client); },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" } });
+      }
+      if (p === "/api/da/send" && req.method === "POST") {
+        const { text } = await req.json().catch(() => ({}) as any);
+        const t = String(text || "").trim();
+        if (!t) return json({ error: "empty" }, 400);
+        return json(await daSend(t));
+      }
+      if (p === "/api/da/interrupt" && req.method === "POST") return json({ ok: daInterrupt() });
+      if (p === "/api/da/reset" && req.method === "POST") return json(await daReset());
+      if (p === "/api/da/config" && req.method === "POST") {
+        const { permissionMode, model } = await req.json().catch(() => ({}) as any);
+        if (typeof permissionMode === "string") DA.permissionMode = permissionMode;
+        if (typeof model === "string") DA.model = model;
+        await daSaveState();
+        return json(await daReset());
+      }
+      if (p === "/api/voice/health") return json(await voiceHealth());
+      if (p === "/api/voice/warm" && req.method === "POST") { sttStart().then(sttTouch); return json({ ok: true, engine: await sttEngine() }); }
+      if (p === "/api/tts" && req.method === "POST") {
+        const { text } = await req.json().catch(() => ({}) as any);
+        return ttsRespond(String(text || ""));
+      }
+      if (p === "/api/stt" && req.method === "POST") {
+        const ct = req.headers.get("content-type") || "audio/webm";
+        const ext = ct.includes("mp4") ? "mp4" : ct.includes("ogg") ? "ogg" : ct.includes("wav") ? "wav" : "webm";
+        const dir = join(DATA_DIR, "tmp"); await mkdir(dir, { recursive: true });
+        const raw = join(dir, "utt-" + Date.now() + "." + ext), wav = raw.replace(/\.[^.]+$/, ".wav");
+        const bytes = new Uint8Array(await req.arrayBuffer());
+        if (bytes.length < 800) return json({ text: "", error: "too short" });
+        await Bun.write(raw, bytes);
+        // whisper wants 16 kHz mono; ffmpeg also turns whatever the browser recorded into that
+        const ff = Bun.spawn(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", raw, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], { stdout: "ignore", stderr: "pipe" });
+        const code = await ff.exited;
+        const r = await transcribe(code === 0 ? wav : raw);
+        Bun.spawn(["rm", "-f", raw, wav, wav.replace(/\.wav$/, ".txt")]);
+        if (r.text !== undefined) logRow({ ts: Date.now(), kind: "voice.heard", msg: r.text.slice(0, 140), ms: r.ms });
+        return json(r);
       }
       if (p === "/api/route" && req.method === "POST") {
         const { prompt, previous } = await req.json().catch(() => ({}) as any);
@@ -1149,6 +1738,7 @@ const server = Bun.serve({
       }
 
       /* static */
+      if (p === "/favicon.ico") return new Response(null, { status: 204 });
       const rel = p === "/" ? "/index.html" : p;
       const file = Bun.file(join(UI_DIR, rel));
       if (await file.exists()) return new Response(file, { headers: { "cache-control": "no-store" } });

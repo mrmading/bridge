@@ -66,6 +66,18 @@ Building needs the Xcode Command Line Tools (`xcode-select --install`). The app 
 
 ## What you get
 
+**Your assistant is the first tab.** The desk is one persistent Claude Code session that stays
+open for as long as Bridge runs. Click the orb (or hold `Space`) and talk: speech is transcribed
+on your Mac with whisper, the answer streams in, and the `🗣️` line is read back to you. Every
+message carries a live picture of the terminals you have open, so "what is the setpoint session
+doing?" is answered without switching tabs — and "tell it to stop" is relayed to that session.
+
+**Terminals show up on their own.** Every interactive `claude` you run registers itself; Bridge
+mirrors each one as a tab that follows the transcript as the terminal writes it. A green dot
+means it is working, `⏳` means it stopped on a question for you. The tab is read-only while the
+terminal lives; when a turn finishes or a session asks you something, the bell, a toast and the
+desk all say so, and the desk can read the question out loud.
+
 **Chat, not a terminal log.** Streaming text, thinking folded behind a one-line summary, and every
 tool call as a collapsible card: Bash shows command and output, `Edit` renders a real ± diff,
 `Write` shows what was written, `TodoWrite` renders the checklist. Sub-agent output gets its own
@@ -142,6 +154,14 @@ coverage, title and first-prompt matches, and size, then building a plain-text d
 matches.
 
 `public/` is plain HTML, CSS and one vanilla JS file. No framework, no bundler, no `node_modules`.
+
+## Voice
+
+Listening is offline: the page records, the server hands the clip to whisper (`mlx_whisper` on
+Apple silicon, `openai-whisper` otherwise — `BRIDGE_STT_PYTHON` picks the interpreter). Speaking
+uses your ElevenLabs voice when `ELEVENLABS_API_KEY` is in `~/.claude/.env`, else the Pulse voice
+server if it is running, else the browser's own voice. `hands-free` reopens the microphone after
+each answer; `Esc` stops everything.
 
 ## Safety
 

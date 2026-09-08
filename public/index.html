@@ -53,6 +53,40 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
 
     <section class="stream" id="stream"><div class="stream-inner" id="streamInner"></div></section>
 
+    <!-- the desk: the assistant's own tab. An orb you talk to, the conversation under it. -->
+    <section class="desk" id="desk" hidden>
+      <div class="desk-head">
+        <span class="desk-state" id="deskState"><span class="dot"></span><span class="t">starting</span></span>
+        <span class="spacer"></span>
+        <button class="chip" id="deskHands" title="Hands-free: after each spoken answer, the microphone opens again on its own">hands-free</button>
+        <button class="chip" id="deskMute" title="Speak answers aloud">🔊 voice</button>
+        <button class="chip" id="deskReset" title="Start a fresh conversation with the desk (the old one stays in your session history)">new thread</button>
+      </div>
+      <div class="desk-body" id="deskBody">
+        <div class="desk-stage" id="deskStage">
+          <canvas id="orb" width="320" height="320"></canvas>
+          <div class="desk-label" id="deskLabel">Click the orb, or just type</div>
+          <div class="desk-live" id="deskLive"></div>
+        </div>
+        <div class="desk-feed" id="deskFeed"></div>
+      </div>
+      <div class="desk-bar-wrap">
+        <div class="desk-bar" id="deskBar">
+          <button class="desk-mic" id="deskMic" title="Talk (hold Space, or click to toggle)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          </button>
+          <input id="deskInput" placeholder="Ask about anything — the sessions, the day, what to do next…" spellcheck="false" autocomplete="off">
+          <button class="desk-send" id="deskSend" title="Send (↵)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+        <div class="hintline desk-hint" id="deskHint"><span><kbd>Space</kbd> hold to talk</span><span><kbd>↵</kbd> send</span><span><kbd>Esc</kbd> stop</span><span id="deskVoiceInfo"></span></div>
+      </div>
+    </section>
+
+    <!-- stands in for the composer while a mirrored terminal session is live -->
+    <div class="mirror-bar" id="mirrorBar" hidden></div>
+
     <div class="composer-wrap" id="composerWrap">
       <div class="turnstate" id="turnState" hidden></div>
       <div class="composer" id="composer">
@@ -141,3 +175,4 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
 <div id="grain"></div>
 <div class="toast" id="toast"></div>
 <script src="/app.js"></script>
+<script src="/desk.js"></script>

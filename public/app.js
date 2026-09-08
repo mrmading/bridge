@@ -1,4 +1,6 @@
 /* ══════════════════════════ Bridge client ══════════════════════════ */
+/** resolves once boot() has painted; desk.js waits on it */
+window.BridgeReady = new Promise((r) => (window._bridgeBooted = r));
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
@@ -26,6 +28,8 @@ const S = {
   attachments: [],          // files staged in the composer for the next turn
   editingTab: null,         // index of the tab whose title is being edited inline
   lastTabClick: null,       // {i, ts} — hand-rolled double-click detection on tabs
+  live: [],                 // the terminal sessions Claude Code has open right now (from its registry)
+  dismissed: {},            // mirror tabs closed by hand: not reopened while that terminal lives
 };
 /** the active session tab */
 const T = () => S.tabs[S.active] || null;
@@ -419,20 +423,125 @@ function makeTab(opts) {
   S.active = S.tabs.length - 1;
   return t;
 }
+/** The desk is the assistant's own tab: first, pinned, never closed. */
+function makeDeskTab() {
+  const t = { da: true, id: null, key: null, path: (S.boot && S.boot.home) || "", name: "~", title: (S.boot && S.boot.assistant) || "Desk", msgs: [], usage: null, model: "", branch: "", live: null, streaming: false, lastResult: null };
+  S.tabs.unshift(t);
+  S.active = 0;
+  return t;
+}
 function closeTab(i) {
   const t = S.tabs[i];
-  if (t && t.streaming) abortTab(t);
+  if (!t || t.da) return;
+  if (t.streaming) abortTab(t);
+  if (t.mirror) { if (!t.mirror.ended) S.dismissed[t.id] = true; stopFollow(t); }
   S.tabs.splice(i, 1);
-  if (!S.tabs.length) makeTab();
+  if (!S.tabs.some((x) => !x.da)) makeTab();
   else if (S.active >= S.tabs.length) S.active = S.tabs.length - 1;
   else if (S.active > i) S.active--;
   paint();
 }
 function activate(i) { S.active = i; paint(); scrollDown(true); }
 function tabTitle(t) {
+  if (t.da) return (S.boot && S.boot.assistant) || "Desk";
   if (t.title && t.title !== "New session") return t.title;
   const first = t.msgs.filter((m) => m.kind === "user")[0];
   return first ? first.text.slice(0, 40) : "New session";
+}
+
+/* ─────────────── mirrored terminals ───────────────
+ * Every interactive `claude` on this machine registers itself; Bridge shows each one as a
+ * tab that follows the transcript as the terminal writes it. Read-only while the terminal
+ * lives — typing into it goes through the desk, which relays the message to that session. */
+async function syncLive() {
+  let r;
+  try { r = await (await fetch("/api/live")).json(); } catch (e) { return; }
+  S.live = r.sessions || [];
+  const seen = {};
+  let changed = false;
+  for (const s of S.live) {
+    seen[s.id] = true;
+    if (S.dismissed[s.id]) continue;
+    let t = S.tabs.find((x) => x.id === s.id);
+    if (!t) {
+      const keep = S.active;                 // a terminal opening must not steal the tab you are on
+      t = makeTab({ id: s.id, key: s.key, path: s.cwd, title: s.title, named: false });
+      t.name = s.folder;
+      S.active = keep;
+      t.mirror = s;
+      changed = true;
+      loadMirror(t);
+    } else {
+      const was = t.mirror;
+      t.mirror = Object.assign(t.mirror || {}, s, { ended: false });
+      if (!was) { changed = true; if (t.msgs.length && !t.follow) startFollow(t, t.offset || 0); else if (!t.msgs.length) loadMirror(t); }
+      else if (was.status !== s.status || (was.waiting && was.waiting.text) !== (s.waiting && s.waiting.text)) changed = true;
+      if (s.title && !t.named && t.title !== s.title) { t.title = s.title; changed = true; }
+    }
+  }
+  for (const t of S.tabs) {
+    if (t.mirror && !t.mirror.ended && !seen[t.id]) {
+      t.mirror.ended = true; t.mirror.status = "ended";
+      t.live = t.id;                         // the terminal is gone, so the session is Bridge's to continue
+      delete S.dismissed[t.id];
+      stopFollow(t); changed = true;
+    }
+  }
+  if (changed) { renderTabs(); renderTop(); if (T() && T().mirror) renderMirrorBar(); }
+}
+async function loadMirror(t) {
+  let r;
+  try { r = await (await fetch("/api/session?key=" + encodeURIComponent(t.key) + "&id=" + t.id)).json(); } catch (e) { return; }
+  if (r.error) return;
+  t.msgs = r.events || []; t.usage = r.meta.usage; t.model = r.meta.model; t.branch = r.meta.branch; t.offset = r.offset || 0;
+  if (r.meta.title && !t.named) t.title = r.meta.title;
+  if (T() === t) { paint(); scrollDown(true); } else renderTabs();
+  if (t.mirror && !t.mirror.ended) startFollow(t, t.offset);
+}
+function startFollow(t, from) {
+  stopFollow(t);
+  const es = new EventSource("/api/follow?key=" + encodeURIComponent(t.key) + "&id=" + t.id + "&from=" + (from | 0));
+  t.follow = es;
+  es.onmessage = (e) => {
+    let p; try { p = JSON.parse(e.data); } catch (err) { return; }
+    if (p.t !== "events") { if (p.t === "gone") stopFollow(t); return; }
+    t.offset = p.offset;
+    for (const ev of p.events) t.msgs.push(ev);
+    for (const pt of p.patches || []) {
+      for (let i = t.msgs.length - 1; i >= 0; i--) {
+        const m = t.msgs[i];
+        if (m.kind === "tool" && m.id === pt.id) { m.result = pt.result; if (T() === t) { const el = $('#streamInner [data-mi="' + i + '"]'); if (el) { el.innerHTML = renderMsg(m); wireMsgHandlers(el); } } break; }
+      }
+    }
+    if (p.usage) t.usage = accUsage(t.usage, { input_tokens: p.usage.input, output_tokens: p.usage.output, cache_read_input_tokens: p.usage.cacheRead, cache_creation_input_tokens: p.usage.cacheWrite });
+    if (p.model) t.model = p.model;
+    if (p.events.length && T() === t) { appendRows(t); scrollDown(); renderInspector(); }
+  };
+  es.onerror = () => { /* EventSource reconnects on its own; a dead file ends with "gone" */ };
+}
+function stopFollow(t) { if (t.follow) { try { t.follow.close(); } catch (e) {} t.follow = null; } }
+/** the bar that stands in for the composer on a live mirror */
+function renderMirrorBar() {
+  const t = T();
+  const el = $("#mirrorBar");
+  if (!el) return;
+  const on = !!(t && t.mirror && !t.mirror.ended && S.view === "chat");
+  el.hidden = !on;
+  if (!on) return;
+  const m = t.mirror, da = (S.boot && S.boot.assistant) || "the desk";
+  const w = m.waiting;
+  el.innerHTML = '<span class="mb-dot ' + (m.status === "busy" ? "busy" : w ? "wait" : "") + '"></span>' +
+    '<span class="mb-t">Live in your terminal · <b>' + esc(m.name) + "</b> · " + (m.status === "busy" ? "working" : w ? "waiting on you" : "idle") + "</span>" +
+    (w ? '<span class="mb-q" title="' + esc(w.text) + '">' + esc(w.text.slice(0, 90)) + "</span>" : "") +
+    '<input class="mb-in" id="mirrorIn" placeholder="' + esc(w ? "Answer it — " + da + " relays your reply to the terminal" : "Tell this session something — relayed through " + da) + '" spellcheck="false">' +
+    '<button class="chip" data-ask>Ask ' + esc(da) + "</button>";
+  const ab = el.querySelector("[data-ask]");
+  if (ab) ab.onclick = () => { if (window.Desk) window.Desk.ask("What is the " + m.folder + " session (" + m.name + ") doing right now, and does it need anything from me?"); };
+  const inp = el.querySelector("#mirrorIn");
+  if (inp) inp.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter" && inp.value.trim() && window.Desk) { window.Desk.relay(m, inp.value.trim()); inp.value = ""; }
+  };
 }
 /** Rename a session. The name lives in Bridge's sidecar, never in Claude Code's transcript,
  *  so it survives resume and compaction. Sessions with no id yet are renamed locally only. */
@@ -462,13 +571,22 @@ function renderTabs() {
   const editing = S.editingTab;
   const live = $("#tabs .tab-edit");
   if (live && document.activeElement === live && +live.dataset.edit === editing) return;  // never clobber the open field
-  $("#tabs").innerHTML = S.tabs.map((t, i) =>
-    '<div class="tab ' + (i === S.active ? "on" : "") + '" data-tab="' + i + '" title="' + esc(t.path || "") + ' · double-click the title to rename">' +
-    (t.streaming ? '<span class="tab-live"></span>' : "") +
-    (i === editing
-      ? '<input class="tab-edit" data-edit="' + i + '" value="' + esc(tabTitle(t)) + '" spellcheck="false">'
-      : '<span class="tab-t">' + esc(tabTitle(t)) + "</span>") +
-    '<span class="tab-x" data-close="' + i + '">×</span></div>').join("");
+  const deskPhase = (window.Desk && window.Desk.phase()) || "idle";
+  $("#tabs").innerHTML = S.tabs.map((t, i) => {
+    if (t.da) return '<div class="tab desk-tab ' + (i === S.active ? "on" : "") + ' ph-' + deskPhase + '" data-tab="' + i + '" title="' + esc(tabTitle(t)) + ' — your assistant. Ask about anything; it watches every session.">' +
+      '<span class="tab-orb"></span><span class="tab-t">' + esc(tabTitle(t)) + "</span></div>";
+    const m = t.mirror;
+    const busy = t.streaming || (m && !m.ended && m.status === "busy");
+    const wait = m && !m.ended && m.waiting;
+    const tip = m ? (m.ended ? "This terminal has closed — the session is yours to continue here" : "Live in your terminal (" + m.name + ") · " + (m.status === "busy" ? "working" : wait ? "waiting on you" : "idle")) : esc(t.path || "") + " · double-click the title to rename";
+    return '<div class="tab ' + (i === S.active ? "on" : "") + (m ? " mirror" : "") + (m && m.ended ? " ended" : "") + '" data-tab="' + i + '" title="' + esc(tip) + '">' +
+      (m ? '<span class="tab-term" title="terminal">▮</span>' : "") +
+      (busy ? '<span class="tab-live"></span>' : wait ? '<span class="tab-wait" title="waiting on you">⏳</span>' : "") +
+      (i === editing
+        ? '<input class="tab-edit" data-edit="' + i + '" value="' + esc(tabTitle(t)) + '" spellcheck="false">'
+        : '<span class="tab-t">' + esc(tabTitle(t)) + "</span>") +
+      '<span class="tab-x" data-close="' + i + '">×</span></div>';
+  }).join("");
   /* Double-click is detected by hand: the first click repaints and replaces every
      tab node, so a native dblclick lands on #tabs, never on the tab itself. */
   $("#tabs").querySelectorAll("[data-tab]").forEach((n) => (n.onclick = (e) => {
@@ -498,14 +616,16 @@ const unread = () => S.notes.filter((x) => !x.read).length;
 function saveNotes() { try { localStorage.bridgeNotes = JSON.stringify(S.notes.slice(0, 60)); } catch (e) {} }
 function loadNotes() { try { S.notes = JSON.parse(localStorage.bridgeNotes || "[]"); } catch (e) { S.notes = []; } }
 function note(tab, kind, detail) {
-  S.notes.unshift({
-    id: tab.id || tab.live, key: tab.key, path: tab.path,
-    title: tabTitle(tab), kind: kind, detail: detail || "", ts: Date.now(), read: false,
-  });
+  noteRaw({ id: tab.id || tab.live, key: tab.key, path: tab.path, title: tabTitle(tab), kind: kind, detail: detail || "" });
+}
+/** kinds: done · error · waiting (a session is asking you something) · started · ended */
+function noteRaw(x) {
+  S.notes.unshift(Object.assign({ ts: Date.now(), read: false }, x));
   S.notes = S.notes.slice(0, 60);
   saveNotes();
   renderBell();
 }
+const NOTE_LABEL = { done: "finished", error: "failed", waiting: "needs you", started: "terminal opened", ended: "terminal closed" };
 function renderBell() {
   const n = unread();
   const b = $("#bellCount");
@@ -526,7 +646,7 @@ function renderNotes() {
       '<div class="note ' + (x.read ? "" : "unread") + '" data-note="' + i + '">' +
       '<span class="note-dot ' + x.kind + '"></span>' +
       '<div style="flex:1;min-width:0"><div class="note-t">' + esc(x.title) + "</div>" +
-      '<div class="note-m">' + (x.kind === "error" ? "failed" : "finished") + (x.detail ? " · " + esc(x.detail) : "") +
+      '<div class="note-m">' + (NOTE_LABEL[x.kind] || x.kind) + (x.detail ? " · " + esc(x.detail) : "") +
       " · " + esc(String(x.path || "").split("/").pop() || "") + " · " + fmtAgo(x.ts) + "</div></div>" +
       '<span class="note-go">open →</span></div>').join("")
       : '<div style="padding:22px 16px;color:var(--fg-faint);font-size:12.5px;text-align:center">Nothing waiting on you. Anything that finishes while you are elsewhere lands here and stays until you clear it.</div>');
@@ -627,7 +747,7 @@ function setCwd(path) {
   S.cwd = path;
   localStorage.bridgeCwd = path;
   const t = T();
-  if (t && !t.msgs.length && !t.id) { t.path = path; t.name = path.split("/").pop(); }
+  if (t && !t.da && !t.msgs.length && !t.id) { t.path = path; t.name = path.split("/").pop(); }
   else makeTab({ path: path });
   goChat();
 }
@@ -672,11 +792,19 @@ const PAGE = () => S.page[S.view] || null;
 function renderMain() {
   const isChat = S.view === "chat";
   const open = PAGE();
+  const t = T();
+  const desk = isChat && !!(t && t.da);
+  const mirror = isChat && !!(t && t.mirror && !t.mirror.ended);
   $("#streamInner").classList.toggle("wide", !isChat);
   $("#streamInner").classList.toggle("editing", !!(open && open.editing));
-  $("#composerWrap").style.display = isChat ? "" : "none";
+  $("#composerWrap").style.display = isChat && !desk && !mirror ? "" : "none";
   $("#tabbar").style.display = isChat ? "" : "none";
+  $("#desk").hidden = !desk;
+  $("#stream").style.display = desk ? "none" : "";
+  renderMirrorBar();
+  if (window.Desk) window.Desk.shown(desk);
   const box = $("#streamInner");
+  if (desk) return;
   if (isChat) { renderStream(); return; }
   if (open) return renderDoc(box, open);
   if (S.view === "activity") return renderActivity(box);
@@ -993,7 +1121,11 @@ function renderTop() {
   crumb.classList.toggle("renamable", chat && !!t);
   crumb.ondblclick = chat && t ? () => beginRename(S.active) : null;
   const cp = $("#crumbPath");
-  if (chat && t) {
+  if (chat && t && t.da) {
+    cp.innerHTML = '<span class="cwd-lab">' + (S.live.length ? S.live.length + (S.live.length === 1 ? " terminal session live" : " terminal sessions live") : "no terminal sessions open") + "</span>";
+  } else if (chat && t && t.mirror && !t.mirror.ended) {
+    cp.innerHTML = '<span class="cwd-lab">Terminal session</span> <span class="cwd-pick" style="cursor:default">' + esc(short(t.path, 40)) + "</span>";
+  } else if (chat && t) {
     cp.innerHTML = '<span class="cwd-lab">Working directory:</span> <button class="cwd-pick caret-r" title="Working directory — the folder Claude Code runs in for this session. Click to change it.">' +
       esc(short(t.path, 40)) + "</button>";
     const btn = cp.querySelector(".cwd-pick");
@@ -1851,7 +1983,10 @@ function toggleTheme() {
   if (S.roots[0]) await selectDir(S.roots[0]);
   loadNotes();
   makeTab();
+  makeDeskTab();                              // first tab, and the one Bridge opens on
   paint(); renderBell();
+  syncLive(); setInterval(syncLive, 4000);    // terminals come and go on their own
+  window._bridgeBooted();
 
   if (!authed()) openSignin();               // first run: the sheet is the app until there is an account
   $("#signinClose").onclick = closeSignin;
@@ -1938,6 +2073,7 @@ function toggleTheme() {
     else if (meta && e.key === "p") { e.preventDefault(); goChat(); toggleRecents(true); }
     else if (meta && e.key === "t") { e.preventDefault(); makeTab(); goChat(); $("#input").focus(); }
     else if (meta && e.key === "w") { e.preventDefault(); if (S.view === "chat") closeTab(S.active); else if (PAGE()) closePage(); }
+    else if (e.key === "Escape" && S.view === "chat" && T() && T().da && window.Desk && window.Desk.escape()) { e.preventDefault(); }
     else if (meta && e.key === "j") { e.preventDefault(); toggleTheme(); }
     else if (meta && e.key === "i") { e.preventDefault(); S.inspector = !S.inspector; renderInspector(); }
     else if (e.key === "Escape") {
