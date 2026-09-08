@@ -138,11 +138,21 @@
     dock(); scrollFeed();
   }
   function scrollFeed() {
-    const b = $("#deskBody");
+    const b = $("#deskFeed");
     if (b.scrollHeight - b.scrollTop - b.clientHeight < 260) b.scrollTop = b.scrollHeight;
   }
-  /** at rest the orb holds the centre; once there is something to read it docks up top */
-  function dock() { $("#desk").classList.toggle("docked", DESK.msgs.some((m) => m.kind !== "status")); }
+  /** the drawer's count, and an empty state before anything has happened */
+  function dock() {
+    const n = DESK.msgs.filter((m) => m.kind === "assistant" || m.kind === "event").length;
+    $("#drawerCount").textContent = n ? String(n) : "";
+    if (!DESK.msgs.length) $("#deskFeed").innerHTML = '<div class="desk-feed-empty">Answers and session events land here.</div>';
+  }
+  function drawer(on) {
+    if (on === undefined) on = $("#desk").classList.contains("no-drawer");
+    $("#desk").classList.toggle("no-drawer", !on);
+    localStorage.bridgeDrawer = on ? "1" : "0";
+    $("#deskDrawerBtn").classList.toggle("acc", on);
+  }
   function push(m) { const i = DESK.msgs.push(m) - 1; flush(i); return i; }
   const lastAssistant = () => DESK.msgs.filter((m) => m.kind === "assistant").pop();
 
@@ -183,7 +193,7 @@
     const fresh = DESK.msgs.filter((m) => m.kind !== "status" && m.ts > Date.now() - 60_000 && m.live);
     DESK.msgs = evs.slice(-120).concat(fresh);
     rebuild();
-    $("#deskBody").scrollTop = $("#deskBody").scrollHeight;
+    $("#deskFeed").scrollTop = $("#deskFeed").scrollHeight;
   }
   const stripBlock = (t) => String(t || "").replace(/<bridge>[\s\S]*?<\/bridge>\s*/g, "").trim();
   function onUserEcho(d) {
@@ -477,7 +487,7 @@
     const c = $("#orb");
     if (!c || !DESK.shown) { requestAnimationFrame(draw); return; }
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const size = c.clientWidth || 320;
+    const size = c.clientWidth || 300;
     if (c.width !== size * dpr) { c.width = size * dpr; c.height = size * dpr; }
     const g = c.getContext("2d");
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -564,6 +574,10 @@
     };
     $("#deskHands").onclick = () => { DESK.hands = !DESK.hands; localStorage.bridgeHands = DESK.hands ? "1" : "0"; paintState(); toast(DESK.hands ? "Hands-free on — it listens again after each answer" : "Hands-free off"); };
     $("#deskMute").onclick = () => { DESK.muted = !DESK.muted; localStorage.bridgeMuted = DESK.muted ? "1" : "0"; if (DESK.muted) stopSpeaking(); paintState(); };
+    $("#deskDrawerBtn").onclick = () => drawer();
+    $("#drawerClose").onclick = () => drawer(false);
+    drawer(localStorage.bridgeDrawer !== "0");
+    document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "u" && DESK.shown) { e.preventDefault(); drawer(); } });
     DESK.hands = localStorage.bridgeHands !== "0";
     DESK.muted = localStorage.bridgeMuted === "1";
     // hold Space to talk while the desk is showing and nothing is being typed

@@ -1017,6 +1017,8 @@ async function watchLive() {
     EVENTS.push(ev); if (EVENTS.length > 200) EVENTS.shift();
     logRow({ ts: now, kind: "live." + kind, msg: (kind === "waiting" ? "needs you: " : "") + (text || s.title), session: s.id, cwd: s.cwd, outcome: s.name });
     daBroadcast({ t: "event", d: ev });
+    if (kind === "waiting") notifyDesktop(s.folder + " needs you", s.title, text);
+    else if (kind === "done") notifyDesktop(s.folder + " finished a turn", s.title, text);
   };
   const present = new Set<number>();
   for (const s of cur) {
@@ -1044,6 +1046,14 @@ async function watchLive() {
 const lastLiveByPid = new Map<number, LiveSession>();
 setInterval(watchLive, 1500);
 watchLive();
+
+/** a macOS notification — the one signal that reaches the principal when Bridge is not in front */
+const osaStr = (s: string) => '"' + String(s || "").replace(/[\\"]/g, "\\$&").replace(/[\r\n]+/g, " ").slice(0, 200) + '"';
+function notifyDesktop(title: string, subtitle: string, body: string) {
+  if (process.platform !== "darwin") return;
+  const script = "display notification " + osaStr(body || subtitle) + " with title " + osaStr("Bridge · " + title) + (subtitle && body ? " subtitle " + osaStr(subtitle) : "");
+  try { Bun.spawn(["osascript", "-e", script], { stdout: "ignore", stderr: "ignore" }); } catch {}
+}
 
 /* ────────────────────── following a transcript as it grows ──────────────────────
  * A mirrored tab is the terminal's transcript, read from the byte the tab already has. The
