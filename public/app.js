@@ -456,15 +456,8 @@ async function syncLive() {
     seen[s.id] = true;
     if (S.dismissed[s.id]) continue;
     let t = S.tabs.find((x) => x.id === s.id);
-    if (!t) {
-      const keep = S.active;                 // a terminal opening must not steal the tab you are on
-      t = makeTab({ id: s.id, key: s.key, path: s.cwd, title: s.title, named: false });
-      t.name = s.folder;
-      S.active = keep;
-      t.mirror = s;
-      changed = true;
-      loadMirror(t);
-    } else {
+    if (!t) { mirrorTab(s); changed = true; }
+    else {
       const was = t.mirror;
       t.mirror = Object.assign(t.mirror || {}, s, { ended: false });
       if (!was) { changed = true; if (!t.msgs.length) loadMirror(t); }
@@ -483,6 +476,30 @@ async function syncLive() {
   if (changed) { renderTabs(); renderTop(); if (T() && T().mirror) renderMirrorBar(); }
   syncFollowers();
   if (window.Desk) window.Desk.board();
+}
+/** A terminal session as a tab: read-only, following the transcript. Never steals the tab you are on. */
+function mirrorTab(s) {
+  const keep = S.active;
+  const t = makeTab({ id: s.id, key: s.key, path: s.cwd, title: s.title, named: false });
+  t.name = s.folder;
+  S.active = keep;
+  t.mirror = Object.assign({}, s, { ended: false });
+  loadMirror(t);
+  return t;
+}
+/** the live terminal session behind an id, if there is one */
+const liveById = (id) => (S.live || []).find((s) => s.id === id) || null;
+/** Open a terminal session in Work sessions — always as its mirror, never as a chat tab.
+ *  A mirror tab you closed by hand comes back here; the terminal still owns the session. */
+function openMirror(s) {
+  clearInterval(actTimer); actTimer = null;
+  delete S.dismissed[s.id];
+  S.view = "chat";
+  let i = S.tabs.map((t) => t.id).indexOf(s.id);
+  if (i < 0) { mirrorTab(s); i = S.tabs.length - 1; }
+  else if (!S.tabs[i].mirror) { S.tabs[i].mirror = Object.assign({}, s, { ended: false }); if (!S.tabs[i].msgs.length) loadMirror(S.tabs[i]); }
+  activate(i);
+  syncFollowers();
 }
 /** Browsers allow six open connections per host, and every follower is one. So only the tab
  *  you are looking at follows its terminal live; the others catch up from their saved offset
@@ -535,10 +552,11 @@ function renderMirrorBar() {
   if (!on) return;
   const m = t.mirror, da = (S.boot && S.boot.assistant) || "the desk";
   const w = m.waiting;
-  el.innerHTML = '<span class="mb-dot ' + (m.status === "busy" ? "busy" : w ? "wait" : "") + '"></span>' +
-    '<span class="mb-t">Live in your terminal · <b>' + esc(m.name) + "</b> · " + (m.status === "busy" ? "working" : w ? "waiting on you" : "idle") + "</span>" +
+  el.innerHTML = '<span class="mb-pill ' + (m.status === "busy" ? "busy" : w ? "wait" : "") + '" title="This session runs in your terminal (' + esc(m.name) + '). Bridge mirrors it read-only — you cannot chat here; use the terminal, or relay a note through ' + esc(da) + '.">' +
+      '<span class="sb-dot"></span><span class="mb-tag">Terminal</span><b>' + esc(m.folder || m.name) + '</b><span class="mb-s">' + (m.status === "busy" ? "working" : w ? "needs you" : "idle") + "</span></span>" +
+    '<span class="mb-t">read-only · <b>' + esc(m.name) + "</b>" + (w ? "" : m.last ? ' · <span class="mb-l" title="' + esc(m.last) + '">' + esc(m.last.slice(0, 80)) + "</span>" : "") + "</span>" +
     (w ? '<span class="mb-q" title="' + esc(w.text) + '">' + esc(w.text.slice(0, 90)) + "</span>" : "") +
-    '<input class="mb-in" id="mirrorIn" placeholder="' + esc(w ? "Answer it — " + da + " relays your reply to the terminal" : "Tell this session something — relayed through " + da) + '" spellcheck="false">' +
+    '<input class="mb-in" id="mirrorIn" placeholder="' + esc(w ? "Answer it — " + da + " relays your reply to the terminal" : "Relay a note to the terminal through " + da + "…") + '" spellcheck="false">' +
     '<button class="chip" data-ask>Ask ' + esc(da) + "</button>";
   const ab = el.querySelector("[data-ask]");
   if (ab) ab.onclick = () => { if (window.Desk) window.Desk.ask("What is the " + m.folder + " session (" + m.name + ") doing right now, and does it need anything from me?"); };
@@ -582,8 +600,8 @@ function renderTabs() {
     const wait = m && !m.ended && m.waiting;
     const tip = m ? (m.ended ? "This terminal has closed — the session is yours to continue here" : "Live in your terminal (" + m.name + ") · " + (m.status === "busy" ? "working" : wait ? "waiting on you" : "idle")) : esc(t.path || "") + " · double-click the title to rename";
     return '<div class="tab ' + (i === S.active ? "on" : "") + (m ? " mirror" : "") + (m && m.ended ? " ended" : "") + '" data-tab="' + i + '" title="' + esc(tip) + '">' +
-      (m ? '<span class="tab-term" title="terminal">▮</span>' : "") +
       (busy ? '<span class="tab-live"></span>' : wait ? '<span class="tab-wait" title="waiting on you">⏳</span>' : "") +
+      (m ? '<span class="tab-tag' + (m.ended ? " off" : "") + '">' + (m.ended ? "was terminal" : "Terminal") + "</span>" : "") +
       (i === editing
         ? '<input class="tab-edit" data-edit="' + i + '" value="' + esc(tabTitle(t)) + '" spellcheck="false">'
         : '<span class="tab-t">' + esc(tabTitle(t)) + "</span>") +
@@ -666,16 +684,24 @@ function toggleRecents(force) {
 }
 function fillRecents(q) {
   const ql = q.toLowerCase();
-  const list = S.recent.filter((s) => (s.title + " " + s.preview + " " + s.projectName).toLowerCase().indexOf(ql) >= 0).slice(0, 60);
+  const live = (S.live || []).filter((s) => (s.title + " " + s.name + " " + s.folder + " " + s.cwd).toLowerCase().indexOf(ql) >= 0);
+  const liveIds = new Set((S.live || []).map((s) => s.id));
+  const list = S.recent.filter((s) => !liveIds.has(s.id) && (s.title + " " + s.preview + " " + s.projectName).toLowerCase().indexOf(ql) >= 0).slice(0, 60);
   $("#recentsList").innerHTML =
     '<div class="item" data-findall><div class="item-row"><span>⌕</span><span class="item-t">Search every session…</span><span class="tag">⌘F</span></div></div>' +
+    (live.length ? '<div class="rc-h">Live in your terminal<span>' + live.length + "</span></div>" +
+      live.map((s, i) => '<div class="item live" data-live="' + i + '" title="Open as a read-only mirror — the terminal owns this session">' +
+        '<div class="item-row"><span class="sb-dot ' + (s.status === "busy" ? "busy" : s.waiting ? "wait" : "") + '"></span><span class="item-t">' + esc(s.title) + '</span><span class="tag term">Terminal</span></div>' +
+        '<div class="item-s">' + esc(s.folder) + " · " + esc(s.name) + " · " + (s.status === "busy" ? "working" : s.waiting ? "waiting on you" : "idle") + "</div></div>").join("") : "") +
+    (list.length ? '<div class="rc-h">Recent</div>' : "") +
     (list.map((s, i) => '<div class="item" data-open="' + i + '">' +
       '<div class="item-t">' + esc(s.title) + "</div>" +
       '<div class="item-s">' + esc(s.projectName) + " · " + fmtAgo(s.mtime) + " · " + fmtB(s.size) +
       (s.model ? " · " + esc(s.model.replace("claude-", "")) : "") + "</div></div>").join("") ||
-      '<div style="padding:16px;color:var(--fg-faint);font-size:13px">No sessions match.</div>');
+      (live.length ? "" : '<div style="padding:16px;color:var(--fg-faint);font-size:13px">No sessions match.</div>'));
   const fa = $("#recentsList").querySelector("[data-findall]");
   if (fa) fa.onclick = () => { toggleRecents(false); openFinder($("#recentsSearch").value); };
+  $("#recentsList").querySelectorAll("[data-live]").forEach((n) => (n.onclick = () => { toggleRecents(false); openMirror(live[+n.dataset.live]); }));
   $("#recentsList").querySelectorAll("[data-open]").forEach((n) => (n.onclick = () => {
     const s = list[+n.dataset.open];
     toggleRecents(false);
@@ -683,6 +709,8 @@ function fillRecents(q) {
   }));
 }
 async function openSessionIn(key, id, path, title) {
+  const live = liveById(id);
+  if (live) return openMirror(live);               // a terminal owns it: mirror it, never chat into it
   clearInterval(actTimer); actTimer = null;
   S.view = "chat";                                  // a session always opens in Work sessions, wherever it was clicked
   const existing = S.tabs.map((t) => t.id).indexOf(id);
@@ -1851,7 +1879,8 @@ function palFill(q) {
     .concat(RAIL.filter((r) => r.id !== "chat").map((r) => ({ label: "Go to " + r.label, desc: "", run: () => go(r.id) })))
     .concat(S.roots.map((r) => ({ label: "Folder · " + r.split("/").pop(), desc: r, run: () => setCwd(r) })))
     .concat(S.configs.map((c) => ({ label: c.group + " · " + c.label, desc: c.desc ? c.desc.slice(0, 60) : c.path, run: () => { S.view = c.group === "Agents" ? "agents" : "configs"; openPage(c.path, c.label, c.group === "Agents" ? "Agents" : "Configs"); } })))
-    .concat(S.recent.slice(0, 60).map((s) => ({ label: "Session · " + s.title, desc: s.projectName + " · " + fmtAgo(s.mtime), run: () => openSessionIn(s.project, s.id, s.projectPath, s.title) })));
+    .concat((S.live || []).map((s) => ({ label: "Terminal · " + s.title, desc: s.folder + " · " + s.name + " · " + (s.status === "busy" ? "working" : s.waiting ? "waiting on you" : "idle") + " · read-only mirror", run: () => openMirror(s) })))
+    .concat(S.recent.filter((s) => !liveById(s.id)).slice(0, 60).map((s) => ({ label: "Session · " + s.title, desc: s.projectName + " · " + fmtAgo(s.mtime), run: () => openSessionIn(s.project, s.id, s.projectPath, s.title) })));
   palItems = cmds.filter((c) => (c.label + " " + c.desc).toLowerCase().indexOf(ql) >= 0).slice(0, 60);
   palSel = 0; palRender();
 }

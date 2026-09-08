@@ -125,7 +125,7 @@
         (w ? '<div class="sb-q">' + esc(w.text.slice(0, 160)) + "</div>" : s.last ? '<div class="sb-l">' + esc(s.last.slice(0, 180)) + "</div>" : "") + "</div></div>";
     }).join("") : '<div class="sb-empty">No terminal session is open right now.</div>';
     requestAnimationFrame(() => requestAnimationFrame(() => box.querySelectorAll(".pill.enter").forEach((n) => n.classList.remove("enter"))));
-    box.querySelectorAll("[data-sb]").forEach((n) => (n.onclick = () => { const s = live[+n.dataset.sb]; openSessionIn(s.key, s.id, s.cwd, s.title); }));
+    box.querySelectorAll("[data-sb]").forEach((n) => (n.onclick = () => openMirror(live[+n.dataset.sb])));
   }
   function wireRow(el) {
     wireMsgHandlers(el);
