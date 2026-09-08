@@ -63,31 +63,42 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
           <button class="chip" id="deskMute" title="Speak answers aloud">🔊 voice</button>
           <button class="chip" id="deskDrawerBtn" title="Show or hide the updates drawer (⌘U)">updates</button>
         </div>
+        <!-- voice mode: the orb, captions, the pills, two round buttons -->
         <div class="desk-body" id="deskBody">
           <div class="desk-stage" id="deskStage">
             <canvas id="orb" width="320" height="320"></canvas>
-            <div class="desk-label" id="deskLabel">Click the orb, or just type</div>
+            <div class="desk-label" id="deskLabel">Click the orb to talk</div>
+            <!-- captions: what was just said, surfacing from behind the orb and sinking back -->
+            <div class="desk-captions" id="deskCaptions"></div>
           </div>
         </div>
-        <div class="desk-bar-wrap">
+        <!-- text mode: a regular chat; the feed moves in here from the drawer -->
+        <div class="desk-chat" id="deskChat" hidden></div>
+        <!-- working on: every live terminal as a floating pill; hover for the card, click to open it -->
+        <div class="desk-activity" id="deskBoard"></div>
+        <div class="desk-controls" id="deskControls">
+          <button class="rbtn" id="deskKeyboard" title="Switch to text (⌘⇧T)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>
+          </button>
+          <span class="desk-tip" id="deskTip"></span>
+          <button class="rbtn mic" id="deskMic" title="Talk (hold Space, or click to toggle)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          </button>
+        </div>
+        <div class="desk-bar-wrap" id="deskBarWrap" hidden>
           <div class="desk-bar" id="deskBar">
-            <button class="desk-mic" id="deskMic" title="Talk (hold Space, or click to toggle)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-            </button>
+            <button class="desk-voice" id="deskVoiceBtn" title="Switch to voice (⌘⇧T)"><span class="rail-orb"></span></button>
             <input id="deskInput" placeholder="Ask for a summary, or talk through what is going on across every session…" spellcheck="false" autocomplete="off">
             <button class="desk-send" id="deskSend" title="Send (↵)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
             </button>
           </div>
-          <div class="hintline desk-hint" id="deskHint"><span><kbd>Space</kbd> hold to talk</span><span><kbd>↵</kbd> send</span><span><kbd>Esc</kbd> stop</span><span id="deskVoiceInfo"></span></div>
+          <div class="hintline desk-hint" id="deskHint"><span><kbd>↵</kbd> send</span><span><kbd>Esc</kbd> stop</span><span id="deskVoiceInfo"></span></div>
         </div>
       </div>
       <!-- the drawer: everything the copilot said and every session event, newest at the bottom -->
       <aside class="desk-drawer" id="deskDrawer">
-        <div class="drawer-head"><span>Live sessions</span><span class="drawer-n" id="boardCount"></span><span class="spacer"></span><button class="chip" id="drawerClose" title="Hide (⌘U)">✕</button></div>
-        <!-- the board: every session that is alive right now; a click opens it in Work sessions -->
-        <div class="desk-board" id="deskBoard"></div>
-        <div class="drawer-head"><span>Updates</span><span class="drawer-n" id="drawerCount"></span></div>
+        <div class="drawer-head"><span>Updates</span><span class="drawer-n" id="drawerCount"></span><span class="spacer"></span><button class="chip" id="drawerClose" title="Hide (⌘U)">✕</button></div>
         <div class="desk-feed" id="deskFeed"></div>
       </aside>
     </section>

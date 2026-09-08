@@ -1113,7 +1113,7 @@ type DaClient = (o: any) => void;
 const DA = {
   child: null as ChildProcess | null, sessionId: "", busy: false, queue: [] as { text: string; ctx: string }[],
   starting: false, seq: 0, ring: [] as any[], clients: new Set<DaClient>(), started: 0, turns: 0, lastError: "",
-  turnStarted: 0, exits: 0, permissionMode: "bypassPermissions", model: "", name: "", user: "", prevSessionId: "",
+  turnStarted: 0, exits: 0, permissionMode: "bypassPermissions", model: "", name: "", user: "", prevSessionId: "", ready: false,
 };
 const daFile = (id: string) => join(PROJECTS_DIR, projectKey(HOME), id + ".jsonl");
 function daBroadcast(o: any) {
@@ -1171,7 +1171,7 @@ async function daBoot(fresh: boolean) {
     const child = spawn(CLAUDE_BIN, args, { cwd: HOME, stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...settingsEnv, FORCE_COLOR: "0", BRIDGE_DESK: "1", LIFEOS_NOTIFICATION_CHANNEL: "bridge" } });
     if (child.pid) ownPids.add(child.pid);
-    DA.child = child; DA.started = Date.now(); DA.busy = false; DA.lastError = "";
+    DA.child = child; DA.started = Date.now(); DA.busy = false; DA.lastError = ""; DA.ready = false;
     logRow({ ts: Date.now(), kind: "desk.start", msg: (fresh ? "new" : "resumed") + " desk session", session: DA.sessionId, cwd: HOME });
     let buf = "";
     child.stdout!.on("data", (chunk) => {
@@ -1181,8 +1181,10 @@ async function daBoot(fresh: boolean) {
         const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
         if (!line) continue;
         let parsed: any; try { parsed = JSON.parse(line); } catch { daBroadcast({ t: "raw", d: line }); continue; }
-        if (parsed?.type === "system" && parsed.subtype === "init" && parsed.session_id && parsed.session_id !== DA.sessionId) {
-          DA.prevSessionId = DA.sessionId; DA.sessionId = parsed.session_id; daSaveState();
+        if (parsed?.type === "system" && parsed.subtype === "init") {
+          if (parsed.session_id && parsed.session_id !== DA.sessionId) { DA.prevSessionId = DA.sessionId; DA.sessionId = parsed.session_id; daSaveState(); }
+          // a message written before the CLI has read its transcript is lost on a resume: hold them until here
+          DA.ready = true;
         }
         daBroadcast({ t: "da", d: parsed });
         if (parsed?.type === "result") {
@@ -1197,7 +1199,7 @@ async function daBoot(fresh: boolean) {
     child.stderr!.on("data", (c) => { const s = c.toString().trim(); if (s && !/hook|deprecat|warning/i.test(s)) daBroadcast({ t: "stderr", d: s }); });
     child.on("close", (code) => {
       if (child.pid) ownPids.delete(child.pid);
-      if (DA.child === child) { DA.child = null; DA.busy = false; }
+      if (DA.child === child) { DA.child = null; DA.busy = false; DA.ready = false; }
       DA.exits++;
       logRow({ ts: Date.now(), kind: "desk.exit", msg: "desk process exited", outcome: "exit " + code, session: DA.sessionId, cwd: HOME });
       daBroadcast({ t: "state", d: daState() });
@@ -1483,6 +1485,16 @@ const server = Bun.serve({
         // where a follower should start: the bytes up to the last complete line
         const cut = raw.lastIndexOf("\n");
         return json({ ...out, offset: cut >= 0 ? Buffer.byteLength(raw.slice(0, cut + 1)) : 0 });
+      }
+      if (p === "/api/lifeos") {
+        const summary = await readFile(join(CLAUDE_DIR, "LIFEOS", "DOCUMENTATION", "ARCHITECTURE_SUMMARY.md"), "utf8").catch(() => "");
+        const vm = summary.match(/\*\*Current versions:\*\*\s*(.+)/);
+        const versions = vm ? vm[1].split("|").map((x) => x.trim()).filter(Boolean) : [];
+        const stateFile = join(CLAUDE_DIR, "LIFEOS", "USER", "TELOS", "LIFEOS_STATE.json");
+        let state: any = null; try { state = JSON.parse(await readFile(stateFile, "utf8")); } catch {}
+        const st = await stat(stateFile).catch(() => null);
+        const dims = state?.dimensions ? Object.entries(state.dimensions).map(([k, v]: any) => ({ name: k, pct: Number(v.pct) || 0, tbd: v.tbd_count || 0, updated: v.last_updated })) : [];
+        return json({ versions, dims, generated: state?.generated_at || null, mtime: st?.mtimeMs || 0, installed: existsSync(join(CLAUDE_DIR, "LIFEOS")) });
       }
       if (p === "/api/live") return json({ now: Date.now(), sessions: lastLive, events: EVENTS.slice(-40) });
       if (p === "/api/follow") {

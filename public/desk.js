@@ -21,6 +21,8 @@
     paintLabel();
     $("#desk").dataset.phase = p;
     $("#deskMic").classList.toggle("on", p === "listening");
+    const tip = $("#deskTip");
+    if (tip) tip.textContent = p === "speaking" ? "Click the orb to jump in" : p === "listening" ? "Pause when you are done" : p === "thinking" || p === "working" ? "Esc interrupts" : "Hold Space to talk";
   }
   function defaultLabel(p) {
     if (p === "listening") return "Listening…";
@@ -28,7 +30,7 @@
     if (p === "working") return "Working";
     if (p === "speaking") return "Speaking";
     if (DESK.health && DESK.health.stt === "none") return "Type below — no transcriber on this machine";
-    return DESK.session ? "Click the orb to talk" : "Click the orb to talk, or just type";
+    return DESK.session ? "Click the orb to talk" : "Click the orb to talk";
   }
   function paintLabel() {
     const el = $("#deskLabel");
@@ -48,6 +50,25 @@
     $("#deskMute").classList.toggle("acc", !DESK.muted);
     $("#deskMute").textContent = DESK.muted ? "🔇 muted" : "🔊 voice";
   }
+
+  /* ───────────────────────── captions under the orb ─────────────────────────
+   * Not a chat: what was just said surfaces from behind the ball, holds while it matters,
+   * then sinks back behind it and dissolves. The drawer keeps the record. */
+  function caption(kind, html, holdMs) {
+    const box = $("#deskCaptions");
+    if (!box) return null;
+    const el = document.createElement("div");
+    el.className = "cap " + kind;
+    el.innerHTML = html;
+    let done = false;
+    el.gone = () => { if (done) return; done = true; el.classList.remove("in"); el.classList.add("out"); setTimeout(() => el.remove(), 1400); };
+    while (box.querySelectorAll(".cap:not(.out)").length >= 2) box.querySelector(".cap:not(.out)").gone();
+    box.appendChild(el);
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("in")));
+    if (holdMs) el.hold = setTimeout(el.gone, holdMs);
+    return el;
+  }
+  function clearCaptions() { document.querySelectorAll("#deskCaptions .cap").forEach((c) => c.gone && c.gone()); }
 
   /* ───────────────────────── the feed ───────────────────────── */
   function renderRow(m) {
@@ -91,17 +112,19 @@
     if (!box) return;
     const live = S.live || [];
     const key = live.map((s) => s.id + s.status + (s.waiting ? "!" : "")).join(",");
-    if (key !== boardKey) { const linksChanged = key.replace(/(busy|idle|!)/g, "") !== boardKey.replace(/(busy|idle|!)/g, ""); boardKey = key; if (linksChanged && DESK.msgs.length) rebuild(); }
-    $("#boardCount").textContent = live.length ? String(live.length) : "";
+    if (key === boardKey) return;
+    const linksChanged = key.replace(/(busy|idle|!)/g, "") !== boardKey.replace(/(busy|idle|!)/g, "");
+    boardKey = key;
+    if (linksChanged && DESK.msgs.length) rebuild();
+    const had = new Set([...box.querySelectorAll("[data-id]")].map((n) => n.dataset.id));
     box.innerHTML = live.length ? live.map((s, i) => {
       const w = s.waiting;
-      return '<div class="sb ' + (s.status === "busy" ? "busy" : w ? "wait" : "") + '" data-sb="' + i + '" title="Open this session">' +
-        '<div class="sb-h"><span class="sb-dot"></span><b>' + esc(s.folder) + "</b><span class=\"sb-n\">" + esc(s.name) + "</span>" +
-        '<span class="sb-s">' + (s.status === "busy" ? "working" : w ? "needs you" : "idle") + "</span></div>" +
-        '<div class="sb-t">' + esc(s.title) + "</div>" +
-        (w ? '<div class="sb-q">' + esc(w.text.slice(0, 120)) + "</div>" : s.last ? '<div class="sb-l">' + esc(s.last.slice(0, 140)) + "</div>" : "") +
-        "</div>";
+      return '<div class="pill ' + (s.status === "busy" ? "busy" : w ? "wait" : "") + (had.has(s.id) ? "" : " enter") + '" data-sb="' + i + '" data-id="' + esc(s.id) + '" style="--d:' + (-(i * 1.3) % 5.5).toFixed(1) + 's">' +
+        '<span class="sb-dot"></span><b>' + esc(s.folder) + '</b><span class="pill-s">' + (s.status === "busy" ? "working" : w ? "needs you" : "idle") + "</span>" +
+        '<div class="pill-card"><span class="sb-n">' + esc(s.name) + '</span><div class="sb-t">' + esc(s.title) + "</div>" +
+        (w ? '<div class="sb-q">' + esc(w.text.slice(0, 160)) + "</div>" : s.last ? '<div class="sb-l">' + esc(s.last.slice(0, 180)) + "</div>" : "") + "</div></div>";
     }).join("") : '<div class="sb-empty">No terminal session is open right now.</div>';
+    requestAnimationFrame(() => requestAnimationFrame(() => box.querySelectorAll(".pill.enter").forEach((n) => n.classList.remove("enter"))));
     box.querySelectorAll("[data-sb]").forEach((n) => (n.onclick = () => { const s = live[+n.dataset.sb]; openSessionIn(s.key, s.id, s.cwd, s.title); }));
   }
   function wireRow(el) {
@@ -147,6 +170,21 @@
     const n = DESK.msgs.filter((m) => m.kind === "assistant" || m.kind === "event").length;
     $("#drawerCount").textContent = n ? String(n) : "";
     if (!DESK.msgs.length) $("#deskFeed").innerHTML = '<div class="desk-feed-empty">Answers and session events land here.</div>';
+  }
+  /** voice: the orb and its captions, nothing to type into. text: a regular chat with the composer. */
+  function mode(m) {
+    DESK.mode = m;
+    localStorage.bridgeDeskMode = m;
+    const desk = $("#desk");
+    desk.dataset.mode = m;
+    const text = m === "text";
+    $("#deskBody").hidden = text; $("#deskControls").hidden = text; $("#deskBoard").hidden = text;
+    $("#deskChat").hidden = !text; $("#deskBarWrap").hidden = !text;
+    const feed = $("#deskFeed");
+    if (text) { $("#deskChat").appendChild(feed); desk.classList.add("no-drawer"); setTimeout(() => $("#deskInput").focus(), 30); }
+    else { $("#deskDrawer").appendChild(feed); desk.classList.toggle("no-drawer", localStorage.bridgeDrawer === "0"); clearCaptions(); }
+    $("#deskDrawerBtn").hidden = text;
+    feed.scrollTop = feed.scrollHeight;
   }
   function drawer(on) {
     if (on === undefined) on = $("#desk").classList.contains("no-drawer");
@@ -258,8 +296,10 @@
       const last = lastAssistant();
       const spoken = last ? spokenLine(last.text) : "";
       if (d.is_error && !last) push({ kind: "assistant", text: "**" + name() + " hit an error** — " + esc(d.subtype || "unknown"), ts: Date.now() });
-      if (spoken && !DESK.muted) speak(spoken, afterSpeech);
-      else { setPhase("idle"); afterSpeech(); }
+      const cap = spoken ? caption("said", esc(spoken)) : null;
+      const release = () => { if (cap) setTimeout(cap.gone, 2200); afterSpeech(); };
+      if (spoken && !DESK.muted) speak(spoken, release);
+      else { setPhase("idle"); if (cap) setTimeout(cap.gone, 7000); afterSpeech(); }
     }
   }
   function toolLabel(c) {
@@ -296,10 +336,11 @@
     const shown = opts.shown || text;
     DESK.lastSent = { text, at: Date.now() };
     push({ kind: "user", text: shown, ts: Date.now() });
+    caption("you", esc(shown.length > 140 ? shown.slice(0, 137) + "…" : shown));
     setPhase("thinking");
     const r = await post("/api/da/send", { text });
     if (r.error) { push({ kind: "assistant", text: "**Could not reach the desk** — " + r.error, ts: Date.now() }); setPhase("idle"); return; }
-    if (r.queued) toast("Queued — " + name() + " is mid-answer");
+    if (r.queued) toast(r.booting ? name() + " is waking up — your message goes first" : "Queued — " + name() + " is mid-answer");
   }
   /** a message for a terminal session, carried by the desk with the SendMessage tool */
   function relay(m, text) {
@@ -460,6 +501,8 @@
     if (!e || !e.kind) return;
     push({ kind: "event", ev: e, ts: e.at });
     const where = e.folder;
+    if (e.kind === "waiting" || e.kind === "done")
+      caption("event " + e.kind, "<b>" + esc(where) + "</b> " + (e.kind === "waiting" ? "needs you · " : "finished · ") + esc((e.text || e.title).slice(0, 120)), e.kind === "waiting" ? 12000 : 7000);
     if (e.kind === "waiting") {
       noteRaw({ id: e.id, key: e.key, path: e.cwd, title: e.title, kind: "waiting", detail: e.text.slice(0, 120) });
       toast(where + " needs you: " + e.text.slice(0, 80));
@@ -558,6 +601,7 @@
     post("/api/da/interrupt"); toast("Interrupted");
   }
   function escape() {
+    clearCaptions();
     if (DESK.listening) { stopListening(false); DESK.session = false; return true; }
     if (DESK.playing) { stopSpeaking(); DESK.session = false; return true; }
     if (DESK.phase === "thinking" || DESK.phase === "working") { post("/api/da/interrupt"); return true; }
@@ -578,12 +622,16 @@
     $("#deskDrawerBtn").onclick = () => drawer();
     $("#drawerClose").onclick = () => drawer(false);
     drawer(localStorage.bridgeDrawer !== "0");
+    $("#deskKeyboard").onclick = () => mode("text");
+    $("#deskVoiceBtn").onclick = () => { mode("voice"); };
+    mode(localStorage.bridgeDeskMode === "text" ? "text" : "voice");
+    document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "t" || e.key === "T") && DESK.shown) { e.preventDefault(); mode(DESK.mode === "text" ? "voice" : "text"); } });
     document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "u" && DESK.shown) { e.preventDefault(); drawer(); } });
     DESK.hands = localStorage.bridgeHands !== "0";
     DESK.muted = localStorage.bridgeMuted === "1";
     // hold Space to talk while the desk is showing and nothing is being typed
     document.addEventListener("keydown", (e) => {
-      if (e.code !== "Space" || !DESK.shown || e.repeat) return;
+      if (e.code !== "Space" || !DESK.shown || DESK.mode === "text" || e.repeat) return;
       const tag = (document.activeElement && document.activeElement.tagName) || "";
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       e.preventDefault(); spaceHeld = true;
@@ -601,11 +649,11 @@
     paintState();
     setPhase("idle");
   }
-  window.BridgeReady.then(init);
+  window.BridgeReady.then(() => { try { init(); } catch (e) { console.error("desk init failed", e); } });
 
   window.Desk = {
     phase: () => DESK.phase,
-    shown: (on) => { DESK.shown = on; if (on) { paintState(); setTimeout(() => $("#deskInput").focus(), 30); } },
-    ask, relay, escape, send, listen, board,
+    shown: (on) => { DESK.shown = on; if (on) { paintState(); if (DESK.mode === "text") setTimeout(() => $("#deskInput").focus(), 30); } },
+    ask, relay, escape, send, listen, board, _: DESK,
   };
 })();

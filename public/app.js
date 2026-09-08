@@ -18,7 +18,7 @@ const short = (p, n = 46) => (String(p).length > n ? "…" + String(p).slice(-n 
 
 const S = {
   view: "chat", boot: null, auth: { loggedIn: true }, recent: [], agents: [], skills: [], configs: [],
-  cwd: "", roots: [], dir: null, acDir: null, filter: "", inspector: false,
+  cwd: "", roots: [], dir: null, acDir: null, filter: "", inspector: localStorage.bridgeSidebar !== "0",
   tabs: [], active: 0,      // session tabs, across the top
   page: {},                 // the open detail page, per view
   notes: [],                // sessions that finished or failed while you were elsewhere
@@ -681,7 +681,7 @@ async function openSessionIn(key, id, path, title) {
   S.view = "chat";
   paint();
   const r = await (await fetch("/api/session?key=" + encodeURIComponent(key) + "&id=" + id)).json();
-  t.msgs = r.events || []; t.usage = r.meta.usage; t.model = r.meta.model; t.branch = r.meta.branch;
+  t.msgs = r.events || []; t.usage = r.meta.usage; t.model = r.meta.model; t.branch = r.meta.branch; t.hookCount = r.meta.hookCount || 0;
   if (r.meta.title) t.title = r.meta.title;
   paint(); scrollDown(true);
 }
@@ -1142,36 +1142,68 @@ function renderTop() {
   $("#costHint").textContent = r ? (r.turns || "?") + " turns · " + (r.duration_ms / 1000).toFixed(1) + "s · $" + (r.total_cost_usd || 0).toFixed(4) : "";
 }
 
+/* ── the session sidebar: what this session has achieved, then where LifeOS stands ── */
+async function loadLifeos() {
+  try { S.lifeos = await (await fetch("/api/lifeos")).json(); } catch (e) {}
+  if (S.inspector && S.view === "chat") renderInspector();
+}
+/** the 🎯 headline of every assistant message is the step it claims; the last TodoWrite is the checklist */
+function sessionSteps(t) {
+  const steps = [];
+  for (const m of t.msgs) {
+    if (m.kind !== "assistant" || m.live) continue;
+    const h = /🎯\s*([^\n]+)/.exec(m.text || "");
+    if (!h) continue;
+    const line = h[1].replace(/^\**|\**$/g, "").replace(/^[A-Z][A-Z0-9 ]{1,24}\s*[·:\-–—]\s*/, "").trim();
+    if (line) steps.push({ text: line.slice(0, 110), ts: m.ts });
+  }
+  let todos = null;
+  for (let i = t.msgs.length - 1; i >= 0; i--) { const m = t.msgs[i]; if (m.kind === "tool" && m.name === "TodoWrite" && m.input && m.input.todos) { todos = m.input.todos; break; } }
+  return { steps, todos };
+}
 function renderInspector() {
-  $("#app").classList.toggle("with-inspector", S.inspector);
-  $("#inspector").hidden = !S.inspector;
-  if (!S.inspector) return;
+  const on = S.inspector && S.view === "chat";
+  $("#app").classList.toggle("with-inspector", on);
+  $("#inspector").hidden = !on;
+  if (!on) return;
   const t = T() || { msgs: [] };
-  const outs = t.msgs.filter((m) => m.kind === "tool" && ["Write", "Edit", "NotebookEdit"].indexOf(m.name) >= 0)
-    .map((m) => m.input && m.input.file_path).filter(Boolean);
+  const { steps, todos } = sessionSteps(t);
+  const text = t.msgs.filter((m) => m.kind === "assistant").map((m) => m.text).join("\n");
+  const seen = PHASES.filter((p) => new RegExp("\\b" + p + "\\b").test(text));
+  const outs = t.msgs.filter((m) => m.kind === "tool" && ["Write", "Edit", "NotebookEdit"].indexOf(m.name) >= 0).map((m) => m.input && m.input.file_path).filter(Boolean);
   const uniq = outs.filter((p, i) => outs.indexOf(p) === i);
   const tools = {};
   t.msgs.filter((m) => m.kind === "tool").forEach((m) => (tools[m.name] = (tools[m.name] || 0) + 1));
   const u = t.usage || {};
+  const L = S.lifeos;
+  const doneN = todos ? todos.filter((x) => x.status === "completed").length : 0;
+  $("#inspTitle").textContent = "Session";
   $("#inspBody").innerHTML =
-    '<dl class="kv">' +
-    "<dt>Directory</dt><dd>" + esc(t.path || "") + "</dd>" +
-    "<dt>Session</dt><dd>" + esc(t.id || t.live || "new") + "</dd>" +
+    '<div class="sb-sec"><div class="sb-h">Steps achieved<span>' + (steps.length + doneN) + "</span></div>" +
+    (seen.length ? '<div class="sb-phases">' + PHASES.map((p) => '<span class="ph ' + (seen.indexOf(p) >= 0 ? (p === seen[seen.length - 1] ? "on" : "done") : "") + '">' + p.slice(0, 3) + "</span>").join("") + "</div>" : "") +
+    (steps.length ? '<ol class="steps">' + steps.slice(-10).map((x) => '<li><span class="st-dot"></span><span class="st-t">' + esc(x.text) + '</span><span class="st-ts">' + fmtTime(x.ts) + "</span></li>").join("") + "</ol>" : "") +
+    (todos ? '<div class="todos">' + todos.map((x) => '<div class="todo ' + esc(x.status || "") + '"><span class="td-ic">' + (x.status === "completed" ? "✔" : x.status === "in_progress" ? "◐" : "○") + "</span><span>" + esc(x.content || x.activeForm || "") + "</span></div>").join("") + "</div>" : "") +
+    (!steps.length && !todos ? '<div class="sb-empty">Nothing claimed yet. Every 🎯 headline and checklist item lands here as the session moves.</div>' : "") +
+    "</div>" +
+    '<div class="sb-sec"><div class="sb-h">LifeOS' + (L && L.versions.length ? "<span>" + esc(L.versions[0].replace(/^LifeOS\s*/, "v")) + "</span>" : "") + "</div>" +
+    (L && L.installed
+      ? (L.dims.length ? '<div class="dims">' + L.dims.map((d) => '<div class="dim"><span class="dim-n">' + esc(d.name) + '</span><span class="dim-bar"><span style="width:' + Math.max(0, Math.min(100, d.pct)) + '%"></span></span><span class="dim-v">' + d.pct + "%</span></div>").join("") + "</div>" : "") +
+        (L.dims.length && L.dims.every((d) => !d.pct) ? '<div class="sb-empty">TELOS not populated yet — run <code>/interview</code> in a session to fill the dimensions.</div>' : "") +
+        (L.versions.length ? '<div class="versions">' + L.versions.slice(1).map((v) => "<span>" + esc(v) + "</span>").join("") + "</div>" : "") +
+        (L.mtime ? '<div class="sb-m">state updated ' + fmtAgo(L.mtime) + (t.hookCount ? " · " + t.hookCount + " hooks this session" : "") + "</div>" : "")
+      : '<div class="sb-empty">LifeOS is not installed under ~/.claude on this machine.</div>') +
+    "</div>" +
+    '<div class="sb-sec"><div class="sb-h">This session</div><dl class="kv">' +
+    "<dt>Directory</dt><dd>" + esc(short(t.path || "", 34)) + "</dd>" +
+    "<dt>Session</dt><dd>" + esc((t.id || t.live || "new").slice(0, 8)) + "</dd>" +
     "<dt>Model</dt><dd>" + esc(t.model || $("#selModel").value || "default") + "</dd>" +
     "<dt>Branch</dt><dd>" + esc(t.branch || "—") + "</dd></dl>" +
-    '<div class="card"><h4>Token usage</h4>' +
-    '<div class="stat"><span>Input</span><b>' + fmtN(u.input || 0) + "</b></div>" +
-    '<div class="stat"><span>Output</span><b>' + fmtN(u.output || 0) + "</b></div>" +
-    '<div class="stat"><span>Thinking</span><b>' + fmtN(u.thinking || 0) + "</b></div>" +
+    '<div class="stat"><span>Tokens in / out</span><b>' + fmtN(u.input || 0) + " / " + fmtN(u.output || 0) + "</b></div>" +
     '<div class="stat"><span>Cache read</span><b>' + fmtN(u.cacheRead || 0) + "</b></div>" +
-    '<div class="stat"><span>Cache write</span><b>' + fmtN(u.cacheWrite || 0) + "</b></div></div>" +
-    '<div class="card"><h4>Tool calls</h4>' +
-    (Object.keys(tools).sort((a, b) => tools[b] - tools[a]).map((n) =>
-      '<div class="stat"><span>' + (TOOL_ICON[n] || "◆") + " " + esc(n) + "</span><b>" + tools[n] + "</b></div>").join("") || '<div class="item-s">none</div>') +
-    "</div>" +
-    '<div class="card"><h4>Files written (' + uniq.length + ")</h4>" +
-    (uniq.map((p) => '<div class="stat" style="cursor:pointer" data-out="' + esc(p) + '"><span style="font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere">' +
-      esc(short(p, 44)) + "</span></div>").join("") || '<div class="item-s">none yet</div>') + "</div>";
+    (Object.keys(tools).length ? '<div class="stat"><span>Tool calls</span><b>' + Object.values(tools).reduce((a, b) => a + b, 0) + "</b></div>" : "") +
+    (uniq.length ? '<div class="sb-h" style="margin-top:10px">Files written<span>' + uniq.length + "</span></div>" +
+      uniq.slice(-8).map((p) => '<div class="stat" style="cursor:pointer" data-out="' + esc(p) + '"><span style="font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere">' + esc(short(p, 40)) + "</span></div>").join("") : "") +
+    "</div>";
   $("#inspBody").querySelectorAll("[data-out]").forEach((n) => (n.onclick = () => { S.view = "files"; openPage(n.dataset.out, n.dataset.out.split("/").pop(), "Directory"); }));
 }
 
@@ -1801,7 +1833,7 @@ function palFill(q) {
     { label: "Search every session", desc: "⌘F", run: () => openFinder("") },
     { label: "Back to the conversation", desc: "Esc", run: goChat },
     { label: "Toggle theme", desc: "⌘J", run: toggleTheme },
-    { label: "Toggle inspector", desc: "⌘I", run: () => { S.inspector = !S.inspector; renderInspector(); } },
+    { label: "Toggle session sidebar", desc: "⌘I", run: () => { S.inspector = !S.inspector; localStorage.bridgeSidebar = S.inspector ? "1" : "0"; renderInspector(); } },
     { label: authed() ? "Claude account" : "Sign in to Claude Code",
       desc: authed() ? (S.auth && S.auth.email) || "signed in" : "not signed in", run: () => openSignin() },
   ]
@@ -1989,8 +2021,9 @@ function toggleTheme() {
   $("#signinClose").onclick = closeSignin;
   $("#signinBg").onclick = (e) => { if (e.target.id === "signinBg") closeSignin(); };
   $("#btnPalette").onclick = openPalette;
-  $("#btnInspector").onclick = () => { S.inspector = !S.inspector; renderInspector(); };
-  $("#inspClose").onclick = () => { S.inspector = false; renderInspector(); };
+  $("#btnInspector").onclick = () => { S.inspector = !S.inspector; localStorage.bridgeSidebar = S.inspector ? "1" : "0"; renderInspector(); };
+  $("#inspClose").onclick = () => { S.inspector = false; localStorage.bridgeSidebar = "0"; renderInspector(); };
+  loadLifeos(); setInterval(loadLifeos, 60000);
   $("#topSearch").oninput = (e) => { S.filter = e.target.value.toLowerCase(); renderMain(); renderPanel(); };
   $("#tabAdd").onclick = () => { makeTab(); goChat(); $("#input").focus(); };
   $("#tabMenu").onclick = (e) => { e.stopPropagation(); toggleRecents(); };
@@ -2072,7 +2105,7 @@ function toggleTheme() {
     else if (meta && e.key === "w") { e.preventDefault(); if (S.view === "chat") closeTab(S.active); else if (PAGE()) closePage(); }
     else if (e.key === "Escape" && S.view === "copilot" && window.Desk && window.Desk.escape()) { e.preventDefault(); }
     else if (meta && e.key === "j") { e.preventDefault(); toggleTheme(); }
-    else if (meta && e.key === "i") { e.preventDefault(); S.inspector = !S.inspector; renderInspector(); }
+    else if (meta && e.key === "i") { e.preventDefault(); S.inspector = !S.inspector; localStorage.bridgeSidebar = S.inspector ? "1" : "0"; renderInspector(); }
     else if (e.key === "Escape") {
       if ($("#signinBg").classList.contains("on")) closeSignin();
       else if ($("#notes").classList.contains("on")) toggleNotes(false);
