@@ -92,6 +92,7 @@
     const live = S.live || [];
     const key = live.map((s) => s.id + s.status + (s.waiting ? "!" : "")).join(",");
     if (key !== boardKey) { const linksChanged = key.replace(/(busy|idle|!)/g, "") !== boardKey.replace(/(busy|idle|!)/g, ""); boardKey = key; if (linksChanged && DESK.msgs.length) rebuild(); }
+    $("#boardCount").textContent = live.length ? String(live.length) : "";
     box.innerHTML = live.length ? live.map((s, i) => {
       const w = s.waiting;
       return '<div class="sb ' + (s.status === "busy" ? "busy" : w ? "wait" : "") + '" data-sb="' + i + '" title="Open this session">' +

@@ -68,8 +68,6 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
             <canvas id="orb" width="320" height="320"></canvas>
             <div class="desk-label" id="deskLabel">Click the orb, or just type</div>
           </div>
-          <!-- the board: every session that is alive right now; a click opens it in Work sessions -->
-          <div class="desk-board" id="deskBoard"></div>
         </div>
         <div class="desk-bar-wrap">
           <div class="desk-bar" id="deskBar">
@@ -86,7 +84,10 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
       </div>
       <!-- the drawer: everything the copilot said and every session event, newest at the bottom -->
       <aside class="desk-drawer" id="deskDrawer">
-        <div class="drawer-head"><span>Updates</span><span class="drawer-n" id="drawerCount"></span><span class="spacer"></span><button class="chip" id="drawerClose" title="Hide (⌘U)">✕</button></div>
+        <div class="drawer-head"><span>Live sessions</span><span class="drawer-n" id="boardCount"></span><span class="spacer"></span><button class="chip" id="drawerClose" title="Hide (⌘U)">✕</button></div>
+        <!-- the board: every session that is alive right now; a click opens it in Work sessions -->
+        <div class="desk-board" id="deskBoard"></div>
+        <div class="drawer-head"><span>Updates</span><span class="drawer-n" id="drawerCount"></span></div>
         <div class="desk-feed" id="deskFeed"></div>
       </aside>
     </section>
