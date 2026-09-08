@@ -788,7 +788,7 @@ body::after{
 .desk-state.off .dot{background:var(--err)}
 .desk-body{flex:1;min-height:0;overflow-y:auto;position:relative;display:flex;flex-direction:column;align-items:center;padding:0 26px 24px}
 .desk-stage{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;user-select:none;
-  width:100%;min-height:calc(100% - 20px);transition:min-height .9s cubic-bezier(.2,.8,.2,1);position:sticky;top:0;z-index:2}
+  width:100%;min-height:52%;transition:min-height .9s cubic-bezier(.2,.8,.2,1);position:sticky;top:0;z-index:2}
 #orb{width:320px;height:320px;display:block;transition:width .9s cubic-bezier(.2,.8,.2,1),height .9s cubic-bezier(.2,.8,.2,1)}
 .desk-label{font-size:13px;color:var(--fg-muted);margin-top:2px;letter-spacing:.01em;min-height:18px;transition:.2s}
 .desk-live{font-size:13px;color:var(--fg-faint);min-height:0}
@@ -854,3 +854,23 @@ body::after{
 .dev-a{display:flex;gap:6px;margin-top:8px}
 .note-dot.waiting{background:var(--warn);box-shadow:0 0 8px color-mix(in srgb,var(--warn) 60%,transparent)}
 .note-dot.started,.note-dot.ended{background:var(--accent2)}
+
+/* the board: live sessions as cards, each a link into Work sessions */
+.desk-board{width:100%;max-width:840px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px;padding:6px 0 10px}
+.sb{border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:var(--bg-inset);cursor:pointer;transition:.12s;min-width:0}
+.sb:hover{border-color:var(--accent);background:var(--bg-hover);box-shadow:0 0 22px color-mix(in srgb,var(--accent) 12%,transparent)}
+.sb-h{display:flex;align-items:center;gap:7px;font-size:12.5px;min-width:0}
+.sb-h b{color:var(--fg);white-space:nowrap}
+.sb-n{color:var(--fg-faint);font-family:var(--mono);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-s{margin-left:auto;font-size:11px;color:var(--fg-faint);white-space:nowrap}
+.sb.busy .sb-s{color:#35d07f}
+.sb.wait .sb-s{color:var(--warn)}
+.sb-dot{width:7px;height:7px;border-radius:50%;background:var(--fg-faint);flex:none}
+.sb.busy .sb-dot{background:#35d07f;box-shadow:0 0 8px rgba(53,208,127,.6);animation:blink .9s ease-in-out infinite}
+.sb.wait .sb-dot{background:var(--warn);box-shadow:0 0 8px color-mix(in srgb,var(--warn) 60%,transparent)}
+.sb-t{font-size:13px;font-weight:560;margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-l,.sb-q{font-size:11.5px;color:var(--fg-muted);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sb-q{color:var(--warn)}
+.sb-empty{grid-column:1/-1;text-align:center;color:var(--fg-faint);font-size:12.5px;padding:8px}
+.desk-feed .md a[href^="#session/"]{color:var(--accent2);border-bottom:1px dotted color-mix(in srgb,var(--accent2) 50%,transparent)}
+.desk-feed .md a[href^="#session/"]:hover{border-bottom-style:solid}

@@ -62,10 +62,50 @@
         "</div></div></div>";
     }
     if (m.kind === "status") return "";
+    if ((m.kind === "assistant" || m.kind === "agent_text") && !m.live) return renderMsg(Object.assign({}, m, { text: linkSessions(m.text) }));
     return renderMsg(m);
+  }
+  /** a session named in an answer becomes a link that opens it in Work sessions */
+  function linkSessions(text) {
+    const live = S.live || [];
+    if (!live.length || !text) return text;
+    const parts = String(text).split(/(```[\s\S]*?```|`[^`]*`|\[[^\]]*\]\([^)]*\))/);
+    const names = [];
+    for (const s of live) {
+      names.push({ w: s.name, s });
+      if (s.folder !== "home" && live.filter((x) => x.folder === s.folder).length === 1) names.push({ w: s.folder, s });
+    }
+    names.sort((a, b) => b.w.length - a.w.length);
+    return parts.map((seg, i) => {
+      if (i % 2) return seg;
+      for (const { w, s } of names) {
+        const re = new RegExp("(^|[^\\w/.-])(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")(?![\\w/-]|\\.\\w)", "g");
+        seg = seg.replace(re, (all, pre, hit) => pre + "[" + hit + "](#session/" + encodeURIComponent(s.key + "|" + s.id + "|" + s.cwd + "|" + s.title) + ")");
+      }
+      return seg;
+    }).join("");
+  }
+  let boardKey = "";
+  function board() {
+    const box = $("#deskBoard");
+    if (!box) return;
+    const live = S.live || [];
+    const key = live.map((s) => s.id + s.status + (s.waiting ? "!" : "")).join(",");
+    if (key !== boardKey) { const linksChanged = key.replace(/(busy|idle|!)/g, "") !== boardKey.replace(/(busy|idle|!)/g, ""); boardKey = key; if (linksChanged && DESK.msgs.length) rebuild(); }
+    box.innerHTML = live.length ? live.map((s, i) => {
+      const w = s.waiting;
+      return '<div class="sb ' + (s.status === "busy" ? "busy" : w ? "wait" : "") + '" data-sb="' + i + '" title="Open this session">' +
+        '<div class="sb-h"><span class="sb-dot"></span><b>' + esc(s.folder) + "</b><span class=\"sb-n\">" + esc(s.name) + "</span>" +
+        '<span class="sb-s">' + (s.status === "busy" ? "working" : w ? "needs you" : "idle") + "</span></div>" +
+        '<div class="sb-t">' + esc(s.title) + "</div>" +
+        (w ? '<div class="sb-q">' + esc(w.text.slice(0, 120)) + "</div>" : s.last ? '<div class="sb-l">' + esc(s.last.slice(0, 140)) + "</div>" : "") +
+        "</div>";
+    }).join("") : '<div class="sb-empty">No terminal session is open right now.</div>';
+    box.querySelectorAll("[data-sb]").forEach((n) => (n.onclick = () => { const s = live[+n.dataset.sb]; openSessionIn(s.key, s.id, s.cwd, s.title); }));
   }
   function wireRow(el) {
     wireMsgHandlers(el);
+    el.querySelectorAll('a[href^="#session/"]').forEach((a) => { a.removeAttribute("target"); a.onclick = (e) => { e.preventDefault(); const [key, id, path, title] = decodeURIComponent(a.getAttribute("href").slice(9)).split("|"); openSessionIn(key, id, path, title); }; });
     el.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => { const [key, id, path, title] = b.dataset.open.split("|"); openSessionIn(key, id, path, title); }));
     el.querySelectorAll("[data-answer]").forEach((b) => (b.onclick = () => { const [nm, folder] = b.dataset.answer.split("|"); DESK.relayTo = { name: nm, folder }; listen(); }));
   }
@@ -129,10 +169,10 @@
   }
   async function loadHistory() {
     const st = DESK.state || {};
-    if (!st.sessionId) return;
+    if (!st.historyId) return;
     const key = String((S.boot && S.boot.home) || "").replace(/[^A-Za-z0-9]/g, "-");
     let r;
-    try { r = await (await fetch("/api/session?key=" + encodeURIComponent(key) + "&id=" + st.sessionId)).json(); } catch (e) { return; }
+    try { r = await (await fetch("/api/session?key=" + encodeURIComponent(key) + "&id=" + st.historyId)).json(); } catch (e) { return; }
     if (!r || r.error) return;
     const evs = (r.events || []).map((m) => {
       if (m.kind === "user") m.text = stripBlock(m.text);
@@ -524,7 +564,6 @@
     };
     $("#deskHands").onclick = () => { DESK.hands = !DESK.hands; localStorage.bridgeHands = DESK.hands ? "1" : "0"; paintState(); toast(DESK.hands ? "Hands-free on — it listens again after each answer" : "Hands-free off"); };
     $("#deskMute").onclick = () => { DESK.muted = !DESK.muted; localStorage.bridgeMuted = DESK.muted ? "1" : "0"; if (DESK.muted) stopSpeaking(); paintState(); };
-    $("#deskReset").onclick = async () => { if (!confirm("Start a new thread with " + name() + "? The current one stays in your session history.")) return; DESK.msgs = []; rebuild(); DESK.state = await post("/api/da/reset"); paintState(); toast("New thread"); };
     DESK.hands = localStorage.bridgeHands !== "0";
     DESK.muted = localStorage.bridgeMuted === "1";
     // hold Space to talk while the desk is showing and nothing is being typed
@@ -542,6 +581,7 @@
     });
     fetch("/api/voice/health").then((r) => r.json()).then((h) => { DESK.health = h; paintState(); if (DESK.phase === "idle") setPhase("idle"); }).catch(() => {});
     connect();
+    board();
     requestAnimationFrame(draw);
     paintState();
     setPhase("idle");
@@ -551,6 +591,6 @@
   window.Desk = {
     phase: () => DESK.phase,
     shown: (on) => { DESK.shown = on; if (on) { paintState(); setTimeout(() => $("#deskInput").focus(), 30); } },
-    ask, relay, escape, send, listen,
+    ask, relay, escape, send, listen, board,
   };
 })();

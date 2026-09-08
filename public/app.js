@@ -481,6 +481,7 @@ async function syncLive() {
     }
   }
   if (changed) { renderTabs(); renderTop(); if (T() && T().mirror) renderMirrorBar(); }
+  if (window.Desk) window.Desk.board();
 }
 async function loadMirror(t) {
   let r;
@@ -672,6 +673,7 @@ function fillRecents(q) {
 }
 async function openSessionIn(key, id, path, title) {
   clearInterval(actTimer); actTimer = null;
+  S.view = "chat";                                  // a session always opens in Work sessions, wherever it was clicked
   const existing = S.tabs.map((t) => t.id).indexOf(id);
   if (existing >= 0) return activate(existing);
   const t = makeTab({ id: id, live: id, title: title || "Session", key: key, path: path || S.cwd });

@@ -1095,15 +1095,17 @@ const DA_PROTOCOL = (assistant: string, user: string) => [
   "",
   "Answering: always include one line that starts with 🗣️ — one to three plain spoken sentences that answer the question directly. That line is",
   "read aloud, so no markdown, lists, paths or code in it. Anything else you show stays short; " + user + " can ask for more. When there is",
-  "nothing new, say so in a sentence.",
+  "nothing new, say so in a sentence. When you refer to a session, call it by its name or folder from the block (never by pid or",
+  "file) — Bridge turns those into links that open the session.",
 ].join("\n");
 
 type DaClient = (o: any) => void;
 const DA = {
   child: null as ChildProcess | null, sessionId: "", busy: false, queue: [] as { text: string; ctx: string }[],
   starting: false, seq: 0, ring: [] as any[], clients: new Set<DaClient>(), started: 0, turns: 0, lastError: "",
-  turnStarted: 0, exits: 0, permissionMode: "bypassPermissions", model: "", name: "", user: "",
+  turnStarted: 0, exits: 0, permissionMode: "bypassPermissions", model: "", name: "", user: "", prevSessionId: "",
 };
+const daFile = (id: string) => join(PROJECTS_DIR, projectKey(HOME), id + ".jsonl");
 function daBroadcast(o: any) {
   o.seq = ++DA.seq; o.ts = o.ts || Date.now();
   DA.ring.push(o); if (DA.ring.length > 600) DA.ring.shift();
@@ -1122,13 +1124,16 @@ async function daLoadState() {
     if (typeof d.sessionId === "string") DA.sessionId = d.sessionId;
     if (typeof d.permissionMode === "string") DA.permissionMode = d.permissionMode;
     if (typeof d.model === "string") DA.model = d.model;
+    if (typeof d.prevSessionId === "string") DA.prevSessionId = d.prevSessionId;
   } catch {}
 }
 async function daSaveState() {
-  try { await Bun.write(DA_FILE, JSON.stringify({ sessionId: DA.sessionId, permissionMode: DA.permissionMode, model: DA.model }, null, 2)); } catch {}
+  try { await Bun.write(DA_FILE, JSON.stringify({ sessionId: DA.sessionId, prevSessionId: DA.prevSessionId, permissionMode: DA.permissionMode, model: DA.model }, null, 2)); } catch {}
 }
 function daState() {
-  return { alive: !!DA.child, busy: DA.busy, sessionId: DA.sessionId, started: DA.started, turns: DA.turns, queued: DA.queue.length,
+  // a resumed session gets a fresh id from the CLI and no file until its first turn: history lives under the old one until then
+  const historyId = existsSync(daFile(DA.sessionId)) ? DA.sessionId : DA.prevSessionId && existsSync(daFile(DA.prevSessionId)) ? DA.prevSessionId : "";
+  return { alive: !!DA.child, busy: DA.busy, sessionId: DA.sessionId, historyId, started: DA.started, turns: DA.turns, queued: DA.queue.length,
     error: DA.lastError, name: DA.name, model: DA.model, permissionMode: DA.permissionMode };
 }
 let daStarting: Promise<void> | null = null;
@@ -1144,8 +1149,9 @@ async function daBoot(fresh: boolean) {
     const auth = await authStatus();
     if (!auth.loggedIn) { DA.lastError = "Claude Code is not signed in"; daBroadcast({ t: "state", d: daState() }); return; }
     await daIdentity();
-    const transcriptExists = (id: string) => existsSync(join(PROJECTS_DIR, projectKey(HOME), id + ".jsonl"));
-    if (fresh || !DA.sessionId || !transcriptExists(DA.sessionId)) { DA.sessionId = randomUUID(); await daSaveState(); fresh = true; }
+    // resuming needs a transcript on disk; a session that never got a turn falls back to the one before it
+    if (!fresh && DA.sessionId && !existsSync(daFile(DA.sessionId)) && DA.prevSessionId && existsSync(daFile(DA.prevSessionId))) DA.sessionId = DA.prevSessionId;
+    if (fresh || !DA.sessionId || !existsSync(daFile(DA.sessionId))) { DA.sessionId = randomUUID(); DA.prevSessionId = ""; await daSaveState(); fresh = true; }
     const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
       "--append-system-prompt", DA_PROTOCOL(DA.name, DA.user), "--permission-mode", DA.permissionMode, "--name", DA.name + " desk"];
     args.push(fresh ? "--session-id" : "--resume", DA.sessionId);
@@ -1165,7 +1171,9 @@ async function daBoot(fresh: boolean) {
         const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
         if (!line) continue;
         let parsed: any; try { parsed = JSON.parse(line); } catch { daBroadcast({ t: "raw", d: line }); continue; }
-        if (parsed?.type === "system" && parsed.subtype === "init" && parsed.session_id) DA.sessionId = parsed.session_id;
+        if (parsed?.type === "system" && parsed.subtype === "init" && parsed.session_id && parsed.session_id !== DA.sessionId) {
+          DA.prevSessionId = DA.sessionId; DA.sessionId = parsed.session_id; daSaveState();
+        }
         daBroadcast({ t: "da", d: parsed });
         if (parsed?.type === "result") {
           DA.busy = false; DA.turns++;

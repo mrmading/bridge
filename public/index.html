@@ -60,7 +60,6 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
         <span class="spacer"></span>
         <button class="chip" id="deskHands" title="Hands-free: after each spoken answer, the microphone opens again on its own">hands-free</button>
         <button class="chip" id="deskMute" title="Speak answers aloud">🔊 voice</button>
-        <button class="chip" id="deskReset" title="Start a fresh conversation with the desk (the old one stays in your session history)">new thread</button>
       </div>
       <div class="desk-body" id="deskBody">
         <div class="desk-stage" id="deskStage">
@@ -68,6 +67,8 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
           <div class="desk-label" id="deskLabel">Click the orb, or just type</div>
           <div class="desk-live" id="deskLive"></div>
         </div>
+        <!-- the board: every session that is alive right now; a click opens it in Work sessions -->
+        <div class="desk-board" id="deskBoard"></div>
         <div class="desk-feed" id="deskFeed"></div>
       </div>
       <div class="desk-bar-wrap">
