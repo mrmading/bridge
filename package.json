@@ -1,6 +1,6 @@
 {
   "name": "bridge",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "A dark/light chat client for Claude Code + PAI",
   "scripts": {

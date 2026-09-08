@@ -6,7 +6,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
@@ -1270,15 +1270,16 @@ await daLoadState();
 /** the desk and the transcriber are Bridge's own processes: they go when Bridge goes */
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => {
   try { DA.child?.stdin?.end(); DA.child?.kill("SIGTERM"); } catch {}
-  try { stt?.proc.kill(); } catch {}
+  try { voice?.proc.kill(); } catch {}
   setTimeout(() => process.exit(0), 300);
 });
 
 /* ───────────────────────────── voice ─────────────────────────────
  * Speaking: ElevenLabs directly when the key is in ~/.claude/.env (audio comes back to the
- * page, so the orb can move to the actual sound); otherwise through Pulse, which plays the
- * assistant's own voice on the Mac; otherwise the page falls back to the browser voice.
- * Listening: the page records, the server transcribes offline with whisper. */
+ * page, so the orb can move to the actual sound); otherwise Kokoro on this Mac, same shape;
+ * otherwise through Pulse, which plays the assistant's own voice on the Mac; otherwise the
+ * page falls back to the browser voice.
+ * Listening: the page records, the server transcribes offline with Parakeet (or whisper). */
 async function dotenvKey(name: string): Promise<string> {
   if (process.env[name]) return process.env[name]!;
   try {
@@ -1302,8 +1303,9 @@ async function pulseUp(): Promise<boolean> {
 async function voiceHealth() {
   const id = await daIdentity();
   const key = await dotenvKey("ELEVENLABS_API_KEY");
-  const tts = key ? "elevenlabs" : (await pulseUp()) ? "pulse" : "browser";
-  return { tts, pulse: pulseCache?.up || false, stt: await sttEngine(), voice: id.voice ? { voiceId: id.voice.voiceId } : null, name: id.name, user: id.user, color: id.color };
+  const e = await voiceProbe();
+  const tts = key && id.voice?.voiceId ? "elevenlabs" : e.tts === "kokoro" ? "kokoro" : (await pulseUp()) ? "pulse" : "browser";
+  return { tts, pulse: pulseCache?.up || false, stt: e.stt, local: { stt: e.stt, tts: e.tts }, voice: id.voice ? { voiceId: id.voice.voiceId } : null, name: id.name, user: id.user, color: id.color };
 }
 /** split for speech: whole sentences, none over Pulse's 500-character ceiling */
 function speechChunks(text: string, max = 440): string[] {
@@ -1337,6 +1339,12 @@ async function ttsRespond(text: string): Promise<Response> {
       logRow({ ts: Date.now(), kind: "voice.error", msg: "ElevenLabs " + r.status, outcome: (await r.text()).slice(0, 120) });
     } catch (e) { logRow({ ts: Date.now(), kind: "voice.error", msg: "ElevenLabs " + String(e).slice(0, 100) }); }
   }
+  const local = await localSpeech(clean, v.speed ?? 1.1);
+  if (local.bytes) {
+    logRow({ ts: Date.now(), kind: "voice.said", msg: clean.slice(0, 120), ms: local.ms });
+    return new Response(local.bytes, { headers: { "content-type": "audio/wav", "cache-control": "no-store", "x-bridge-tts": "kokoro" } });
+  }
+  if (local.error && local.error !== "no local voice") logRow({ ts: Date.now(), kind: "voice.error", msg: "Kokoro " + local.error.slice(0, 120) });
   if (await pulseUp()) {
     const chunks = speechChunks(clean);
     let ok = 0;
@@ -1353,77 +1361,114 @@ async function ttsRespond(text: string): Promise<Response> {
   return json({ played: "none", words: clean.split(/\s+/).length });
 }
 
-/* whisper, kept warm: one python worker holding the model, fed file paths over stdin */
-type Stt = { proc: any; engine: string; pending: ((r: any) => void)[]; idle: any };
-let stt: Stt | null = null;
-let sttEngineCache: { at: number; v: string } | null = null;
-const STT_WORKER = join(dirname(Bun.fileURLToPath(import.meta.url)), "stt", "worker.py");
-async function sttPython(): Promise<{ py: string; engine: string } | null> {
-  const cands = [process.env.BRIDGE_STT_PYTHON, join(HOME, ".local", "whisper-venv", "bin", "python3"), "python3"].filter(Boolean) as string[];
-  for (const py of cands) {
-    if (py.includes("/") && !existsSync(py)) continue;
-    for (const mod of ["mlx_whisper", "whisper"]) {
-      try {
-        const p = Bun.spawn([py, "-c", "import " + mod], { stdout: "ignore", stderr: "ignore" });
-        if ((await p.exited) === 0) return { py, engine: mod === "mlx_whisper" ? "mlx" : "whisper" };
-      } catch {}
-    }
-  }
-  if (Bun.which("whisper")) return { py: "", engine: "whisper-cli" };
-  return null;
+/* the voice worker, kept warm: one python process holding Parakeet (ears) and Kokoro (mouth),
+ * fed JSON requests over stdin. Every reply carries its request id, so a request that timed out
+ * and was forgotten can never be handed to the wrong caller. */
+type VoiceReply = { id?: string; text?: string; out?: string; seconds?: number; ms?: number; error?: string };
+type VoiceEngines = { py: string; stt: string; tts: string };
+type VoiceWorker = { proc: ChildProcess; py: string; stt: string; tts: string; ready: boolean; pending: Map<string, (r: VoiceReply) => void>; idle: ReturnType<typeof setTimeout> | null };
+let voice: VoiceWorker | null = null;
+let voiceProbeCache: { at: number; v: VoiceEngines } | null = null;
+const VOICE_WORKER = join(dirname(Bun.fileURLToPath(import.meta.url)), "stt", "worker.py");
+const VOICE_PYTHONS = [process.env.BRIDGE_STT_PYTHON, join(HOME, ".local", "whisper-venv", "bin", "python3"), "python3"].filter(Boolean) as string[];
+/** same preference order the worker applies, so health reports what a fresh worker would run */
+const STT_CANDIDATES: [string, string][] = (() => {
+  const want = process.env.BRIDGE_STT_ENGINE || "auto";
+  if (want === "parakeet") return [["parakeet_mlx", "parakeet"]];
+  if (want === "mlx") return [["mlx_whisper", "mlx"]];
+  if (want === "whisper") return [["whisper", "whisper"]];
+  return [["parakeet_mlx", "parakeet"], ["mlx_whisper", "mlx"], ["whisper", "whisper"]];
+})();
+async function pyHas(py: string, mod: string): Promise<boolean> {
+  try { const p = Bun.spawn([py, "-c", "import " + mod], { stdout: "ignore", stderr: "ignore" }); return (await p.exited) === 0; } catch { return false; }
 }
-async function sttEngine(): Promise<string> {
-  if (stt) return stt.engine;
-  if (sttEngineCache && Date.now() - sttEngineCache.at < 120_000) return sttEngineCache.v;
-  const r = await sttPython();
-  const v = r ? r.engine : "none";
-  sttEngineCache = { at: Date.now(), v };
+/** which engines this machine can run, without starting the worker; cached two minutes */
+async function voiceProbe(): Promise<VoiceEngines> {
+  if (voice) return { py: voice.py, stt: voice.stt, tts: voice.tts };
+  if (voiceProbeCache && Date.now() - voiceProbeCache.at < 120_000) return voiceProbeCache.v;
+  let v: VoiceEngines = { py: "", stt: "none", tts: "none" };
+  for (const py of VOICE_PYTHONS) {
+    if (py.includes("/") && !existsSync(py)) continue;
+    let stt = "none";
+    for (const [mod, name] of STT_CANDIDATES) { if (await pyHas(py, mod)) { stt = name; break; } }
+    if (stt === "none") continue;
+    const tts = process.env.BRIDGE_TTS_ENGINE === "none" ? "none" : (await pyHas(py, "mlx_audio")) ? "kokoro" : "none";
+    v = { py, stt, tts };
+    break;
+  }
+  if (v.stt === "none" && Bun.which("whisper")) v = { py: "", stt: "whisper-cli", tts: "none" };
+  voiceProbeCache = { at: Date.now(), v };
   return v;
 }
-async function sttStart(): Promise<Stt | null> {
-  if (stt) return stt;
-  const r = await sttPython();
-  if (!r || !r.py) return null;
-  const proc = spawn(r.py, [STT_WORKER], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, PYTHONUNBUFFERED: "1", HF_HUB_OFFLINE: process.env.HF_HUB_OFFLINE || "0" } });
-  const S: Stt = { proc, engine: r.engine, pending: [], idle: null };
+async function voiceStart(): Promise<VoiceWorker | null> {
+  if (voice) return voice;
+  const e = await voiceProbe();
+  if (!e.py) return null;
+  const proc = spawn(e.py, [VOICE_WORKER], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, PYTHONUNBUFFERED: "1", HF_HUB_OFFLINE: process.env.HF_HUB_OFFLINE || "0" } });
+  const W: VoiceWorker = { proc, py: e.py, stt: e.stt, tts: e.tts, ready: false, pending: new Map(), idle: null };
   let buf = "";
-  proc.stdout.on("data", (c: any) => {
+  proc.stdout!.on("data", (c: Buffer) => {
     buf += c.toString();
-    let i;
+    let i: number;
     while ((i = buf.indexOf("\n")) !== -1) {
       const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
       if (!line) continue;
-      let o: any; try { o = JSON.parse(line); } catch { continue; }
-      if (o.ready) { S.engine = o.engine || S.engine; logRow({ ts: Date.now(), kind: "voice.stt", msg: "whisper ready (" + S.engine + ")", ms: o.ms }); continue; }
-      const cb = S.pending.shift(); if (cb) cb(o);
+      let o: VoiceReply & { ready?: boolean; stt?: string; tts?: string }; try { o = JSON.parse(line); } catch { continue; }
+      if (o.ready) { W.ready = true; W.stt = o.stt || W.stt; W.tts = o.tts || W.tts; logRow({ ts: Date.now(), kind: "voice.ready", msg: "ears " + W.stt + " · mouth " + W.tts, ms: o.ms }); continue; }
+      if (!o.id) { if (o.error) logRow({ ts: Date.now(), kind: "voice.error", msg: o.error.slice(0, 160) }); continue; }
+      const cb = W.pending.get(o.id); if (!cb) continue;   // timed out and forgotten
+      W.pending.delete(o.id); cb(o);
     }
   });
-  proc.stderr.on("data", (c: any) => { const s = c.toString().trim(); if (/error|traceback/i.test(s)) logRow({ ts: Date.now(), kind: "voice.error", msg: s.slice(0, 160) }); });
-  proc.on("close", () => { if (stt === S) stt = null; for (const cb of S.pending) cb({ error: "transcriber exited" }); });
-  stt = S;
-  return S;
+  proc.stderr!.on("data", (c: Buffer) => { const s = c.toString().trim(); if (/error|traceback|unavailable/i.test(s)) logRow({ ts: Date.now(), kind: "voice.error", msg: s.slice(0, 160) }); });
+  proc.on("close", () => { if (voice === W) voice = null; for (const cb of W.pending.values()) cb({ error: "voice worker exited" }); W.pending.clear(); });
+  voice = W;
+  return W;
 }
-function sttTouch() {
-  if (!stt) return;
-  clearTimeout(stt.idle);
-  stt.idle = setTimeout(() => { try { stt?.proc.kill(); } catch {} stt = null; }, 15 * 60_000);   // let the model go after a quiet quarter hour
+function voiceTouch() {
+  if (!voice) return;
+  if (voice.idle) clearTimeout(voice.idle);
+  voice.idle = setTimeout(() => { try { voice?.proc.kill(); } catch {} voice = null; }, 15 * 60_000);   // let the models go after a quiet quarter hour
+}
+/** one request to the worker; a reply arriving after `timeoutMs` is dropped, never misdelivered */
+async function voiceAsk(req: Record<string, unknown>, timeoutMs: number): Promise<VoiceReply> {
+  const W = await voiceStart();
+  if (!W) return { error: "no voice worker on this machine" };
+  voiceTouch();
+  const id = randomUUID();
+  return new Promise<VoiceReply>((res) => {
+    const timer = setTimeout(() => { if (W.pending.delete(id)) res({ error: "voice worker timed out after " + Math.round(timeoutMs / 1000) + "s" }); }, timeoutMs);
+    W.pending.set(id, (r) => { clearTimeout(timer); res(r); });
+    W.proc.stdin!.write(JSON.stringify({ id, ...req }) + "\n");
+  });
+}
+/** Kokoro on this Mac: the worker writes a wav, it is read back and removed */
+async function localSpeech(text: string, speed: number): Promise<{ bytes?: Uint8Array; seconds?: number; ms?: number; error?: string }> {
+  const e = await voiceProbe();
+  if (e.tts !== "kokoro") return { error: "no local voice" };
+  const dir = join(DATA_DIR, "tmp"); await mkdir(dir, { recursive: true });
+  const out = join(dir, "say-" + Date.now() + "-" + randomUUID().slice(0, 8) + ".wav");
+  const r = await voiceAsk({ op: "tts", text, out, speed }, 120_000);   // a cold worker loads both models first
+  if (r.error) return { error: r.error };
+  try { return { bytes: new Uint8Array(await readFile(out)), seconds: r.seconds, ms: r.ms }; }
+  catch (err) { return { error: "voice file missing: " + String(err).slice(0, 80) }; }
+  finally { unlink(out).catch(() => {}); }
 }
 async function transcribe(path: string): Promise<{ text?: string; error?: string; ms?: number }> {
   const t0 = Date.now();
-  const S = await sttStart();
-  if (S) {
-    sttTouch();
-    const r: any = await new Promise((res) => { S.pending.push(res); S.proc.stdin.write(path + "\n"); });
-    return { ...r, ms: Date.now() - t0 };
+  const e = await voiceProbe();
+  if (e.py) {
+    const r = await voiceAsk({ op: "stt", path }, 90_000);
+    return { text: r.text, error: r.error, ms: Date.now() - t0 };
   }
-  if (Bun.which("whisper")) {
+  if (e.stt === "whisper-cli") {
     const outDir = dirname(path);
     const p = Bun.spawn(["whisper", path, "--model", "base.en", "--language", "en", "--output_format", "txt", "--output_dir", outDir, "--fp16", "False"], { stdout: "ignore", stderr: "pipe" });
     await p.exited;
     const txt = await readFile(path.replace(/\.[^.]+$/, ".txt"), "utf8").catch(() => "");
     return txt ? { text: txt.trim(), ms: Date.now() - t0 } : { error: "whisper produced no text" };
   }
-  return { error: "no transcriber on this machine — install whisper (mlx_whisper) or type instead" };
+  return { error: "no transcriber on this machine — install parakeet-mlx (or mlx_whisper) or type instead" };
 }
 
 /* ───────────────────────────── routing ─────────────────────────────── */
@@ -1550,7 +1595,7 @@ const server = Bun.serve({
         return json(await daReset());
       }
       if (p === "/api/voice/health") return json(await voiceHealth());
-      if (p === "/api/voice/warm" && req.method === "POST") { sttStart().then(sttTouch); return json({ ok: true, engine: await sttEngine() }); }
+      if (p === "/api/voice/warm" && req.method === "POST") { voiceStart().then(voiceTouch); const e = await voiceProbe(); return json({ ok: true, engine: e.stt, stt: e.stt, tts: e.tts }); }
       if (p === "/api/tts" && req.method === "POST") {
         const { text } = await req.json().catch(() => ({}) as any);
         return ttsRespond(String(text || ""));
@@ -1563,7 +1608,7 @@ const server = Bun.serve({
         const bytes = new Uint8Array(await req.arrayBuffer());
         if (bytes.length < 800) return json({ text: "", error: "too short" });
         await Bun.write(raw, bytes);
-        // whisper wants 16 kHz mono; ffmpeg also turns whatever the browser recorded into that
+        // the models want 16 kHz mono; ffmpeg also turns whatever the browser recorded into that
         const ff = Bun.spawn(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", raw, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], { stdout: "ignore", stderr: "pipe" });
         const code = await ff.exited;
         const r = await transcribe(code === 0 ? wav : raw);

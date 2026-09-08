@@ -68,7 +68,7 @@ Building needs the Xcode Command Line Tools (`xcode-select --install`). The app 
 
 **Your assistant is the first tab.** The desk is one persistent Claude Code session that stays
 open for as long as Bridge runs. Click the orb (or hold `Space`) and talk: speech is transcribed
-on your Mac with whisper, the answer streams in, and the `🗣️` line is read back to you. Every
+on your Mac with Parakeet, the answer streams in, and the `🗣️` line is read back to you. Every
 message carries a live picture of the terminals you have open, so "what is the setpoint session
 doing?" is answered without switching tabs — and "tell it to stop" is relayed to that session.
 
@@ -157,11 +157,21 @@ matches.
 
 ## Voice
 
-Listening is offline: the page records, the server hands the clip to whisper (`mlx_whisper` on
-Apple silicon, `openai-whisper` otherwise — `BRIDGE_STT_PYTHON` picks the interpreter). Speaking
-uses your ElevenLabs voice when `ELEVENLABS_API_KEY` is in `~/.claude/.env`, else the Pulse voice
-server if it is running, else the browser's own voice. `hands-free` reopens the microphone after
-each answer; `Esc` stops everything.
+Listening is offline: the page records, the server hands the clip to one warm Python worker
+(`stt/worker.py`) that prefers NVIDIA Parakeet TDT 0.6B v3 on MLX (`parakeet-mlx`, ~300 ms per
+utterance on an M2), then `mlx_whisper`, then `openai-whisper` on the CPU. Speaking uses your
+ElevenLabs voice when `ELEVENLABS_API_KEY` is in `~/.claude/.env`, else Kokoro-82M on this Mac
+(`mlx-audio` + `misaki[en]`, about 0.6 s per sentence), else the Pulse voice server if it is
+running, else the browser's own voice. `hands-free` reopens the microphone after each answer;
+`Esc` stops everything.
+
+```sh
+uv pip install --python ~/.local/whisper-venv/bin/python3 parakeet-mlx mlx-audio "misaki[en]"
+```
+
+`BRIDGE_STT_PYTHON` picks the interpreter (default `~/.local/whisper-venv/bin/python3`).
+`BRIDGE_STT_ENGINE=parakeet|mlx|whisper` and `BRIDGE_TTS_ENGINE=kokoro|none` pin an engine;
+`BRIDGE_TTS_VOICE` picks a Kokoro voice (default `af_heart`).
 
 ## Safety
 

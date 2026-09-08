@@ -45,7 +45,11 @@
     el.className = "desk-state " + (!st.alive ? "off" : st.busy ? "busy" : "ok");
     const h = DESK.health;
     const vi = $("#deskVoiceInfo");
-    if (vi && h) vi.textContent = "voice: " + (h.tts === "elevenlabs" ? "ElevenLabs" : h.tts === "pulse" ? "Pulse" : "browser") + " · ears: " + (h.stt === "mlx" ? "whisper (GPU)" : h.stt === "none" ? "none" : "whisper");
+    if (vi && h) {
+      const mouth = h.tts === "elevenlabs" ? "ElevenLabs" : h.tts === "kokoro" ? "Kokoro (local)" : h.tts === "pulse" ? "Pulse" : "browser";
+      const ears = h.stt === "parakeet" ? "Parakeet (local)" : h.stt === "mlx" ? "whisper (GPU)" : h.stt === "none" ? "none" : "whisper";
+      vi.textContent = "voice: " + mouth + " · ears: " + ears;
+    }
     $("#deskHands").classList.toggle("acc", DESK.hands);
     $("#deskMute").classList.toggle("acc", !DESK.muted);
     $("#deskMute").textContent = DESK.muted ? "🔇 muted" : "🔊 voice";
