@@ -467,7 +467,7 @@ async function syncLive() {
     } else {
       const was = t.mirror;
       t.mirror = Object.assign(t.mirror || {}, s, { ended: false });
-      if (!was) { changed = true; if (t.msgs.length && !t.follow) startFollow(t, t.offset || 0); else if (!t.msgs.length) loadMirror(t); }
+      if (!was) { changed = true; if (!t.msgs.length) loadMirror(t); }
       else if (was.status !== s.status || (was.waiting && was.waiting.text) !== (s.waiting && s.waiting.text)) changed = true;
       if (s.title && !t.named && t.title !== s.title) { t.title = s.title; changed = true; }
     }
@@ -481,7 +481,18 @@ async function syncLive() {
     }
   }
   if (changed) { renderTabs(); renderTop(); if (T() && T().mirror) renderMirrorBar(); }
+  syncFollowers();
   if (window.Desk) window.Desk.board();
+}
+/** Browsers allow six open connections per host, and every follower is one. So only the tab
+ *  you are looking at follows its terminal live; the others catch up from their saved offset
+ *  the moment you switch to them. */
+function syncFollowers() {
+  for (const t of S.tabs) {
+    const want = t === T() && S.view === "chat" && t.mirror && !t.mirror.ended && t.msgs.length;
+    if (want && !t.follow) startFollow(t, t.offset || 0);
+    else if (!want && t.follow) stopFollow(t);
+  }
 }
 async function loadMirror(t) {
   let r;
@@ -490,7 +501,7 @@ async function loadMirror(t) {
   t.msgs = r.events || []; t.usage = r.meta.usage; t.model = r.meta.model; t.branch = r.meta.branch; t.offset = r.offset || 0;
   if (r.meta.title && !t.named) t.title = r.meta.title;
   if (T() === t) { paint(); scrollDown(true); } else renderTabs();
-  if (t.mirror && !t.mirror.ended) startFollow(t, t.offset);
+  syncFollowers();
 }
 function startFollow(t, from) {
   stopFollow(t);
@@ -1220,7 +1231,7 @@ function renderTurnState() {
   el.innerHTML = '<span class="ts-dot"></span><span class="ts-t">' + esc(s.text) + "</span>" +
     (secs >= 2 ? '<span class="ts-s">' + secs + "s</span>" : "");
 }
-function paint() { renderRail(); renderTabs(); renderPanel(); renderMain(); renderTop(); renderInspector(); sendBtn(); renderTurnState(); }
+function paint() { renderRail(); renderTabs(); renderPanel(); renderMain(); renderTop(); renderInspector(); sendBtn(); renderTurnState(); syncFollowers(); }
 
 /* ─────────────────────────── actions ──────────────────────────── */
 
