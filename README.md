@@ -30,7 +30,7 @@ terminal with `claude --resume`, and vice versa.
 
 ## Download
 
-**[Bridge-0.1.0.dmg](https://github.com/mrmading/bridge/releases/latest)** — drag it into
+**[Bridge-0.1.6.dmg](https://github.com/mrmading/bridge/releases/latest)** — drag it into
 Applications and open it. On first run Bridge checks for the two free tools it needs, offers to
 install whichever is missing, and asks whether you use LifeOS. Nothing is installed unless you press
 the button.
