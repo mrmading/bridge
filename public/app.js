@@ -29,6 +29,7 @@ const S = {
   editingTab: null,         // index of the tab whose title is being edited inline
   lastTabClick: null,       // {i, ts} — hand-rolled double-click detection on tabs
   live: [],                 // the terminal sessions Claude Code has open right now (from its registry)
+  lane: localStorage.bridgeLane === "terminal" ? "terminal" : "native",   // which strip of tabs is showing
   dismissed: {},            // mirror tabs closed by hand: not reopened while that terminal lives
 };
 /** the active session tab */
@@ -412,6 +413,15 @@ function renderPhases() {
 }
 
 /* ────────────────────── session tabs (top bar) ─────────────────── */
+/** a new session of your own — always in your lane, never in a terminal's */
+function newSession() {
+  const t = makeTab();
+  S.lane = "native";
+  try { localStorage.bridgeLane = "native"; } catch (e) {}
+  goChat();
+  const ta = $("#input"); if (ta) ta.focus();
+  return t;
+}
 function makeTab(opts) {
   const path = (opts && opts.path) || (T() && T().path) || S.cwd || S.roots[0] || (S.boot && S.boot.home);
   const t = Object.assign({
@@ -434,7 +444,12 @@ function closeTab(i) {
   else if (S.active > i) S.active--;
   paint();
 }
-function activate(i) { S.active = i; paint(); scrollDown(true); }
+function activate(i) {
+  S.active = i;
+  const t = S.tabs[i];
+  if (t) { const l = laneOf(t); if (l !== S.lane) { S.lane = l; try { localStorage.bridgeLane = l; } catch (e) {} } }
+  paint(); scrollDown(true);
+}
 function tabTitle(t) {
   if (t.da) return (S.boot && S.boot.assistant) || "Desk";
   if (t.title && t.title !== "New session") return t.title;
@@ -469,6 +484,7 @@ async function syncLive() {
     if (t.mirror && !t.mirror.ended && !seen[t.id]) {
       t.mirror.ended = true; t.mirror.status = "ended";
       t.live = t.id;                         // the terminal is gone, so the session is Bridge's to continue
+      if (S.tabs[S.active] === t) { S.lane = "native"; try { localStorage.bridgeLane = "native"; } catch (e) {} }
       delete S.dismissed[t.id];
       stopFollow(t); changed = true;
     }
@@ -590,23 +606,70 @@ async function commitRename(i, value) {
   toast(name ? "Renamed" : "Name cleared");
 }
 
+/* ─────────────── two strips of tabs: yours, and your terminals ───────────────
+ * Every open session belongs to exactly one lane. A session a terminal owns lives in the
+ * Terminal lane and is read-only; everything else is yours. When a terminal closes, its tab
+ * moves over to your lane, because the session becomes yours to continue. Only one lane's
+ * tabs are on screen at a time, so seven live terminals never crowd out your own work. */
+const laneOf = (t) => (t.mirror && !t.mirror.ended ? "terminal" : "native");
+const tabsIn = (lane) => S.tabs.filter((t) => laneOf(t) === lane);
+function setLane(lane, opts) {
+  if (lane !== "native" && lane !== "terminal") return;
+  S.lane = lane;
+  try { localStorage.bridgeLane = lane; } catch (e) {}
+  if (!(opts && opts.keepActive)) {
+    const cur = S.tabs[S.active];
+    if (!cur || laneOf(cur) !== lane) {
+      const mine = S.tabs.map((t, i) => [t, i]).filter(([t]) => laneOf(t) === lane);
+      if (mine.length) S.active = mine[mine.length - 1][1];
+      else if (lane === "native") makeTab();          // your lane is never empty: an empty one is a new session
+    }
+  }
+  S.view = "chat";
+  paint(); scrollDown(true);
+}
+/** the Native / Terminal switch that governs the strip below it */
+function renderLanes() {
+  const el = $("#lanes");
+  if (!el) return;
+  const nat = tabsIn("native").length;
+  const term = tabsIn("terminal");
+  const busy = term.filter((t) => t.mirror.status === "busy").length;
+  const wait = term.filter((t) => t.mirror.waiting).length;
+  const seg = (id, label, n, extra) =>
+    '<button class="lane ' + (S.lane === id ? "on" : "") + '" data-lane="' + id + '" title="' +
+    esc(id === "native" ? "Sessions you run inside Bridge (⌘1)" : "Sessions running in your terminal — mirrored read-only (⌘2)") + '">' +
+    (extra || "") + '<span class="lane-l">' + label + "</span>" +
+    (n ? '<span class="lane-n">' + n + "</span>" : "") + "</button>";
+  el.innerHTML =
+    seg("native", "Bridge", nat) +
+    seg("terminal", "Terminal", term.length,
+      wait ? '<span class="lane-dot wait"></span>' : busy ? '<span class="lane-dot busy"></span>' : "");
+  el.querySelectorAll("[data-lane]").forEach((n) => (n.onclick = () => setLane(n.dataset.lane)));
+}
 function renderTabs() {
+  renderLanes();
   const editing = S.editingTab;
   const live = $("#tabs .tab-edit");
   if (live && document.activeElement === live && +live.dataset.edit === editing) return;  // never clobber the open field
+  const hidden = S.tabs.filter((t) => laneOf(t) !== S.lane).length;
+  $("#tabbar").classList.toggle("terminal-lane", S.lane === "terminal");
   $("#tabs").innerHTML = S.tabs.map((t, i) => {
+    if (laneOf(t) !== S.lane) return "";
     const m = t.mirror;
     const busy = t.streaming || (m && !m.ended && m.status === "busy");
     const wait = m && !m.ended && m.waiting;
     const tip = m ? (m.ended ? "This terminal has closed — the session is yours to continue here" : "Live in your terminal (" + m.name + ") · " + (m.status === "busy" ? "working" : wait ? "waiting on you" : "idle")) : esc(t.path || "") + " · double-click the title to rename";
     return '<div class="tab ' + (i === S.active ? "on" : "") + (m ? " mirror" : "") + (m && m.ended ? " ended" : "") + '" data-tab="' + i + '" title="' + esc(tip) + '">' +
       (busy ? '<span class="tab-live"></span>' : wait ? '<span class="tab-wait" title="waiting on you">⏳</span>' : "") +
-      (m ? '<span class="tab-tag' + (m.ended ? " off" : "") + '">' + (m.ended ? "was terminal" : "Terminal") + "</span>" : "") +
+      // in the Terminal lane the strip itself says what these are; the tag only earns its width
+      // on a session whose terminal has closed, which now sits among your own
+      (m && m.ended ? '<span class="tab-tag off">was terminal</span>' : "") +
       (i === editing
         ? '<input class="tab-edit" data-edit="' + i + '" value="' + esc(tabTitle(t)) + '" spellcheck="false">'
         : '<span class="tab-t">' + esc(tabTitle(t)) + "</span>") +
       '<span class="tab-x" data-close="' + i + '">×</span></div>';
-  }).join("");
+  }).join("") || laneEmpty();
   /* Double-click is detected by hand: the first click repaints and replaces every
      tab node, so a native dblclick lands on #tabs, never on the tab itself. */
   $("#tabs").querySelectorAll("[data-tab]").forEach((n) => (n.onclick = (e) => {
@@ -629,8 +692,18 @@ function renderTabs() {
     inp.onblur = () => { if (S.editingTab !== null) commitRename(+inp.dataset.edit, inp.value); };
     inp.focus(); inp.select();
   }
+  const eb = $("#tabs [data-showall]");
+  if (eb) eb.onclick = () => { S.dismissed = {}; syncLive(); };
   const at = $("#tabs .tab.on");
   if (at && editing === null) at.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+/** what stands where the tabs would be when this lane holds none */
+function laneEmpty() {
+  if (S.lane !== "terminal") return "";
+  const closed = (S.live || []).filter((s) => S.dismissed[s.id]).length;
+  return '<div class="lane-empty">' + (closed
+    ? closed + (closed === 1 ? " terminal is" : " terminals are") + " hidden · <button data-showall>show them</button>"
+    : "No terminal session open. Run <b>claude</b> anywhere and it appears here.") + "</div>";
 }
 const unread = () => S.notes.filter((x) => !x.read).length;
 function saveNotes() { try { localStorage.bridgeNotes = JSON.stringify(S.notes.slice(0, 60)); } catch (e) {} }
@@ -778,8 +851,8 @@ function setCwd(path) {
   S.cwd = path;
   localStorage.bridgeCwd = path;
   const t = T();
-  if (t && !t.da && !t.msgs.length && !t.id) { t.path = path; t.name = path.split("/").pop(); }
-  else makeTab({ path: path });
+  if (t && !t.da && !t.msgs.length && !t.id && laneOf(t) === "native") { t.path = path; t.name = path.split("/").pop(); }
+  else { makeTab({ path: path }); S.lane = "native"; try { localStorage.bridgeLane = "native"; } catch (e) {} }
   goChat();
 }
 
@@ -1868,8 +1941,10 @@ function closePalette() { $("#paletteBg").classList.remove("on"); }
 function palFill(q) {
   const ql = q.toLowerCase();
   const cmds = [
-    { label: "New session", desc: "⌘T", run: () => { makeTab(); goChat(); $("#input").focus(); } },
+    { label: "New session", desc: "⌘T", run: () => newSession() },
     { label: "Search every session", desc: "⌘F", run: () => openFinder("") },
+    { label: "Bridge sessions", desc: "⌘1 · the sessions you run here", run: () => { goChat(); setLane("native"); } },
+    { label: "Terminal sessions", desc: "⌘2 · mirrored from your terminals, read-only", run: () => { goChat(); setLane("terminal"); } },
     { label: "Back to the conversation", desc: "Esc", run: goChat },
     { label: "Toggle theme", desc: "⌘J", run: toggleTheme },
     { label: "Toggle session sidebar", desc: "⌘I", run: () => { S.inspector = !S.inspector; localStorage.bridgeSidebar = S.inspector ? "1" : "0"; renderInspector(); } },
@@ -2054,7 +2129,8 @@ function toggleTheme() {
   makeTab();
   S.view = "copilot";                         // Bridge opens on the copilot, above the sessions
   paint(); renderBell();
-  syncLive(); setInterval(syncLive, 4000);    // terminals come and go on their own
+  syncLive().then(() => { if (S.lane === "terminal" && tabsIn("terminal").length) setLane("terminal"); });
+  setInterval(syncLive, 4000);                // terminals come and go on their own
   window._bridgeBooted();
 
   if (!authed()) openSignin();               // first run: the sheet is the app until there is an account
@@ -2065,7 +2141,7 @@ function toggleTheme() {
   $("#inspClose").onclick = () => { S.inspector = false; localStorage.bridgeSidebar = "0"; renderInspector(); };
   loadLifeos(); setInterval(loadLifeos, 60000);
   $("#topSearch").oninput = (e) => { S.filter = e.target.value.toLowerCase(); renderMain(); renderPanel(); };
-  $("#tabAdd").onclick = () => { makeTab(); goChat(); $("#input").focus(); };
+  $("#tabAdd").onclick = () => newSession();
   $("#tabMenu").onclick = (e) => { e.stopPropagation(); toggleRecents(); };
   $("#btnBell").onclick = (e) => { e.stopPropagation(); toggleNotes(); };
   $("#notesClose").onclick = () => toggleNotes(false);
@@ -2141,9 +2217,11 @@ function toggleTheme() {
     if (meta && e.key === "f") { e.preventDefault(); openFinder(); }
     else if (meta && e.key === "k") { e.preventDefault(); openPalette(); }
     else if (meta && e.key === "p") { e.preventDefault(); goChat(); toggleRecents(true); }
-    else if (meta && e.key === "t") { e.preventDefault(); makeTab(); goChat(); $("#input").focus(); }
+    else if (meta && e.key === "t") { e.preventDefault(); newSession(); }
     else if (meta && e.key === "w") { e.preventDefault(); if (S.view === "chat") closeTab(S.active); else if (PAGE()) closePage(); }
     else if (e.key === "Escape" && S.view === "copilot" && window.Desk && window.Desk.escape()) { e.preventDefault(); }
+    else if (meta && e.key === "1") { e.preventDefault(); goChat(); setLane("native"); }
+    else if (meta && e.key === "2") { e.preventDefault(); goChat(); setLane("terminal"); }
     else if (meta && e.key === "j") { e.preventDefault(); toggleTheme(); }
     else if (meta && e.key === "i") { e.preventDefault(); S.inspector = !S.inspector; localStorage.bridgeSidebar = S.inspector ? "1" : "0"; renderInspector(); }
     else if (e.key === "Escape") {
