@@ -628,14 +628,22 @@ function setLane(lane, opts) {
   S.view = "chat";
   paint(); scrollDown(true);
 }
-/** the Native / Terminal switch that governs the strip below it */
+/** The Bridge / Terminal switch, in the top bar left of the bell. It is redrawn from both
+ *  the tab strip and the top bar, so it keys on what it would draw and skips the rest. */
+let laneKey = "";
 function renderLanes() {
   const el = $("#lanes");
   if (!el) return;
+  // in the top bar the switch is always on screen; away from Work sessions it dims, and
+  // clicking a segment takes you there rather than doing nothing
+  el.classList.toggle("away", S.view !== "chat");
   const nat = tabsIn("native").length;
   const term = tabsIn("terminal");
   const busy = term.filter((t) => t.mirror.status === "busy").length;
   const wait = term.filter((t) => t.mirror.waiting).length;
+  const key = [S.lane, nat, term.length, busy, wait].join("/");
+  if (key === laneKey) return;
+  laneKey = key;
   const seg = (id, label, n, extra) =>
     '<button class="lane ' + (S.lane === id ? "on" : "") + '" data-lane="' + id + '" title="' +
     esc(id === "native" ? "Sessions you run inside Bridge (⌘1)" : "Sessions running in your terminal — mirrored read-only (⌘2)") + '">' +
@@ -1215,6 +1223,7 @@ const SEARCH_HINT = {
   files: "Search files and folders here…",
 };
 function renderTop() {
+  renderLanes();
   renderPhases();
   const ts = $("#topSearch");
   const hint = SEARCH_HINT[S.view];
