@@ -962,8 +962,6 @@ body::after{
 /* terminal sessions in the lists: the tag says what they are, the pill says how they are */
 .tab-tag{font-size:9.5px;line-height:1;padding:3px 6px;border-radius:20px;background:color-mix(in srgb,var(--accent2) 18%,transparent);color:var(--accent2);font-weight:700;letter-spacing:.04em;text-transform:uppercase;flex:none;font-family:var(--sans)}
 .tab-tag.off{background:var(--bg-active);color:var(--fg-faint);text-transform:none;letter-spacing:0;font-weight:600}
-.tab.mirror{border-style:dashed}
-.tab.mirror.on{border-style:solid}
 .rc-h{display:flex;align-items:center;gap:8px;padding:9px 10px 4px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-faint)}
 .rc-h span{font-family:var(--mono);font-weight:500;letter-spacing:0;padding:0 6px;border-radius:20px;background:var(--bg-active)}
 .item.live .item-row{display:flex;align-items:center;gap:8px}
