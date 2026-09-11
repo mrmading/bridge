@@ -670,9 +670,7 @@ function renderTabs() {
     const tip = m ? (m.ended ? "This terminal has closed — the session is yours to continue here" : "Live in your terminal (" + m.name + ") · " + (m.status === "busy" ? "working" : wait ? "waiting on you" : "idle")) : esc(t.path || "") + " · double-click the title to rename";
     return '<div class="tab ' + (i === S.active ? "on" : "") + (m ? " mirror" : "") + (m && m.ended ? " ended" : "") + '" data-tab="' + i + '" title="' + esc(tip) + '">' +
       (busy ? '<span class="tab-live"></span>' : wait ? '<span class="tab-wait" title="waiting on you">⏳</span>' : "") +
-      // in the Terminal lane the strip itself says what these are; the tag only earns its width
-      // on a session whose terminal has closed, which now sits among your own
-      (m && m.ended ? '<span class="tab-tag off">was terminal</span>' : "") +
+      (m ? '<span class="tab-tag' + (m.ended ? " off" : "") + '">' + (m.ended ? "was terminal" : "Terminal") + "</span>" : "") +
       (i === editing
         ? '<input class="tab-edit" data-edit="' + i + '" value="' + esc(tabTitle(t)) + '" spellcheck="false">'
         : '<span class="tab-t">' + esc(tabTitle(t)) + "</span>") +
