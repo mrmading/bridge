@@ -478,6 +478,7 @@ async function syncLive() {
       if (!was) { changed = true; if (!t.msgs.length) loadMirror(t); }
       else if (was.status !== s.status || (was.waiting && was.waiting.text) !== (s.waiting && s.waiting.text)) changed = true;
       if (s.title && !t.named && t.title !== s.title) { t.title = s.title; changed = true; }
+      if (!t.msgs.length) loadMirror(t);     // opened before the transcript had a line: fetch it now
     }
   }
   for (const t of S.tabs) {
@@ -527,9 +528,14 @@ function syncFollowers() {
     else if (!want && t.follow) stopFollow(t);
   }
 }
+/** A terminal that has just started has no transcript yet, so the first load comes back empty.
+ *  syncLive keeps asking (at most every 2.5s) until there is history, then the follower takes over. */
 async function loadMirror(t) {
+  if (t.loading || Date.now() - (t.loadedAt || 0) < 2500) return;
+  t.loading = true; t.loadedAt = Date.now();
   let r;
-  try { r = await (await fetch("/api/session?key=" + encodeURIComponent(t.key) + "&id=" + t.id)).json(); } catch (e) { return; }
+  try { r = await (await fetch("/api/session?key=" + encodeURIComponent(t.key) + "&id=" + t.id)).json(); } catch (e) { r = { error: String(e) }; }
+  t.loading = false;
   if (r.error) return;
   t.msgs = r.events || []; t.usage = r.meta.usage; t.model = r.meta.model; t.branch = r.meta.branch; t.offset = r.offset || 0;
   if (r.meta.title && !t.named) t.title = r.meta.title;
@@ -558,6 +564,27 @@ function startFollow(t, from) {
   es.onerror = () => { /* EventSource reconnects on its own; a dead file ends with "gone" */ };
 }
 function stopFollow(t) { if (t.follow) { try { t.follow.close(); } catch (e) {} t.follow = null; } }
+/** Take a terminal session over: the terminal process lets go (server checks it is idle and
+ *  SIGTERMs exactly that pid), then this tab turns into an ordinary Bridge session on the same
+ *  id — same history, next message resumes it. The terminal itself drops back to the shell. */
+async function takeOver(t) {
+  const m = t.mirror;
+  if (!m || m.ended || m.status === "busy") return;
+  if (!confirm("Take over “" + tabTitle(t) + "”?\n\nThis closes the Claude session in your terminal (" + m.name + ") and continues it here with its full history. Your terminal returns to the shell prompt.")) return;
+  let r;
+  try { r = await (await fetch("/api/live/takeover", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pid: m.pid, id: t.id }) })).json(); }
+  catch (e) { r = { error: String(e) }; }
+  if (!r.ok) { toastCard({ kind: "error", title: "Could not take over", detail: r.error || "unknown error" }); return; }
+  stopFollow(t);
+  m.ended = true; m.status = "ended";
+  t.live = t.id;
+  delete S.dismissed[t.id];
+  S.lane = "native"; try { localStorage.bridgeLane = "native"; } catch (e) {}
+  t.loadedAt = 0; t.msgs = []; await loadMirror(t);      // pick up the last lines the terminal wrote on its way out
+  paint(); scrollDown(true);
+  const ta = $("#input"); if (ta) ta.focus();
+  toast("Taken over — this session is yours now");
+}
 /** the bar that stands in for the composer on a live mirror */
 function renderMirrorBar() {
   const t = T();
@@ -573,7 +600,10 @@ function renderMirrorBar() {
     '<span class="mb-t">read-only · <b>' + esc(m.name) + "</b>" + (w ? "" : m.last ? ' · <span class="mb-l" title="' + esc(m.last) + '">' + esc(m.last.slice(0, 80)) + "</span>" : "") + "</span>" +
     (w ? '<span class="mb-q" title="' + esc(w.text) + '">' + esc(w.text.slice(0, 90)) + "</span>" : "") +
     '<input class="mb-in" id="mirrorIn" placeholder="' + esc(w ? "Answer it — " + da + " relays your reply to the terminal" : "Relay a note to the terminal through " + da + "…") + '" spellcheck="false">' +
-    '<button class="chip" data-ask>Ask ' + esc(da) + "</button>";
+    '<button class="chip" data-ask>Ask ' + esc(da) + "</button>" +
+    '<button class="chip mb-take" data-take' + (m.status === "busy" ? ' disabled title="It is mid-turn in the terminal. Take it over once it goes idle."' : ' title="Close it in the terminal and continue this session here, with its full history"') + ">Take over</button>";
+  const tb = el.querySelector("[data-take]");
+  if (tb) tb.onclick = () => takeOver(t);
   const ab = el.querySelector("[data-ask]");
   if (ab) ab.onclick = () => { if (window.Desk) window.Desk.ask("What is the " + m.folder + " session (" + m.name + ") doing right now, and does it need anything from me?"); };
   const inp = el.querySelector("#mirrorIn");
@@ -1662,6 +1692,7 @@ async function runTurn(tab, text, attachments) {
   sendBtn(); renderTabs(); if (T() === tab) renderPhases();
   if (T() === tab) renderInspector();
   else note(tab, tab.lastResult ? "done" : "error", tab.lastResult ? "$" + (tab.lastResult.total_cost_usd || 0).toFixed(3) : "");
+  announceTurn(tab);
   // drain anything typed while that turn was running
   const q = tab.queue || [];
   if (q.length) {
@@ -2079,6 +2110,58 @@ async function finishSignin() {
   AUTH.err = r.error || "that did not go through";
   AUTH.view = r.restart ? "idle" : "code";
   renderSignin();
+}
+
+/* ─────────────── toast cards ───────────────
+ * Every session — Bridge's own and the terminals' — announces the same way: a card in the
+ * corner you can click straight into, the voice line, and a macOS notification when Bridge is
+ * not in front. The bell keeps the record; a card is the moment. */
+/** the gist of a reply for a card: no response-format banners, no markdown, one paragraph */
+const cardText = (t) => String(t || "").replace(/[═━─]{2,}[^═━─\n]*[═━─]{2,}/g, " ").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim().slice(0, 220);
+const TOAST_LIFE = { waiting: 16000, error: 10000, done: 7000, started: 4000, ended: 4000 };
+function toastCard(x) {
+  const box = $("#toasts");
+  if (!box) return;
+  const el = document.createElement("div");
+  el.className = "tcard " + (x.kind || "");
+  el.innerHTML = '<span class="note-dot ' + esc(x.kind || "") + '"></span>' +
+    '<div class="tc-b"><div class="tc-t">' + (x.terminal ? '<span class="tag term">Terminal</span>' : "") + esc(x.title || "Bridge") + "</div>" +
+    '<div class="tc-m">' + esc(NOTE_LABEL[x.kind] || x.kind || "") + (x.folder ? " · " + esc(x.folder) : "") + "</div>" +
+    (x.detail ? '<div class="tc-d">' + esc(cardText(x.detail)) + "</div>" : "") + "</div>" +
+    '<button class="tc-x" title="Dismiss">✕</button>';
+  const kill = () => { el.classList.add("out"); setTimeout(() => el.remove(), 260); };
+  let timer = setTimeout(kill, TOAST_LIFE[x.kind] || 6000);
+  el.onmouseenter = () => clearTimeout(timer);
+  el.onmouseleave = () => { timer = setTimeout(kill, 3000); };
+  el.querySelector(".tc-x").onclick = (e) => { e.stopPropagation(); kill(); };
+  el.onclick = () => {
+    kill();
+    if (x.onOpen) return x.onOpen();
+    const live = x.id && liveById(x.id);
+    if (live) openMirror(live);
+    else if (x.id) openSessionIn(x.key, x.id, x.path, x.title);
+  };
+  box.prepend(el);
+  while (box.children.length > 4) box.lastChild.remove();
+  requestAnimationFrame(() => el.classList.add("on"));
+}
+/** you are already looking at it: no card, no voice */
+const watching = (id) => document.hasFocus() && S.view === "chat" && !!T() && T().id === id;
+function desktopNotify(title, subtitle, body) {
+  if (document.hasFocus()) return;
+  fetch("/api/notify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: title, subtitle: subtitle, body: body }) }).catch(() => {});
+}
+/** a Bridge-run turn just ended */
+function announceTurn(tab) {
+  if (watching(tab.id)) return;
+  const ok = !!tab.lastResult;
+  const last = tab.msgs.filter((m) => m.kind === "assistant").pop();
+  const text = last ? String(last.text || "").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim() : "";
+  const folder = String(tab.path || "").split("/").pop();
+  toastCard({ kind: ok ? "done" : "error", id: tab.id, key: tab.key, path: tab.path, title: tabTitle(tab), folder: folder, detail: text,
+    onOpen: () => { const i = S.tabs.indexOf(tab); if (i >= 0) { S.view = "chat"; activate(i); } } });
+  if (window.Desk && window.Desk.say) window.Desk.say(ok ? "Your " + folder + " session finished. " + (text.match(/[^.!?]+[.!?]/) || [text.slice(0, 160)])[0] : "Your " + folder + " session failed.");
+  desktopNotify(folder + (ok ? " finished a turn" : " failed"), tabTitle(tab), text);
 }
 
 /* ──────────────────────────── misc ────────────────────────────── */

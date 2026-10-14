@@ -967,7 +967,7 @@ function softWaiting(v: TailState, idle: boolean): Waiting {
   if (/\?$/.test(clean) && clean.length > 8 && clean.length < 300) return { kind: "question", text: clean };
   return null;
 }
-const plain = (t: string, n = 240) => String(t || "").replace(/```[\s\S]*?```/g, " ").replace(/<[^>]+>/g, " ").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
+const plain = (t: string, n = 240) => String(t || "").replace(/```[\s\S]*?```/g, " ").replace(/[═━─]{2,}[^═━─\n]*[═━─]{2,}/g, " ").replace(/<[^>]+>/g, " ").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
 
 type LiveSession = {
   pid: number; id: string; key: string; cwd: string; name: string; status: string; startedAt: number; updatedAt: number;
@@ -975,6 +975,13 @@ type LiveSession = {
 };
 /** pids Bridge itself spawned — never mirrored, even if a future CLI registers them */
 const ownPids = new Set<number>();
+/** The desk's `claude` registers as interactive too, and a second Bridge on this machine runs
+ *  its own desk whose pid is not in ownPids. Anything the SDK drives says so in its entrypoint
+ *  ("sdk-cli"); a person at a terminal is "cli". The desk's session id is the backstop. */
+function isDeskSession(r: any) {
+  if (/^sdk/.test(String(r.entrypoint || ""))) return true;
+  try { return r.sessionId === DA.sessionId || (!!DA.prevSessionId && r.sessionId === DA.prevSessionId); } catch { return false; }
+}
 async function liveSessions(): Promise<LiveSession[]> {
   const files = await readdir(SESSIONS_DIR).catch(() => [] as string[]);
   const out: LiveSession[] = [];
@@ -984,6 +991,7 @@ async function liveSessions(): Promise<LiveSession[]> {
     if (!r.pid || !r.sessionId || !r.cwd) continue;
     if (r.kind && r.kind !== "interactive") continue;
     if (ownPids.has(r.pid) || !alive(r.pid)) continue;
+    if (isDeskSession(r)) continue;                 // a desk — ours, or a second Bridge's — is not a terminal
     const key = projectKey(r.cwd);
     const file = join(PROJECTS_DIR, key, r.sessionId + ".jsonl");
     const has = existsSync(file);
@@ -1038,7 +1046,7 @@ async function watchLive() {
   for (const [pid] of seenLive) if (!present.has(pid)) {
     seenLive.delete(pid);
     const gone = lastLiveByPid.get(pid);
-    if (gone && watchBooted) emit("ended", gone, gone.title);
+    if (gone && watchBooted && !takenOver.delete(pid)) emit("ended", gone, gone.title);   // a takeover is not news
   }
   lastLiveByPid.clear(); for (const s of cur) lastLiveByPid.set(s.pid, s);
   watchBooted = true;
@@ -1046,6 +1054,25 @@ async function watchLive() {
 const lastLiveByPid = new Map<number, LiveSession>();
 setInterval(watchLive, 1500);
 watchLive();
+
+/** Hand a live terminal session to Bridge. Two writers on one transcript fork it, so the
+ *  terminal has to let go first: only when it is idle (no turn in flight), and only the exact
+ *  process the registry names for that session. SIGTERM is the CLI's clean exit; the transcript
+ *  is already on disk line by line, so the tab then resumes the same session id with --resume. */
+const takenOver = new Set<number>();
+async function takeover(pid: number, id: string) {
+  const s = (await liveSessions()).find((x) => x.pid === pid && x.id === id);
+  if (!s) return { ok: false, error: "That terminal session is no longer live." };
+  if (s.status === "busy") return { ok: false, error: "It is mid-turn in the terminal. Take it over once it goes idle." };
+  takenOver.add(pid);
+  try { process.kill(pid, "SIGTERM"); } catch (e) { return { ok: false, error: "Could not signal the terminal: " + String(e) }; }
+  for (let i = 0; i < 40 && alive(pid); i++) await Bun.sleep(150);
+  if (alive(pid)) { try { process.kill(pid, "SIGHUP"); } catch {} for (let i = 0; i < 20 && alive(pid); i++) await Bun.sleep(150); }
+  if (alive(pid)) return { ok: false, error: "The terminal did not exit. Close it there (/exit) and the tab becomes yours." };
+  logRow({ ts: Date.now(), kind: "live.takeover", msg: "took over " + s.title, session: s.id, cwd: s.cwd, outcome: s.name });
+  watchLive();
+  return { ok: true, id: s.id, key: s.key, cwd: s.cwd };
+}
 
 /** a macOS notification — the one signal that reaches the principal when Bridge is not in front */
 const osaStr = (s: string) => '"' + String(s || "").replace(/[\\"]/g, "\\$&").replace(/[\r\n]+/g, " ").slice(0, 200) + '"';
@@ -1542,6 +1569,15 @@ const server = Bun.serve({
         return json({ versions, dims, generated: state?.generated_at || null, mtime: st?.mtimeMs || 0, installed: existsSync(join(CLAUDE_DIR, "LIFEOS")) });
       }
       if (p === "/api/live") return json({ now: Date.now(), sessions: lastLive, events: EVENTS.slice(-40) });
+      if (p === "/api/live/takeover" && req.method === "POST") {
+        const { pid, id } = await req.json().catch(() => ({}) as any);
+        return json(await takeover(Number(pid), String(id || "")));
+      }
+      if (p === "/api/notify" && req.method === "POST") {
+        const { title, subtitle, body } = await req.json().catch(() => ({}) as any);
+        notifyDesktop(String(title || ""), String(subtitle || ""), String(body || ""));
+        return json({ ok: true });
+      }
       if (p === "/api/follow") {
         const file = join(PROJECTS_DIR, q.get("key") || "", (q.get("id") || "") + ".jsonl");
         if (!existsSync(file)) return json({ error: "not found" }, 404);

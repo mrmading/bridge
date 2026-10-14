@@ -995,3 +995,28 @@ body::after{
 .lane-empty button{background:none;border:none;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline}
 /* in the Terminal lane the + button would make a session this lane cannot hold */
 .tabbar.terminal-lane #tabAdd{display:none}
+
+/* toast cards: one per finished / waiting session, top-right under the bar, click to open */
+.toasts{position:fixed;top:56px;right:14px;z-index:95;display:flex;flex-direction:column;gap:8px;width:min(360px,86vw);pointer-events:none}
+.tcard{pointer-events:auto;display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border-radius:12px;cursor:pointer;
+  background:color-mix(in srgb,var(--bg-raised) 90%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border:1px solid var(--border-strong);box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.05);
+  opacity:0;transform:translateX(18px) scale(.98);transition:opacity .22s ease,transform .26s cubic-bezier(.2,.8,.2,1)}
+.tcard.on{opacity:1;transform:none}
+.tcard.out{opacity:0;transform:translateX(18px)}
+.tcard:hover{border-color:var(--accent)}
+.tcard.waiting{border-color:color-mix(in srgb,var(--warn) 55%,var(--border-strong));box-shadow:var(--shadow),0 0 22px color-mix(in srgb,var(--warn) 18%,transparent)}
+.tcard.error{border-color:color-mix(in srgb,var(--err) 55%,var(--border-strong))}
+.tc-b{flex:1;min-width:0}
+.tc-t{font-size:13px;font-weight:620;color:var(--fg);display:flex;gap:6px;align-items:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tc-m{font-size:11.5px;color:var(--fg-faint);margin-top:2px}
+.tcard.waiting .tc-m{color:var(--warn)}
+.tc-d{font-size:12.5px;color:var(--fg-muted);margin-top:5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.tc-x{flex:none;background:none;border:0;color:var(--fg-faint);cursor:pointer;font-size:12px;padding:2px 4px;border-radius:6px}
+.tc-x:hover{color:var(--fg);background:var(--bg-hover)}
+.mb-take:disabled{opacity:.45;cursor:not-allowed}
+/* the bar now carries Take over too: the read-only line gives way first, the buttons never clip */
+.mb-t{min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}
+.mb-l{max-width:180px}
+.mirror-bar .chip{flex:none}
+.mirror-bar .mb-in{min-width:90px}

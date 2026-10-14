@@ -507,19 +507,28 @@
     const where = e.folder;
     if (e.kind === "waiting" || e.kind === "done")
       caption("event " + e.kind, "<b>" + esc(where) + "</b> " + (e.kind === "waiting" ? "needs you · " : "finished · ") + esc((e.text || e.title).slice(0, 120)), e.kind === "waiting" ? 12000 : 7000);
+    // the macOS notification for terminal events is sent by the server, so it lands even with Bridge closed
+    const card = { kind: e.kind, id: e.id, key: e.key, path: e.cwd, title: e.title, folder: where, terminal: true, detail: e.text };
+    const look = typeof watching === "function" && watching(e.id);
     if (e.kind === "waiting") {
       noteRaw({ id: e.id, key: e.key, path: e.cwd, title: e.title, kind: "waiting", detail: e.text.slice(0, 120) });
-      toast(where + " needs you: " + e.text.slice(0, 80));
-      if (!DESK.muted) speak("Your " + where + " session is asking: " + e.text.slice(0, 300), afterSpeech);
+      toastCard(card);
+      say("Your " + where + " session is asking: " + e.text.slice(0, 300));
     } else if (e.kind === "done") {
       noteRaw({ id: e.id, key: e.key, path: e.cwd, title: e.title, kind: "done", detail: e.text.slice(0, 120) });
-      toast(where + " finished a turn");
+      if (!look) toastCard(card);
       // the terminal's own voice hook already reads finished turns aloud through Pulse; Bridge
       // only speaks them when that channel is down
-      if (!DESK.muted && DESK.health && !DESK.health.pulse) speak("The " + where + " session finished. " + firstSentence(e.text), afterSpeech);
-    } else if (e.kind === "started") toast("Terminal opened in " + where);
-    else if (e.kind === "ended") toast("Terminal closed in " + where);
+      if (!look && DESK.health && !DESK.health.pulse) say("The " + where + " session finished. " + firstSentence(e.text));
+    } else if (e.kind === "started" || e.kind === "ended") toastCard(Object.assign(card, { detail: "" }));
     syncLive();
+  }
+  /** A notification's voice line. It never cuts across you: while the desk is listening,
+   *  thinking or already speaking, it waits its turn (up to a minute), then gives up. */
+  function say(text, tries) {
+    if (DESK.muted || !text) return;
+    if (DESK.phase !== "idle" || DESK.playing) { if ((tries || 0) < 60) setTimeout(() => say(text, (tries || 0) + 1), 1000); return; }
+    speak(text, afterSpeech);
   }
   const firstSentence = (t) => { const m = clean(t).match(/[^.!?]+[.!?]/); return (m ? m[0] : clean(t).slice(0, 160)).trim(); };
 
@@ -658,6 +667,6 @@
   window.Desk = {
     phase: () => DESK.phase,
     shown: (on) => { DESK.shown = on; if (on) { paintState(); if (DESK.mode === "text") setTimeout(() => $("#deskInput").focus(), 30); } },
-    ask, relay, escape, send, listen, board, _: DESK,
+    ask, relay, escape, send, listen, board, say, _: DESK,
   };
 })();
