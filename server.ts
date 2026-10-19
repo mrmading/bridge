@@ -16,6 +16,10 @@ const CLAUDE_DIR = join(HOME, ".claude");
 const PROJECTS_DIR = join(CLAUDE_DIR, "projects");
 const PORT = Number(process.env.BRIDGE_PORT || 4270);
 const UI_DIR = join(dirname(Bun.fileURLToPath(import.meta.url)), "public");
+const MOBILE_DIR = join(dirname(Bun.fileURLToPath(import.meta.url)), "mobile", "build", "web");
+/** BRIDGE_CORS=1 lets a `flutter run -d chrome` dev build on another port call this server. Off by default:
+ *  this server runs claude with a shell, so no other origin may talk to it unless you say so. */
+const CORS = process.env.BRIDGE_CORS === "1";
 const CLAUDE_BIN = process.env.BRIDGE_CLAUDE_BIN || "claude";
 /** Bridge is a GUI: interactive tools (AskUserQuestion, ExitPlanMode) are unavailable in -p mode,
  *  so the model hands choices and plans back in a shape the client renders as buttons and cards. */
@@ -1403,8 +1407,9 @@ const STT_CANDIDATES: [string, string][] = (() => {
   const want = process.env.BRIDGE_STT_ENGINE || "auto";
   if (want === "parakeet") return [["parakeet_mlx", "parakeet"]];
   if (want === "mlx") return [["mlx_whisper", "mlx"]];
+  if (want === "faster") return [["faster_whisper", "faster"]];
   if (want === "whisper") return [["whisper", "whisper"]];
-  return [["parakeet_mlx", "parakeet"], ["mlx_whisper", "mlx"], ["whisper", "whisper"]];
+  return [["parakeet_mlx", "parakeet"], ["mlx_whisper", "mlx"], ["faster_whisper", "faster"], ["whisper", "whisper"]];
 })();
 async function pyHas(py: string, mod: string): Promise<boolean> {
   try { const p = Bun.spawn([py, "-c", "import " + mod], { stdout: "ignore", stderr: "ignore" }); return (await p.exited) === 0; } catch { return false; }
@@ -1500,13 +1505,24 @@ async function transcribe(path: string): Promise<{ text?: string; error?: string
 
 /* ───────────────────────────── routing ─────────────────────────────── */
 
+function corsHeaders(req: Request): Record<string, string> {
+  return { "access-control-allow-origin": req.headers.get("origin") || "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-credentials": "true" };
+}
 const server = Bun.serve({
   port: PORT,
   idleTimeout: 255,
   async fetch(req) {
+    const res = await route(req);
+    if (CORS) for (const [k, v] of Object.entries(corsHeaders(req))) res.headers.set(k, v);
+    return res;
+  },
+});
+async function route(req: Request): Promise<Response> {
+  {
     const url = new URL(req.url);
     const p = url.pathname;
     const q = url.searchParams;
+    if (CORS && req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req) });
 
     try {
       if (!rootsReady) { ROOTS = await readRoots(); await ensureRoots(); }
@@ -1848,6 +1864,22 @@ const server = Bun.serve({
         });
       }
 
+      /* phones have no devtools: the mobile client posts uncaught errors here and they land in the server log */
+      if (p === "/api/clientlog" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}) as any);
+        const line = String(b.msg || "").slice(0, 1200);
+        console.error("[client] " + String(b.ua || "").slice(0, 60) + " · " + line);
+        logRow({ ts: Date.now(), kind: "client.error", msg: line.slice(0, 160) });
+        return json({ ok: true });
+      }
+      /* the Flutter mobile client, built into mobile/build/web and served under /m/ so it shares this origin */
+      if (p === "/m" || p.startsWith("/m/")) {
+        const rel = p === "/m" || p === "/m/" ? "index.html" : p.slice(3);
+        const f = Bun.file(join(MOBILE_DIR, rel));
+        if (await f.exists()) return new Response(f, { headers: { "cache-control": rel === "index.html" || rel.endsWith(".js") ? "no-store" : "max-age=3600" } });
+        if (!rel.includes(".")) return new Response(Bun.file(join(MOBILE_DIR, "index.html")), { headers: { "cache-control": "no-store" } });
+        return new Response("Not found", { status: 404 });
+      }
       /* static */
       if (p === "/favicon.ico") return new Response(null, { status: 204 });
       const rel = p === "/" ? "/index.html" : p;
@@ -1861,7 +1893,7 @@ const server = Bun.serve({
     } catch (e: any) {
       return json({ error: String(e?.stack || e) }, 500);
     }
-  },
-});
+  }
+}
 
 console.log(`\n  ⛵  Bridge is up  →  http://localhost:${server.port}\n     reading ${CLAUDE_DIR}\n`);

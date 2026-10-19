@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#080a0f">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-title" content="Bridge">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>Bridge</title>
+  <script>
+    (function(){var post=function(m){try{fetch('/api/clientlog',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({msg:m,ua:navigator.userAgent})})}catch(e){}};
+    window.addEventListener('error',function(e){post('error: '+(e.message||'')+' @ '+(e.filename||'')+':'+(e.lineno||'')+(e.error&&e.error.stack?'\n'+e.error.stack:''))});
+    window.addEventListener('unhandledrejection',function(e){post('unhandledrejection: '+(e.reason&&(e.reason.stack||e.reason.message||e.reason)))});
+    var ce=console.error;console.error=function(){try{post('console.error: '+Array.prototype.slice.call(arguments).map(String).join(' '))}catch(e){};return ce.apply(console,arguments)};
+    window.addEventListener('load',function(){setTimeout(function(){if(!document.querySelector('flutter-view, flt-glass-pane'))post('no flutter view after 15s')},15000)});})();
+  </script>
+  <style>html,body{background:#080a0f;margin:0;height:100%;overscroll-behavior:none}</style>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

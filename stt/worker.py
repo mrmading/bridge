@@ -16,10 +16,11 @@ import os
 import sys
 import time
 
-STT_ENGINE = os.environ.get("BRIDGE_STT_ENGINE", "auto")           # auto | parakeet | mlx | whisper
+STT_ENGINE = os.environ.get("BRIDGE_STT_ENGINE", "auto")           # auto | parakeet | mlx | faster | whisper
 PARAKEET_REPO = os.environ.get("BRIDGE_STT_PARAKEET_REPO", "mlx-community/parakeet-tdt-0.6b-v3")
 WHISPER_REPO = os.environ.get("BRIDGE_STT_MLX_REPO", "mlx-community/whisper-large-v3-turbo")
 CPU_MODEL = os.environ.get("BRIDGE_STT_MODEL", "base.en")
+FASTER_MODEL = os.environ.get("BRIDGE_STT_FASTER_MODEL", "small.en")   # faster-whisper on a CPU box (Linux servers, no GPU)
 TTS_ENGINE = os.environ.get("BRIDGE_TTS_ENGINE", "auto")           # auto | kokoro | none
 KOKORO_REPO = os.environ.get("BRIDGE_TTS_KOKORO_REPO", "mlx-community/Kokoro-82M-bf16")
 KOKORO_VOICE = os.environ.get("BRIDGE_TTS_VOICE", "af_heart")
@@ -64,6 +65,19 @@ if stt_engine is None and STT_ENGINE in ("auto", "mlx"):
             sys.exit(1)
         warn("mlx_whisper unavailable, falling back: %s" % e)
 
+if stt_engine is None and STT_ENGINE in ("auto", "faster"):
+    # CTranslate2 Whisper: int8 on the CPU, decodes webm/mp4/ogg itself (PyAV), no ffmpeg needed —
+    # what a Linux box without a GPU runs; small.en answers a 10 s clip in about a second on 8 cores
+    try:
+        from faster_whisper import WhisperModel  # type: ignore
+        stt_model = WhisperModel(FASTER_MODEL, device="cpu", compute_type="int8", cpu_threads=max(1, (os.cpu_count() or 2) - 1))
+        stt_engine = "faster"
+    except Exception as e:
+        if STT_ENGINE == "faster":
+            out({"error": "faster-whisper unavailable: %s" % e})
+            sys.exit(1)
+        warn("faster-whisper unavailable, falling back: %s" % e)
+
 if stt_engine is None:
     try:
         import whisper  # type: ignore
@@ -79,6 +93,9 @@ def transcribe(path: str) -> str:
         text = stt_model.transcribe(path).text
     elif stt_engine == "mlx":
         text = mlx_whisper.transcribe(path, path_or_hf_repo=WHISPER_REPO, language="en", fp16=True).get("text")
+    elif stt_engine == "faster":
+        segments, _info = stt_model.transcribe(path, language="en", beam_size=1, vad_filter=True)
+        text = " ".join(seg.text.strip() for seg in segments)
     else:
         text = stt_model.transcribe(path, language="en", fp16=False).get("text")
     text = (text or "").strip()
@@ -97,6 +114,8 @@ try:
         os.unlink(warm)
     elif stt_engine == "mlx":
         mlx_whisper.transcribe(np.zeros(16000, dtype=np.float32), path_or_hf_repo=WHISPER_REPO, language="en")
+    elif stt_engine == "faster":
+        list(stt_model.transcribe(np.zeros(16000, dtype=np.float32), language="en", beam_size=1)[0])
 except Exception as e:
     warn("stt warm-up skipped: %s" % e)
 
