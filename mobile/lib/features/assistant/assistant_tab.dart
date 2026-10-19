@@ -75,6 +75,7 @@ class _AssistantTabState extends State<AssistantTab> {
   final FlutterTts _ftts = FlutterTts();
   AudioPlayer? _player;
   StreamSubscription<void>? _playerDone;
+  StreamSubscription<PlayerState>? _playerState;
   bool _speaking = false;
   Timer? _speakTimer;
   Timer? _levelTimer;
@@ -101,6 +102,7 @@ class _AssistantTabState extends State<AssistantTab> {
     _speakTimer?.cancel();
     _levelTimer?.cancel();
     _playerDone?.cancel();
+    _playerState?.cancel();
     _player?.dispose();
     _ftts.stop().catchError((_) => null);
     _stt.cancel().catchError((_) => null);
@@ -181,6 +183,8 @@ class _AssistantTabState extends State<AssistantTab> {
         _da = next;
         if (_da.busy) _pending = false;
       case 'user':
+        // A new turn started (here or on another client): whatever was being said is stale.
+        if (_speaking) unawaited(_stopSpeaking());
         final text = stripBridgeBlock((f.dMap?['text'] ?? '').toString()).trim();
         if (text.isNotEmpty) {
           if (_echoSkip != null && _echoSkip == text) {
@@ -466,66 +470,84 @@ class _AssistantTabState extends State<AssistantTab> {
     return s.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
+  /// Bumped on every new utterance and every stop, so late callbacks from an old one are ignored.
+  int _speechGen = 0;
+
   Future<void> _speak(String text) async {
     final say = _speakable(text);
     if (say.isEmpty) return;
     await _stopSpeaking();
     if (!mounted) return;
+    final gen = ++_speechGen;
     setState(() => _speaking = true);
     _startSpeakLevel();
+    // Guard while the audio is fetched (Kokoro can take a few seconds to synthesize).
+    _armGuard(gen, const Duration(seconds: 25));
     try {
       final r = await store.api.tts(say);
-      if (!_speaking) return; // interrupted while fetching
+      if (gen != _speechGen || !_speaking) return; // interrupted while fetching
+      final words = r.words > 0 ? r.words : say.split(' ').where((w) => w.isNotEmpty).length;
+      // Whatever path plays it, the orb returns to idle by this point at the latest. Completion
+      // events are unreliable on web (home-screen web apps especially).
+      final guard = Duration(milliseconds: math.max(2000, (words / 2.7 * 1000).round() + 1500));
+      _armGuard(gen, guard);
       if (r.audio != null) {
         final p = _player ??= AudioPlayer();
         await _playerDone?.cancel();
-        _playerDone = p.onPlayerComplete.listen((_) => _speechEnded());
-        await p.play(BytesSource(r.audio!, mimeType: r.mime.split(';').first));
+        await _playerState?.cancel();
+        _playerDone = p.onPlayerComplete.listen((_) => _speechEnded(gen));
+        _playerState = p.onPlayerStateChanged.listen((st) {
+          if (st == PlayerState.completed || st == PlayerState.stopped) _speechEnded(gen);
+        });
+        // Not awaited: on web play() can hang when autoplay is blocked; the guard covers it.
+        p.play(BytesSource(r.audio!, mimeType: r.mime.split(';').first)).catchError((_) => _speechEnded(gen));
         return;
       }
-      if (r.playedOnServer) {
-        final words = r.words > 0 ? r.words : say.split(' ').length;
-        _speakTimer = Timer(Duration(milliseconds: (words / 2.7 * 1000).round() + 400), _speechEnded);
-        return;
-      }
-      await _speakOnDevice(say);
+      if (r.playedOnServer) return; // audio plays on the Mac; the guard timer ends the phase
+      await _speakOnDevice(say, gen);
     } catch (_) {
-      if (_speaking) await _speakOnDevice(say);
+      _speechEnded(gen);
     }
   }
 
-  Future<void> _speakOnDevice(String say) async {
+  void _armGuard(int gen, Duration d) {
+    _speakTimer?.cancel();
+    _speakTimer = Timer(d, () => _speechEnded(gen));
+  }
+
+  Future<void> _speakOnDevice(String say, int gen) async {
     try {
       await _ftts.speak(say);
     } catch (_) {}
-    _speechEnded();
+    _speechEnded(gen);
   }
 
-  void _speechEnded() {
-    if (!_speaking) return;
+  void _speechEnded(int gen) {
+    if (gen != _speechGen || !_speaking) return;
+    _speechGen++;
+    _speaking = false;
+    _speakLevel = 0;
     _speakTimer?.cancel();
     _levelTimer?.cancel();
     if (!mounted) return;
-    setState(() {
-      _speaking = false;
-      _speakLevel = 0;
-    });
+    setState(() {});
     if (store.handsFree && !_textMode && store.auth.loggedIn) _startListening();
   }
 
   Future<void> _stopSpeaking() async {
-    if (!_speaking) return;
-    _speaking = false;
+    _speechGen++;
     _speakTimer?.cancel();
     _levelTimer?.cancel();
+    if (!_speaking) return;
+    _speaking = false;
     _speakLevel = 0;
+    if (mounted) setState(() {});
     try {
       await _player?.stop();
     } catch (_) {}
     try {
       await _ftts.stop();
     } catch (_) {}
-    if (mounted) setState(() {});
   }
 
   /// No amplitude comes back from any of the three speech paths, so fake a speech-like envelope.
@@ -613,11 +635,15 @@ class _AssistantTabState extends State<AssistantTab> {
           ]),
         ),
         if (_textMode)
-          IconButton(
-            tooltip: 'Updates',
-            onPressed: () => _openUpdates(context),
-            icon: Icon(Icons.notifications_none_rounded, color: t.muted),
-            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          // Same sheet as the voice-mode button; 48x48 hit area.
+          SizedBox.square(
+            dimension: 48,
+            child: IconButton(
+              tooltip: 'Updates',
+              onPressed: () => _openUpdates(context),
+              style: IconButton.styleFrom(minimumSize: const Size(48, 48), tapTargetSize: MaterialTapTargetSize.padded),
+              icon: Badge(isLabelVisible: _allEvents.isNotEmpty, smallSize: 7, backgroundColor: t.accent, child: Icon(Icons.notifications_none_rounded, color: t.muted)),
+            ),
           ),
       ]),
     );
