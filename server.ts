@@ -1852,7 +1852,11 @@ const server = Bun.serve({
       if (p === "/favicon.ico") return new Response(null, { status: 204 });
       const rel = p === "/" ? "/index.html" : p;
       const file = Bun.file(join(UI_DIR, rel));
-      if (await file.exists()) return new Response(file, { headers: { "cache-control": "no-store" } });
+      if (await file.exists()) {
+        const headers: Record<string, string> = { "cache-control": "no-store" };
+        if (rel.endsWith(".webmanifest")) headers["content-type"] = "application/manifest+json";
+        return new Response(file, { headers });
+      }
       return new Response("Not found", { status: 404 });
     } catch (e: any) {
       return json({ error: String(e?.stack || e) }, 500);
