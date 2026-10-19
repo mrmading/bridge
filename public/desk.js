@@ -22,7 +22,7 @@
     $("#desk").dataset.phase = p;
     $("#deskMic").classList.toggle("on", p === "listening");
     const tip = $("#deskTip");
-    if (tip) tip.textContent = p === "speaking" ? "Click the orb to jump in" : p === "listening" ? "Pause when you are done" : p === "thinking" || p === "working" ? "Esc interrupts" : "Hold Space to talk";
+    if (tip) tip.textContent = p === "speaking" ? "Click the orb to jump in" : p === "listening" ? "Pause when you are done" : p === "thinking" || p === "working" ? "Esc interrupts" : (matchMedia("(hover:none)").matches ? "Tap the mic to talk" : "Hold Space to talk");
   }
   function defaultLabel(p) {
     if (p === "listening") return "Listening…";
@@ -30,7 +30,7 @@
     if (p === "working") return "Working";
     if (p === "speaking") return "Speaking";
     if (DESK.health && DESK.health.stt === "none") return "Type below — no transcriber on this machine";
-    return DESK.session ? "Click the orb to talk" : "Click the orb to talk";
+    return matchMedia("(hover:none)").matches ? "Tap the orb to talk" : "Click the orb to talk";
   }
   function paintLabel() {
     const el = $("#deskLabel");
