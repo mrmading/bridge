@@ -1021,32 +1021,47 @@ body::after{
 .mirror-bar .chip{flex:none}
 .mirror-bar .mb-in{min-width:90px}
 
-/* ── phone: one column, rail becomes a bottom bar, panels become sheets ── */
-:root{--railh:56px;--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
+/* ── phone: one column, the rail becomes a sidebar behind a burger ─── */
+:root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
+.burger{display:none}
+.nav-scrim{display:none}
 @media (hover:none){.tip{display:none}.copy{opacity:1}}
 @media (max-width:760px){
   html,body{height:100%;height:100dvh;overscroll-behavior:none}
-  #app,#app.with-inspector{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto;height:100vh;height:100dvh}
-  /* rail → bottom tab bar */
-  .rail{order:2;grid-row:2;flex-direction:row;justify-content:space-around;align-items:center;gap:0;
-    padding:6px 6px calc(6px + var(--sab));border-right:none;border-top:1px solid var(--border)}
-  .rail .logo{width:34px;height:34px;margin:0}
-  .rail-spacer{display:none}
-  .rail-btn{width:44px;height:44px}
-  .rail-btn.on::before{left:9px;right:9px;top:-7px;bottom:auto;width:auto;height:3px;border-radius:0 0 3px 3px}
-  .rail-btn .tip{display:none}
-  /* top bar: title and the two buttons that matter */
-  .topbar{height:auto;min-height:44px;padding:calc(4px + var(--sat)) 10px 4px;gap:6px}
+  #app,#app.with-inspector{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr);height:100vh;height:100dvh}
+  /* the rail is an off-canvas sidebar with labels; the burger slides it in */
+  .rail{position:fixed;top:0;bottom:0;left:0;width:min(300px,82vw);z-index:80;transform:translateX(-104%);
+    transition:transform .22s cubic-bezier(.2,.8,.2,1);flex-direction:column;align-items:stretch;gap:2px;
+    padding:calc(14px + var(--sat)) 10px calc(14px + var(--sab));border-right:1px solid var(--border);
+    background:color-mix(in srgb,var(--bg-sunken) 94%,transparent);backdrop-filter:blur(18px) saturate(1.2);
+    box-shadow:12px 0 40px rgba(0,0,0,.35)}
+  body.nav-open .rail{transform:none}
+  .rail .logo{margin:2px 0 16px 6px}
+  .rail-spacer{flex:1}
+  .rail-btn{width:100%;height:46px;display:flex;align-items:center;justify-content:flex-start;gap:13px;padding:0 12px;border-radius:10px;font-size:14px;color:var(--fg-muted)}
+  .rail-btn svg{width:20px;height:20px;flex:none}
+  .rail-btn .rail-orb{flex:none}
+  .rail-btn .tip,.rail-btn:hover .tip{position:static;display:block;opacity:1;background:none;color:inherit;padding:0;font-size:14px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;transition:none}
+  .rail-btn.on{color:var(--fg);background:var(--bg-active)}
+  .rail-btn.on::before{left:-10px;top:11px;bottom:11px;width:3px;height:auto;right:auto;border-radius:0 3px 3px 0}
+  .rail-btn .dot{position:absolute;right:12px}
+  .nav-scrim{position:fixed;inset:0;background:rgba(2,4,8,.5);z-index:75;backdrop-filter:blur(2px)}
+  body.nav-open .nav-scrim{display:block}
+  /* top bar: burger, title and the two buttons that matter */
+  .topbar{height:auto;min-height:44px;padding:calc(4px + var(--sat)) 10px 4px;gap:8px}
+  .burger{display:inline-flex;width:34px;padding:0;justify-content:center;flex:none}
+  .burger svg{width:18px;height:18px}
   .crumb .p{display:none}
   .crumb .t{font-size:14px}
   .phases,.lanes,#btnPalette{display:none!important}
-  .topsearch{width:auto;flex:1;margin-left:4px}
+  .topsearch{width:auto;flex:1;margin-left:0}
   .topsearch[hidden]{display:none}
   /* folder panel sits above the listing instead of beside it */
   .workspace{flex-direction:column}
   .panel{width:100%;max-height:36vh;border-right:none;border-bottom:1px solid var(--border)}
   /* inspector is a full sheet over the chat */
-  .inspector{position:fixed;left:0;right:0;top:0;bottom:calc(var(--railh) + var(--sab));z-index:65;border-left:none;
+  .inspector{position:fixed;inset:0;z-index:65;border-left:none;
     background:color-mix(in srgb,var(--bg) 94%,transparent);backdrop-filter:blur(18px)}
   .insp-head{padding-top:var(--sat);height:calc(48px + var(--sat))}
   .kv{grid-template-columns:84px 1fr}
@@ -1064,7 +1079,7 @@ body::after{
   .doc-view{padding:14px 12px}
   .grid-cards{grid-template-columns:1fr}
   /* composer: pinned to the thumb, no 16px-zoom on focus */
-  .composer-wrap{padding:0 8px 8px}
+  .composer-wrap{padding:0 8px calc(8px + var(--sab))}
   .composer{border-radius:14px}
   .composer textarea{font-size:16px;padding:11px 12px 4px;max-height:38vh}
   .composer-bar{padding:4px 6px 7px 8px;gap:4px}
@@ -1079,7 +1094,7 @@ body::after{
   .palette-list{max-height:62vh}
   .notes{top:calc(48px + var(--sat));right:8px;left:8px;width:auto}
   .toasts{top:calc(50px + var(--sat));right:8px;left:8px;width:auto}
-  .toast{bottom:calc(var(--railh) + var(--sab) + 14px);max-width:92vw;text-align:center}
+  .toast{bottom:calc(var(--sab) + 16px);max-width:92vw;text-align:center}
   .fmenu{width:94vw;left:3vw!important}
   .finder{padding-top:var(--sat)}
   /* copilot: just the orb, the captions and the two round buttons */
@@ -1089,7 +1104,7 @@ body::after{
   .desk-captions{min-height:110px;width:94%;padding-top:8px}
   .desk-body{padding:0 12px 8px}
   .desk-activity{padding:0 12px 8px}
-  .desk-controls{padding:0 18px 12px}
+  .desk-controls{padding:0 18px calc(12px + var(--sab))}
   .desk-chat{padding:0 10px}
   .rbtn{width:52px;height:52px}
   /* the ambient grid is noise at this size */

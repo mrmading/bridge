@@ -24,6 +24,7 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
 
   <main class="main">
     <header class="topbar">
+      <button class="chip burger" id="btnNav" title="Menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <div class="crumb"><span class="t" id="crumbTitle">Bridge</span><span class="p" id="crumbPath"></span></div>
       <input class="topsearch" id="topSearch" placeholder="Search…" spellcheck="false" hidden>
       <div class="spacer"></div>
@@ -200,6 +201,7 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
   </div>
   <div class="sheet-body" id="signinBody"></div>
 </div></div>
+<div class="nav-scrim" id="navScrim"></div>
 <div id="grain"></div>
 <div class="toast" id="toast"></div>
 <div class="toasts" id="toasts"></div>

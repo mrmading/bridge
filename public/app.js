@@ -923,7 +923,9 @@ function renderRail() {
   $("#railHome").onclick = goChat;
   $("#railAuth").onclick = () => openSignin();
   $("#railTheme").onclick = toggleTheme;
+  $("#rail").querySelectorAll("button").forEach((b) => b.addEventListener("click", closeNav));
 }
+function closeNav() { document.body.classList.remove("nav-open"); }
 
 /* the second tab strip: group / browse tabs, then whatever files are open */
 function agentCats() {
@@ -2227,6 +2229,8 @@ function toggleTheme() {
   $("#signinClose").onclick = closeSignin;
   $("#signinBg").onclick = (e) => { if (e.target.id === "signinBg") closeSignin(); };
   $("#btnPalette").onclick = openPalette;
+  $("#btnNav").onclick = () => document.body.classList.toggle("nav-open");
+  $("#navScrim").onclick = closeNav;
   $("#btnInspector").onclick = () => { S.inspector = !S.inspector; localStorage.bridgeSidebar = S.inspector ? "1" : "0"; renderInspector(); };
   $("#inspClose").onclick = () => { S.inspector = false; localStorage.bridgeSidebar = "0"; renderInspector(); };
   loadLifeos(); setInterval(loadLifeos, 60000);
