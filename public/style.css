@@ -592,3 +592,6 @@ body.tech .tdet.open{display:block}
   .dim{grid-template-columns:90px 1fr 36px}
 }
 .mic.on{color:var(--err);border-color:var(--err);animation:pulseW 1.4s infinite}
+.cmark{display:inline-grid;place-items:center;color:var(--accent);margin:0 3px;flex:none;vertical-align:-2px}
+.cmark svg{width:13px;height:13px}
+.side-empty svg{width:13px;height:13px;display:inline;vertical-align:-2px}

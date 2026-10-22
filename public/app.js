@@ -85,7 +85,7 @@ const S = {
   panel: innerWidth > 900, ptab: "files", pfile: null,
   tech: ls("bridgeTech") === "1",
   perm: ls("bridgePerm") || "acceptEdits", model: ls("bridgeModel") || "", effort: ls("bridgeEffort") || "", ultra: ls("bridgeUltra") === "1",
-  agent: ls("bridgeAgent") === undefined ? "auto" : ls("bridgeAgent"), newPath: ls("bridgeCwd") || "",
+  agent: ls("bridgeAgent") === undefined ? "auto" : ls("bridgeAgent"), newPath: (ls("bridgeComputer") === "cloud" ? ls("bridgeCwdCloud") : ls("bridgeCwd")) || "", computer: ls("bridgeComputer") === "cloud" ? "cloud" : "mac", computers: [],
   inboxF: "all", filesF: "made", filesKind: "All", filesQ: "", dir: null, agentCat: "All", agentQ: "", projQ: "",
   setTab: "general", attachments: [], drafts: {}, readAt: +(ls("bridgeReadAt") || 0), announced: new Set(),
 };
@@ -107,6 +107,14 @@ const userName = () => { const u = (S.boot && S.boot.user) || "you"; return u.ch
 const daName = () => (S.boot && S.boot.assistant) || "Claude";
 const projectName = (p) => (!p || p === homeDir() ? "Home" : base(p));
 const projKey = (p) => String(p || "").replace(/[^A-Za-z0-9]/g, "-");
+/** the query suffix that sends a request about a cloud chat on to the cloud */
+const cq = (computer) => (computer === "cloud" ? "&computer=cloud" : "");
+const cloudInfo = () => S.computers.find((x) => x.id === "cloud") || { online: false, configured: false };
+const cloudOn = () => !!cloudInfo().online && !S.home.cloudOffline;
+/** a small cloud mark for anything that lives on the cloud computer */
+const cloudMark = (computer) => (computer === "cloud" ? '<span class="cmark" title="Cloud computer">' + ic("cloud", 2) + "</span>" : "");
+const openRef = (key, id, computer) => esc(key + "|" + id + "|" + (computer || "mac"));
+const homeFor = (computer) => (computer === "cloud" ? cloudInfo().home || "" : homeDir());
 
 /* deterministic colours for projects and agents that do not declare one */
 const PALETTE = ["#1668c9", "#7a4fd0", "#137a4b", "#c0392b", "#9a5b00", "#0b7285", "#d6336c", "#e8590c", "#3f9ae0", "#5f3dc4", "#495057"];
@@ -302,7 +310,7 @@ function groupOf(ms) {
 function runningList() {
   // the server's list, plus a chat this page has just started and the server has not reported yet
   const out = S.home.running.slice();
-  for (const c of S.chats.values()) if (c.streaming && c.id && !out.some((r) => r.id === c.id)) out.push({ id: c.id, key: c.key, title: chatTitle(c), projectName: projectName(c.path), cwd: c.path, started: c.turnStart || Date.now(), step: c.step || "Starting", jobs: [] });
+  for (const c of S.chats.values()) if (c.streaming && c.id && !out.some((r) => r.id === c.id)) out.push({ id: c.id, key: c.key, computer: c.computer, title: chatTitle(c), projectName: projectName(c.path), cwd: c.path, started: c.turnStart || Date.now(), step: c.step || "Starting", jobs: [] });
   return out;
 }
 function renderSide() {
@@ -316,7 +324,7 @@ function renderSide() {
     const g = groupOf(s.mtime);
     (groups[g] = groups[g] || []).push(s);
   }
-  const item = (id, key, title, extra, dot) => '<button class="chat-i ' + (on(id) ? "on" : "") + '" data-open="' + esc(key + "|" + id) + '" title="' + esc(title) + '">' + (dot ? '<span class="dot ' + dot + '"></span>' : "") + '<span class="t">' + esc(title) + "</span>" + extra + "</button>";
+  const item = (id, key, title, extra, dot, computer) => '<button class="chat-i ' + (on(id) ? "on" : "") + '" data-open="' + openRef(key, id, computer) + '" title="' + esc(title) + '">' + (dot ? '<span class="dot ' + dot + '"></span>' : "") + '<span class="t">' + esc(title) + "</span>" + cloudMark(computer) + extra + "</button>";
   const u = userName();
   $("#side").innerHTML =
     '<div class="brand"><div class="logo"><span>B</span></div><span class="name">BRIDGE</span><span class="spacer"></span>' +
@@ -328,10 +336,11 @@ function renderSide() {
       (id === "inbox" && needs.length ? '<span class="badge warn">' + needs.length + "</span>" : "") + "</button>").join("") + "</div>" +
     '<div class="side-scroll">' +
     (runs.length || needs.length ? '<div class="side-h"><span class="dot run" style="width:6px;height:6px"></span>Working now</div>' +
-      runs.map((r) => item(r.id, r.key, r.title, '<span class="m el" data-since="' + r.started + '">' + fmtEl(Date.now() - r.started) + "</span>", "run")).join("") +
-      needs.slice(0, 6).map((n) => item(n.id, n.key, n.title, '<span class="m" style="color:var(--warn)">needs you</span>', "wait")).join("") : "") +
+      runs.map((r) => item(r.id, r.key, r.title, '<span class="m el" data-since="' + r.started + '">' + fmtEl(Date.now() - r.started) + "</span>", "run", r.computer)).join("") +
+      needs.slice(0, 6).map((n) => item(n.id, n.key, n.title, '<span class="m" style="color:var(--warn)">needs you</span>', "wait", n.computer)).join("") : "") +
+    (S.home.cloudOffline ? '<div class="side-empty" title="Bridge cannot reach the cloud computer right now">' + ic("cloud") + " Cloud computer offline</div>" : "") +
     ["Today", "Yesterday", "This week", "Earlier"].filter((g) => groups[g]).map((g) => '<div class="side-h">' + g + "</div>" +
-      groups[g].slice(0, g === "Earlier" ? 15 : 40).map((s) => item(s.id, s.project, s.title, "", "")).join("")).join("") +
+      groups[g].slice(0, g === "Earlier" ? 15 : 40).map((s) => item(s.id, s.project, s.title, "", "", s.computer)).join("")).join("") +
     (!S.recent.length && !runs.length ? '<div class="side-empty">Your chats show up here.</div>' : "") +
     "</div>" +
     '<div class="me"><div class="avatar">' + esc(u.slice(0, 2).toUpperCase()) + '</div><div class="who"><b>' + esc(u) + "</b><span>" +
@@ -346,7 +355,7 @@ function renderTop() {
   const c = S.chat;
   if (S.view === "chat" && c && (c.id || c.msgs.length)) {
     title = projIco(projectName(c.path), 22) + '<span class="t" data-act="rename" title="Double-click to rename">' + esc(chatTitle(c)) + "</span>";
-    right = '<span class="pill hide-sm" title="' + esc(c.path) + '">' + ic("laptop") + "This Mac</span>" +
+    right = '<span class="pill hide-sm" title="' + esc(c.path) + '">' + (c.computer === "cloud" ? ic("cloud") + "Cloud computer" : ic("laptop") + "This Mac") + "</span>" +
       '<button class="pill ' + (S.panel ? "on" : "") + '" data-act="panel" title="Files & progress (⌘I)">' + ic("panel") + '<span class="hide-sm">Files &amp; progress</span></button>' +
       '<button class="icon-btn" data-menu="chatmenu" title="More">' + ic("more") + "</button>";
   } else if (S.view === "chat") title = '<span class="t">New chat</span>';
@@ -366,7 +375,7 @@ function composer(ph, opts) {
     '<textarea rows="1" placeholder="' + esc(ph) + '" id="ta" data-dk="' + esc(dk) + '" spellcheck="false">' + esc(S.drafts[dk] || "") + "</textarea>" +
     '<div class="cbar">' +
     '<button class="cbtn outline" data-menu="plus" title="Add files, skills, mentions">' + ic("plus", 2) + "</button>" +
-    (opts.chat ? "" : '<button class="cbtn" data-menu="proj" title="' + esc(S.newPath || homeDir()) + '">' + ic("folder") + '<span class="pname">' + esc(S.newPath ? projectName(S.newPath) : "Any project") + "</span>" + ic("chev") + "</button>") +
+    (opts.chat ? "" : '<button class="cbtn" data-menu="proj" title="' + esc(S.newPath || homeDir()) + '">' + ic("folder") + '<span class="pname">' + esc(S.newPath ? projectName(S.newPath) : "Any project") + "</span>" + (S.computer === "cloud" ? '<span class="cmark">' + ic("cloud", 2) + "</span>" : "") + ic("chev") + "</button>") +
     '<button class="cbtn" data-menu="agent" title="' + esc(ag.role || "") + '">' + '<span class="ava" style="width:18px;height:18px;border-radius:6px;font-size:8px;background:' + ag.color + '">' + esc(ag.init) + '</span><span class="hide-sm">' + esc(ag.name) + "</span>" + ic("chev") + "</button>" +
     '<span class="spacer"></span>' +
     '<button class="cbtn ' + (S.perm === "bypassPermissions" ? "danger" : "") + '" data-menu="mode" title="' + esc(m.help) + '"><span class="mode-dot" style="background:' + m.c + '"></span><span class="hide-sm">' + m.label + "</span>" + ic("chev") + "</button>" +
@@ -464,14 +473,18 @@ function openMenu(kind, anchor) {
       '<hr><div class="scroll">' + list.map((a) => mi('data-set="agent:' + esc(a.name) + '"', ava(a.name) + lb(a.name, agentLook(a.name).role), S.agent === a.name)).join("") + "</div>" +
       '<hr><button class="mi" data-go="agents">' + ic("agents") + lb("See the whole team") + "</button>";
   } else if (kind === "proj") {
-    const projs = S.home.projects.filter((p) => p.path !== homeDir()).slice(0, 14);
-    const roots = S.roots.filter((r) => !projs.some((p) => p.path === r));
+    const cloud = S.computer === "cloud";
+    const projs = S.home.projects.filter((p) => (p.computer || "mac") === S.computer && p.path !== homeFor(S.computer)).slice(0, 14);
+    const roots = cloud ? [] : S.roots.filter((r) => !projs.some((p) => p.path === r));
+    const ci = cloudInfo();
     m.innerHTML = '<div class="menu-h">Work in</div><div class="scroll">' +
-      mi('data-set="proj:"', ic("home") + lb("Any project", "Starts in your home folder; name a project in the message"), !S.newPath) +
+      mi('data-set="proj:"', ic("home") + lb("Any project", (cloud ? "Starts in the cloud computer's home folder" : "Starts in your home folder") + "; name a project in the message"), !S.newPath) +
       projs.map((p) => mi('data-set="proj:' + esc(p.path) + '"', projIco(p.name, 20) + lb(p.name, short(p.path, 44)), S.newPath === p.path)).join("") +
       roots.map((r) => mi('data-set="proj:' + esc(r) + '"', ic("folder") + lb(base(r), short(r, 44)), S.newPath === r)).join("") + "</div>" +
-      '<hr><button class="mi" data-act="choosefolder">' + ic("plus") + lb("Choose another folder…", document.documentElement.dataset.native ? "Opens a Finder picker" : "Type a path") + "</button>" +
-      '<hr><div class="menu-h">Run on</div><div class="seg"><button class="on">' + esc(userName()) + "'s Mac</button><button data-act=\"cloud\">Cloud computer</button></div>";
+      (cloud ? "" : '<hr><button class="mi" data-act="choosefolder">' + ic("plus") + lb("Choose another folder…", document.documentElement.dataset.native ? "Opens a Finder picker" : "Type a path") + "</button>") +
+      '<hr><div class="menu-h">Run on</div><div class="seg"><button class="' + (cloud ? "" : "on") + '" data-set="computer:mac">' + esc(userName()) + "'s Mac</button>" +
+      '<button class="' + (cloud ? "on" : "") + '" data-set="computer:cloud"' + (ci.configured && cloudOn() ? "" : ' title="' + (ci.configured ? "The cloud computer is offline" : "Connect one in Settings › Computers") + '"') + ">Cloud computer" + (ci.configured ? (cloudOn() ? "" : " · offline") : "") + "</button></div>" +
+      '<div class="menu-h" style="text-transform:none;letter-spacing:0;font-weight:400">' + (cloud ? "Keeps running when your Mac sleeps or is closed." : "Uses your local tools and simulators.") + "</div>";
   } else if (kind === "plus") {
     m.innerHTML = mi('data-act="attach"', ic("clip") + lb("Add photos & files", "Drop, paste or pick") + "<kbd>⌘U</kbd>") +
       mi('data-act="mention"', ic("at") + lb("Mention a file", "Point at something in the project") + "<kbd>@</kbd>") +
@@ -482,7 +495,8 @@ function openMenu(kind, anchor) {
     m.innerHTML = mi('data-act="rename"', ic("edit") + lb("Rename")) +
       mi('data-act="rawtranscript"', ic("term") + lb("Open raw transcript")) +
       mi('data-act="copyid"', ic("copy") + lb("Copy session id")) +
-      mi('data-act="revealfolder"', ic("folder") + lb("Open the folder", c ? short(c.path, 40) : "")) +
+      (c && c.computer !== "cloud" ? mi('data-act="revealfolder"', ic("folder") + lb("Open the folder", c ? short(c.path, 40) : "")) : "") +
+      (c && c.id && c.computer !== "cloud" && !busy && cloudInfo().configured ? mi('data-act="movecloud"', ic("cloud") + lb("Move to cloud computer", cloudOn() ? "Continues there; keeps running with your Mac closed" : "The cloud computer is offline")) : "") +
       mi('data-act="tech"', ic("term") + lb(S.tech ? "Hide technical details" : "Show technical details", "Raw tool calls next to each step")) +
       (busy ? "<hr>" + mi('data-act="stop"', '<span style="color:var(--err)">' + ic("stop") + "</span>" + lb("Stop all running work")) : "");
   }
@@ -498,12 +512,20 @@ function setChoice(k, v) {
   else if (k === "effort") { S.effort = v; S.ultra = false; ls("bridgeEffort", v); ls("bridgeUltra", ""); }
   else if (k === "ultra") { S.ultra = !!v; ls("bridgeUltra", v ? "1" : ""); if (v) toast("God mode on: every message runs as a team of agents"); }
   else if (k === "agent") { S.agent = v; ls("bridgeAgent", v); }
-  else if (k === "proj") { S.newPath = v; ls("bridgeCwd", v); acDir = null; }
+  else if (k === "proj") { S.newPath = v; ls(S.computer === "cloud" ? "bridgeCwdCloud" : "bridgeCwd", v); acDir = null; }
+  else if (k === "computer") {
+    if (v === "cloud" && !cloudInfo().configured) { closeMenu(); S.setTab = "computers"; openSettings(); return; }
+    if (v === "cloud" && !cloudOn()) { toast("The cloud computer is offline right now"); return; }
+    S.computer = v; ls("bridgeComputer", v);
+    S.newPath = (v === "cloud" ? ls("bridgeCwdCloud") : ls("bridgeCwd")) || ""; acDir = null;
+    if (S.chat && !S.chat.id && !S.chat.msgs.length) { S.chat.computer = v; S.chat.path = S.newPath || homeFor(v); S.chat.key = projKey(S.chat.path); }
+  }
 }
 
 /* ─────────────────────────── chats ─────────────────────────── */
-function newChat(path) {
-  return { id: null, tmp: "n" + Date.now(), key: path ? projKey(path) : "", path: path || homeDir(), title: "", named: false, msgs: [], usage: null, model: "", branch: "",
+function newChat(path, computer) {
+  computer = computer || S.computer;
+  return { id: null, tmp: "n" + Date.now(), computer, key: path ? projKey(path) : "", path: path || homeFor(computer) || homeDir(), title: "", named: false, msgs: [], usage: null, model: "", branch: "",
     streaming: false, running: false, follow: null, offset: 0, queue: [], jobs: null, step: "", agent: "", lastResult: null, turnStart: 0, workOpen: {}, detOpen: {} };
 }
 const chatBusy = (c) => !!(c && (c.streaming || c.running));
@@ -513,6 +535,7 @@ function chatTitle(c) {
   return u ? u.text.replace(/\s+/g, " ").slice(0, 60) : "New chat";
 }
 function startNewChat(path, agent) {
+  if (path !== undefined && path !== S.newPath) setChoice("proj", path);
   S.chat = newChat(path !== undefined ? path : S.newPath);
   if (agent !== undefined) { S.agent = agent; ls("bridgeAgent", agent); }
   go("chat");
@@ -524,7 +547,7 @@ async function openChat(key, id, opts) {
   let c = S.chats.get(id);
   if (!c) {
     const hit = S.recent.find((s) => s.id === id) || S.home.needs.find((n) => n.id === id) || S.home.running.find((r) => r.id === id) || {};
-    c = newChat(hit.projectPath || hit.cwd || "");
+    c = newChat(hit.projectPath || hit.cwd || "", opts.computer || hit.computer || "mac");
     Object.assign(c, { id, key, live: id, title: hit.title || "", tmp: null });
     S.chats.set(id, c);
   }
@@ -537,11 +560,11 @@ async function openChat(key, id, opts) {
 async function loadChat(c) {
   c.loading = true;
   let r;
-  try { r = await getJ("/api/session?key=" + encodeURIComponent(c.key) + "&id=" + c.id); } catch (e) { r = { error: String(e) }; }
+  try { r = await getJ("/api/session?key=" + encodeURIComponent(c.key) + "&id=" + c.id + cq(c.computer)); } catch (e) { r = { error: String(e) }; }
   c.loading = false;
   if (r.error) { c.msgs = [{ kind: "assistant", text: "Could not open this chat: " + r.error, ts: Date.now() }]; paintChat(c); return; }
   c.msgs = r.events || []; c.usage = r.meta.usage; c.model = r.meta.model; c.branch = r.meta.branch; c.hookCount = r.meta.hookCount || 0;
-  if (r.meta.cwd && (!c.path || c.path === homeDir())) c.path = r.meta.cwd;
+  if (r.meta.cwd && (!c.path || c.path === homeFor(c.computer))) c.path = r.meta.cwd;
   if (r.meta.title) { c.title = r.meta.title; c.named = !!r.meta.named; }
   c.offset = r.offset || 0; c.loaded = true;
   const run = S.home.running.find((x) => x.id === c.id) || (S.recent.find((s) => s.id === c.id) || {}).running;
@@ -553,7 +576,7 @@ function attach(c) {
   if (c.streaming || c.follow) return;
   c.running = true;
   if (!c.turnStart) { const r = S.home.running.find((x) => x.id === c.id); c.turnStart = r ? r.started : Date.now(); }
-  const es = new EventSource("/api/follow?key=" + encodeURIComponent(c.key) + "&id=" + c.id + "&from=" + (c.offset | 0));
+  const es = new EventSource("/api/follow?key=" + encodeURIComponent(c.key) + "&id=" + c.id + "&from=" + (c.offset | 0) + cq(c.computer));
   c.follow = es;
   es.onmessage = (e) => {
     let p; try { p = JSON.parse(e.data); } catch (err) { return; }
@@ -579,7 +602,7 @@ async function pollJobs(now) {
   const c = S.view === "chat" ? S.chat : null;
   if (c && c.id && (chatBusy(c) || now)) {
     let j = null;
-    try { j = await getJ("/api/jobs?key=" + encodeURIComponent(c.key) + "&id=" + c.id); } catch (e) {}
+    try { j = await getJ("/api/jobs?key=" + encodeURIComponent(c.key) + "&id=" + c.id + cq(c.computer)); } catch (e) {}
     if (j) {
       c.jobs = j.running ? j : null;
       if (j.running) {
@@ -819,7 +842,7 @@ function paintPanel() {
     const fs = chatFiles(c);
     const sel = S.pfile && fs.some((f) => f.p === S.pfile) ? S.pfile : (fs.find((f) => f.kind !== "read") || {}).p;
     body = (sel ? '<div class="preview" id="pprev"><div class="row" style="margin-bottom:10px"><span class="tag">' + esc(extOf(sel).toUpperCase() || "FILE") + '</span><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(base(sel)) + "</b>" +
-      '<button class="icon-btn" data-doc="' + esc(sel) + '" title="Open">' + ic("ext") + '</button></div><div id="pprevBody" class="faint">Loading…</div></div>' : "") +
+      '<button class="icon-btn" data-doc="' + esc(sel) + '" data-computer="' + esc(c.computer || "mac") + '" title="Open">' + ic("ext") + '</button></div><div id="pprevBody" class="faint">Loading…</div></div>' : "") +
       '<div class="side-h" style="padding-left:2px">' + (fs.length ? "Touched in this chat · " + fs.length : "Files appear here as the work produces them") + "</div>" +
       fs.map((f) => '<button class="li ' + (f.p === sel ? "cur" : "") + '" style="border:0;padding:7px 4px" data-pfile="' + esc(f.p) + '"><span class="ico" style="background:var(--bg-active);width:26px;height:26px">' + ic(f.kind === "read" ? "read" : f.kind === "new" ? "file" : "edit") + '</span><div class="l"><span style="font-family:var(--mono);font-size:12px;color:var(--fg)">' + esc(short(f.p.replace(homeDir(), "~"), 44)) + '</span></div><span class="tag ' + (f.kind === "new" ? "ok" : f.kind === "edited" ? "acc" : "") + '">' + f.kind + "</span></button>").join("");
     if (sel) setTimeout(() => previewInto(sel, $("#pprevBody")), 0);
@@ -853,15 +876,17 @@ function paintPanel() {
 const previewCache = new Map();
 async function previewInto(path, el) {
   if (!el) return;
-  let d = previewCache.get(path);
-  if (!d || Date.now() - d.at > 5000) { d = await getJ("/api/file?path=" + encodeURIComponent(path)).catch((e) => ({ error: String(e) })); d.at = Date.now(); previewCache.set(path, d); }
+  const comp = (S.chat && S.chat.computer) || "mac", ck = comp + ":" + path;
+  let d = previewCache.get(ck);
+  if (!d || Date.now() - d.at > 5000) { d = await getJ("/api/file?path=" + encodeURIComponent(path) + cq(comp)).catch((e) => ({ error: String(e) })); d.at = Date.now(); previewCache.set(ck, d); }
+  if (d.url) d.url = d.url.replace(/(&computer=cloud)?$/, cq(comp));
   if (!el.isConnected) return;
   if (d.error) { el.innerHTML = '<span class="faint">' + esc(d.error) + "</span>"; return; }
   const e = extOf(path);
   if (d.binary && /png|jpe?g|gif|webp|svg/.test(e)) el.innerHTML = '<img src="' + esc(d.url) + '">';
   else if (d.binary) el.innerHTML = '<button class="btn" data-doc="' + esc(path) + '">Open ' + esc(e.toUpperCase()) + "</button>";
   else if (d.lang === "markdown") el.innerHTML = '<div class="prose">' + md(String(d.text).slice(0, 20000)) + "</div>";
-  else if (e === "html") el.innerHTML = '<iframe sandbox="allow-scripts" src="/api/raw?path=' + encodeURIComponent(path) + '" style="width:100%;height:46vh;border:1px solid var(--border);border-radius:8px;background:#fff"></iframe>';
+  else if (e === "html") el.innerHTML = '<iframe sandbox="allow-scripts" src="/api/raw?path=' + encodeURIComponent(path) + cq(comp) + '" style="width:100%;height:46vh;border:1px solid var(--border);border-radius:8px;background:#fff"></iframe>';
   else el.innerHTML = '<div class="prose"><pre><code>' + esc(String(d.text).slice(0, 12000)) + "</code></pre></div>";
 }
 
@@ -904,8 +929,10 @@ async function runTurn(c, msg) {
   const body = {
     prompt: (msg.ultra ? "ultracode " : "") + msg.text, cwd: c.path, resume: c.live || c.id || null,
     model: S.model || null, permissionMode: S.perm, effort: msg.ultra ? "max" : S.effort || null,
-    agent: S.agent === "auto" ? "auto" : S.agent || null, attachments: msg.attachments || [],
+    agent: S.agent === "auto" ? "auto" : S.agent || null, attachments: msg.attachments || [], computer: c.computer || "mac",
   };
+  // a cloud Bridge routes Auto itself; the hub only routes for this Mac's agents
+  if (c.computer === "cloud" && body.agent === "auto") body.agent = null;
   flush(c, c.msgs.length - 1);
   renderSide(); refreshComposerBar();
   if (body.agent === "auto") {
@@ -1003,7 +1030,7 @@ async function runTurn(c, msg) {
     }
   } catch (e) {
     // the connection dropped, not the turn: the server keeps running it, so follow the transcript instead
-    if (c.id) { c.streaming = false; c.running = true; flush(c, 0); const r = await getJ("/api/session?key=" + encodeURIComponent(c.key) + "&id=" + c.id).catch(() => null); if (r && !r.error) { c.msgs = r.events; c.offset = r.offset; } attach(c); return; }
+    if (c.id) { c.streaming = false; c.running = true; flush(c, 0); const r = await getJ("/api/session?key=" + encodeURIComponent(c.key) + "&id=" + c.id + cq(c.computer)).catch(() => null); if (r && !r.error) { c.msgs = r.events; c.offset = r.offset; } attach(c); return; }
     push({ kind: "assistant", text: "**Bridge error:** " + String(e), ts: Date.now() });
   }
   c.streaming = false;
@@ -1037,9 +1064,27 @@ function refreshComposerBar() {
   if (ta) ta.value = val;
   paintTray(S.chat);
 }
+async function refreshComputers() {
+  try { S.computers = await getJ("/api/computers"); } catch (e) { return; }
+  if (S.computer === "cloud" && !cloudInfo().configured) { S.computer = "mac"; ls("bridgeComputer", "mac"); S.newPath = ls("bridgeCwd") || ""; }
+}
+/** copy a Mac chat to the cloud computer and continue it there */
+async function moveChatToCloud(c) {
+  if (!c || !c.id) return;
+  if (!cloudOn()) return toast("The cloud computer is offline right now");
+  toast("Moving to the cloud computer…");
+  const r = await post("/api/move", { key: c.key, id: c.id }).catch((e) => ({ error: String(e) }));
+  if (r.error) return toastCard({ kind: "error", title: "Could not move this chat", detail: r.error });
+  S.chats.delete(c.id);
+  Object.assign(c, { computer: "cloud", key: r.key, path: r.cwd, loaded: false, offset: 0 });
+  S.chats.set(c.id, c);
+  await loadChat(c);
+  refreshHome(); refreshRecent();
+  toast("Now on the cloud computer");
+}
 function stopChat(c) {
   if (!c) return;
-  post("/api/abort", { sessionId: c.live || c.id });
+  post("/api/abort", { sessionId: c.live || c.id, computer: c.computer });
   c.queue.forEach((m) => (m.queued = false)); c.queue = [];
   toast("Stopped");
   setTimeout(() => { if (!c.streaming) { c.running = false; detach(c); flush(c, 0); refreshComposerBar(); } refreshHome(); }, 1200);
@@ -1067,7 +1112,7 @@ function onServerEvent(e) {
   const c = S.chats.get(e.id);
   if (c && !c.streaming && c.running) pollJobs(true);
   if (S.announced.has(e.id) || watching(e.id)) return;
-  toastCard({ kind: e.kind, title: e.title, detail: e.text, onOpen: () => openChat(e.key, e.id) });
+  toastCard({ kind: e.kind, title: (e.computer === "cloud" ? "☁ " : "") + e.title, detail: e.text, onOpen: () => openChat(e.key, e.id, { computer: e.computer }) });
 }
 
 /* ─────────────────────────── data ─────────────────────────── */
@@ -1159,7 +1204,7 @@ document.addEventListener("click", (e) => {
   if (!t) return;
   const d = t.dataset;
   if (d.go) { closeOverlays(); go(d.go); }
-  else if (d.open) { closeOverlays(); const [key, id] = d.open.split("|"); openChat(key, id); }
+  else if (d.open) { closeOverlays(); const [key, id, computer] = d.open.split("|"); openChat(key, id, { computer }); }
   else if (d.proj) go("project", d.proj);
   else if (d.menu) { if (menuEl && menuEl._k === d.menu) closeMenu(); else openMenu(d.menu, t); }
   else if (d.set) { const k = d.set.slice(0, d.set.indexOf(":")), v = d.set.slice(d.set.indexOf(":") + 1); setChoice(k, v); closeMenu(); if (S.view === "chat" && S.chat && (S.chat.id || S.chat.msgs.length)) refreshComposerBar(); else render(); const ta = $("#ta"); if (ta) ta.focus(); }
@@ -1174,13 +1219,13 @@ document.addEventListener("click", (e) => {
   }
   else if (d.ptab) { S.ptab = d.ptab; paintPanel(); }
   else if (d.pfile) { S.pfile = d.pfile; paintPanel(); }
-  else if (d.file) { S.pfile = d.file; S.ptab = "files"; if (S.view === "chat" && innerWidth > 900) { S.panel = true; render(); } else openDoc(d.file); }
-  else if (d.doc) openDoc(d.doc);
+  else if (d.file) { S.pfile = d.file; S.ptab = "files"; if (S.view === "chat" && innerWidth > 900) { S.panel = true; render(); } else openDoc(d.file, null, { computer: S.chat && S.chat.computer }); }
+  else if (d.doc) openDoc(d.doc, null, { computer: d.computer || (S.view === "chat" && S.chat ? S.chat.computer : "mac") });
   else if (d.tool !== undefined) { if (!S.tech || !S.chat) return; S.chat.detOpen[d.tool] = !S.chat.detOpen[d.tool]; flush(S.chat, 0); }
   else if (d.copy !== undefined) { navigator.clipboard.writeText(t.parentElement.innerText.replace(/^copy\n?/, "")); toast("Copied"); }
   else if (d.rmatt !== undefined) { S.attachments.splice(+d.rmatt, 1); renderAttachments(); }
   else if (d.aci !== undefined) applyAc(+d.aci);
-  else if (d.newin !== undefined) startNewChat(d.newin);
+  else if (d.newin !== undefined) { if (d.newcomp && d.newcomp !== S.computer) setChoice("computer", d.newcomp); startNewChat(d.newin); }
   else if (d.assign !== undefined) startNewChat(S.newPath, d.assign);
   else if (d.act) act(d.act, t, e);
 });
@@ -1207,7 +1252,8 @@ function act(a, t, e) {
   else if (a === "stop") stopChat(S.chat);
   else if (a === "close") closeOverlays();
   else if (a === "rename") beginRename();
-  else if (a === "rawtranscript") { const c = S.chat; if (c && c.id) openDoc(S.boot.claudeDir + "/projects/" + c.key + "/" + c.id + ".jsonl", "Raw transcript"); }
+  else if (a === "rawtranscript") { const c = S.chat; if (c && c.id) openDoc((c.computer === "cloud" ? homeFor("cloud") + "/.claude" : S.boot.claudeDir) + "/projects/" + c.key + "/" + c.id + ".jsonl", "Raw transcript", { computer: c.computer }); }
+  else if (a === "movecloud") moveChatToCloud(S.chat);
   else if (a === "copyid") { if (S.chat && S.chat.id) { navigator.clipboard.writeText(S.chat.id); toast("Session id copied"); } }
   else if (a === "revealfolder") { const p = (S.chat && S.chat.path) || (S.proj && S.proj.path); if (p) post("/api/open", { path: p }).then((r) => r.error && toast(r.error)); }
   else if (a === "attach") { closeMenu(); $("#fileInput").click(); }
@@ -1229,7 +1275,7 @@ function beginRename() {
   const commit = async (save) => {
     if (done) return; done = true;
     if (save && inp.value.trim() !== chatTitle(c)) {
-      const r = await post("/api/rename", { id: c.id, title: inp.value });
+      const r = await post("/api/rename", { id: c.id, title: inp.value, computer: c.computer });
       if (r.ok) { c.title = r.title || ""; c.named = !!r.title; toast(r.title ? "Renamed" : "Name cleared"); refreshRecent(); }
     }
     renderTop();
@@ -1300,18 +1346,26 @@ setInterval(() => {
 /* ─────────────────────────── boot ─────────────────────────── */
 async function boot() {
   document.body.classList.toggle("tech", S.tech);
-  const [b, recent, agents, configs, roots, home] = await Promise.all(["/api/bootstrap", "/api/recent?limit=120", "/api/agents", "/api/configs", "/api/roots", "/api/home"].map((u) => getJ(u).catch(() => null)));
-  Object.assign(S, { boot: b || { models: [], permissionModes: Object.keys(MODES), efforts: Object.keys(EFFORTS), home: "" }, recent: recent || [], agents: agents || [], configs: configs || [], roots: roots || [], home: home || S.home, auth: (b && b.auth) || { loggedIn: false } });
-  S.skills = S.configs.filter((c) => c.group === "Skills");
+  // paint as soon as Bridge knows who it is; chats, home and configs land as they arrive (a busy machine or a slow cloud never holds the page blank)
+  const [rq, aq, cq2, oq, hq] = ["/api/recent?limit=120", "/api/agents", "/api/configs", "/api/roots", "/api/home"].map((u) => getJ(u).catch(() => null));
+  const b = await getJ("/api/bootstrap").catch(() => null);
+  Object.assign(S, { boot: b || { models: [], permissionModes: Object.keys(MODES), efforts: Object.keys(EFFORTS), home: "" }, auth: (b && b.auth) || { loggedIn: false } });
   if (!S.boot.permissionModes.includes(S.perm)) S.perm = "acceptEdits";
-  if (S.agent && S.agent !== "auto" && !S.agents.some((a) => a.name === S.agent)) S.agent = "auto";
+  const later = (p, apply) => p.then((v) => { if (v) { apply(v); renderSide(); if (S.view !== "chat") softRender(); } });
+  later(rq, (v) => (S.recent = v));
+  later(hq, (v) => (S.home = v));
+  later(oq, (v) => (S.roots = v));
+  later(cq2, (v) => { S.configs = v; S.skills = v.filter((c) => c.group === "Skills"); });
+  later(aq, (v) => { S.agents = v; if (S.agent && S.agent !== "auto" && !v.some((a) => a.name === S.agent)) S.agent = "auto"; });
   const q = new URLSearchParams(location.search);
   if (q.get("v")) S.view = q.get("v");
+  refreshComputers();
   render();
   window._bridgeBooted();
   if (!authed()) openSignin();
   setInterval(refreshHome, 5000);
   setInterval(refreshRecent, 30000);
+  setInterval(refreshComputers, 20000);
   pollJobs();
   if (q.get("c")) { const [key, id] = q.get("c").split("|"); openChat(key, id); }
   getJ("/api/lifeos").then((l) => (S.lifeos = l)).catch(() => {});

@@ -10,24 +10,24 @@ const empty = (h, p) => '<div class="card" style="cursor:default"><p><b style="c
 function needCard(n) {
   return '<div class="card need"><div class="ch">' + projIco(n.projectName, 22) + '<span class="ct">' + esc(n.title) + '</span><span class="cm">' + fmtAgo(n.since) + "</span></div>" +
     "<p>Asks: <b style=\"color:var(--fg)\">" + esc(n.ask) + "</b></p>" +
-    '<div class="row mt12"><button class="btn pri" data-open="' + esc(n.key + "|" + n.id) + '">Answer</button><span class="tag">' + esc(n.projectName) + "</span></div></div>";
+    '<div class="row mt12"><button class="btn pri" data-open="' + openRef(n.key, n.id, n.computer) + '">Answer</button><span class="tag">' + esc(n.projectName) + "</span>" + cloudMark(n.computer) + "</div></div>";
 }
 function runCard(r) {
-  return '<button class="card live" data-open="' + esc(r.key + "|" + r.id) + '"><div class="ch">' + (r.agent ? ava(r.agent) : projIco(r.projectName, 22)) + '<span class="ct">' + esc(r.title) + "</span>" +
+  return '<button class="card live" data-open="' + openRef(r.key, r.id, r.computer) + '"><div class="ch">' + (r.agent ? ava(r.agent) : projIco(r.projectName, 22)) + '<span class="ct">' + esc(r.title) + "</span>" + cloudMark(r.computer) +
     '<span class="mono" style="font-size:12px;color:var(--fg-muted)" data-since="' + r.started + '">' + fmtEl(Date.now() - r.started) + "</span></div>" +
     "<p>" + esc([r.agent, r.projectName, String(r.model || "").replace("claude-", "")].filter(Boolean).join(" · ")) + (r.jobs && r.jobs.length ? ' · <span style="color:var(--accent)">' + r.jobs.length + " in the background</span>" : "") + "</p>" +
     '<div class="bar indet mt8" style="margin-left:0"><i></i></div><div class="ticker"><span class="typing"><i></i><i></i><i></i></span><span class="tx">' + esc(r.step || "Working") + "</span></div></button>";
 }
 function fileTile(f) {
   const e = f.ext || extOf(f.path), img = /^(png|jpe?g|gif|webp|svg)$/.test(e);
-  return '<button class="card ftile" data-doc="' + esc(f.path) + '" title="' + esc(f.path) + '"><div class="fthumb" style="background:linear-gradient(160deg,color-mix(in srgb,' + extColor(e) + ' 22%,var(--bg-sunken)),var(--bg-sunken))">' +
+  return '<button class="card ftile" data-doc="' + esc(f.path) + '" data-computer="' + esc(f.computer || "mac") + '" title="' + esc(f.path) + '"><div class="fthumb" style="background:linear-gradient(160deg,color-mix(in srgb,' + extColor(e) + ' 22%,var(--bg-sunken)),var(--bg-sunken))">' +
     '<span class="ext" style="background:' + extColor(e) + '">' + esc((e || "file").toUpperCase().slice(0, 4)) + "</span>" +
-    (img ? '<img loading="lazy" src="/api/raw?path=' + encodeURIComponent(f.path) + '" alt="">' : '<div class="mock"><i class="h"></i><i></i><i style="width:80%"></i><i></i><i style="width:55%"></i></div>') + "</div>" +
-    '<div class="fbody"><div class="ct">' + esc(f.name) + '</div><div class="row" style="margin-top:4px;font-size:12px;color:var(--fg-faint);min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.sessionTitle || projectName(f.path.slice(0, f.path.lastIndexOf("/")))) + " · " + fmtShortAgo(f.mtime) + "</span></div></div></button>";
+    (img ? '<img loading="lazy" src="/api/raw?path=' + encodeURIComponent(f.path) + cq(f.computer) + '" alt="">' : '<div class="mock"><i class="h"></i><i></i><i style="width:80%"></i><i></i><i style="width:55%"></i></div>') + "</div>" +
+    '<div class="fbody"><div class="ct">' + esc(f.name) + cloudMark(f.computer) + '</div><div class="row" style="margin-top:4px;font-size:12px;color:var(--fg-faint);min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.sessionTitle || projectName(f.path.slice(0, f.path.lastIndexOf("/")))) + " · " + fmtShortAgo(f.mtime) + "</span></div></div></button>";
 }
 function projCard(p) {
-  const live = runningList().some((r) => r.cwd === p.path || String(r.cwd).indexOf(p.path + "/") === 0);
-  return '<button class="card" data-proj="' + esc(p.key) + '"><div class="ch">' + projIco(p.name, 38) + '<div style="flex:1;min-width:0"><div class="ct">' + esc(p.name) + '</div><div class="cm">' + p.count + (p.count === 1 ? " chat" : " chats") + " · " + fmtAgo(p.mtime) + "</div></div>" + (live ? '<span class="dot run"></span>' : "") +
+  const live = runningList().some((r) => (r.computer || "mac") === (p.computer || "mac") && (r.cwd === p.path || String(r.cwd).indexOf(p.path + "/") === 0));
+  return '<button class="card" data-proj="' + esc((p.computer === "cloud" ? "cloud:" : "") + p.key) + '"><div class="ch">' + projIco(p.name, 38) + '<div style="flex:1;min-width:0"><div class="ct">' + esc(p.name) + cloudMark(p.computer) + '</div><div class="cm">' + p.count + (p.count === 1 ? " chat" : " chats") + " · " + fmtAgo(p.mtime) + "</div></div>" + (live ? '<span class="dot run"></span>' : "") +
     '</div><p class="mono" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(p.path.replace(homeDir(), "~")) + "</p></button>";
 }
 function signinCard() {
@@ -70,9 +70,9 @@ const VIEWS = {
     const F = S.inboxF;
     const runs = runningList();
     const items = [
-      ...S.home.needs.map((x) => ({ k: "need", key: x.key, id: x.id, t: x.title, d: x.ask, p: x.projectName, when: x.since })),
-      ...runs.map((x) => ({ k: "run", key: x.key, id: x.id, t: x.title, d: x.step, p: x.projectName, when: x.started, since: x.started })),
-      ...S.recent.filter((s) => !s.running && !s.needs).slice(0, 40).map((s) => ({ k: "done", key: s.project, id: s.id, t: s.title, d: s.preview, p: projectName(s.projectPath), when: s.mtime })),
+      ...S.home.needs.map((x) => ({ k: "need", computer: x.computer, key: x.key, id: x.id, t: x.title, d: x.ask, p: x.projectName, when: x.since })),
+      ...runs.map((x) => ({ k: "run", computer: x.computer, key: x.key, id: x.id, t: x.title, d: x.step, p: x.projectName, when: x.started, since: x.started })),
+      ...S.recent.filter((s) => !s.running && !s.needs).slice(0, 40).map((s) => ({ k: "done", computer: s.computer, key: s.project, id: s.id, t: s.title, d: s.preview, p: projectName(s.projectPath), when: s.mtime })),
     ].filter((x) => F === "all" || x.k === F);
     const col = { need: ["var(--warn-soft)", "var(--warn)", "hand", "Needs an answer"], run: ["var(--accent-soft)", "var(--accent)", "bolt", "Working"], done: ["var(--ok-soft)", "var(--ok)", "check", "Finished"] };
     const count = (k) => { const n = k === "need" ? S.home.needs.length : k === "run" ? runs.length : 0; return n ? " " + n : ""; };
@@ -81,8 +81,8 @@ const VIEWS = {
       '<span style="flex:1"></span><button class="pill" data-filter="readall">' + ic("check") + "Mark all read</button></div>" +
       '<div class="list">' + (items.map((x) => {
         const unread = x.k !== "run" && x.when > S.readAt;
-        return '<button class="li" data-open="' + esc(x.key + "|" + x.id) + '"><span class="ico" style="background:' + col[x.k][0] + ";color:" + col[x.k][1] + '">' + ic(col[x.k][2], 2) + "</span>" +
-          '<div class="l"><b' + (unread ? "" : ' style="font-weight:500"') + ">" + esc(x.t) + "</b><span>" + esc(col[x.k][3]) + " · " + esc(x.p) + (x.d ? " · " + esc(String(x.d).slice(0, 160)) : "") + "</span></div>" +
+        return '<button class="li" data-open="' + openRef(x.key, x.id, x.computer) + '"><span class="ico" style="background:' + col[x.k][0] + ";color:" + col[x.k][1] + '">' + ic(col[x.k][2], 2) + "</span>" +
+          '<div class="l"><b' + (unread ? "" : ' style="font-weight:500"') + ">" + esc(x.t) + cloudMark(x.computer) + "</b><span>" + esc(col[x.k][3]) + " · " + esc(x.p) + (x.d ? " · " + esc(String(x.d).slice(0, 160)) : "") + "</span></div>" +
           (x.k === "need" ? '<span class="btn pri" style="height:28px">Answer</span>' : x.k === "run" ? '<span class="r mono" data-since="' + x.since + '">' + fmtEl(Date.now() - x.since) + "</span>" : '<span class="r">' + (unread ? '<span class="dot" style="background:var(--accent);display:inline-block;margin-right:6px"></span>' : "") + fmtShortAgo(x.when) + "</span>") + "</button>";
       }).join("") || '<div class="empty-c">Nothing here</div>') + "</div></div></div>";
   },
@@ -95,25 +95,26 @@ const VIEWS = {
   },
 
   project() {
-    const p = S.home.projects.find((x) => x.key === S.proj) || { key: S.proj, name: base(S.proj), path: "", count: 0, mtime: 0 };
-    const info = PINFO[p.key];
+    const cloud = String(S.proj).indexOf("cloud:") === 0, pkey = cloud ? S.proj.slice(6) : S.proj, comp = cloud ? "cloud" : "mac";
+    const p = S.home.projects.find((x) => x.key === pkey && (x.computer || "mac") === comp) || { key: pkey, name: base(pkey), path: "", count: 0, mtime: 0, computer: comp };
+    const info = PINFO[comp + ":" + p.key];
     if (!info) loadProject(p);
-    const made = S.home.made.filter((f) => p.path && f.path.indexOf(p.path + "/") === 0);
+    const made = S.home.made.filter((f) => p.path && (f.computer || "mac") === comp && f.path.indexOf(p.path + "/") === 0);
     const hooks = S.hooks || [];
     return '<div class="view"><div class="wrap wide"><div class="crumbs"><button data-go="projects">Projects</button>›<b>' + esc(p.name) + "</b></div>" +
-      '<div class="row">' + projIco(p.name, 48) + '<div style="flex:1;min-width:0"><h1 class="big">' + esc(p.name) + '</h1><div class="sub mono" style="font-size:12px;overflow-wrap:anywhere">' + esc(p.path.replace(homeDir(), "~")) + "</div></div>" +
-      '<button class="btn pri" data-newin="' + esc(p.path) + '">' + ic("plus", 2) + '<span class="hide-sm">New chat here</span></button></div>' +
+      '<div class="row">' + projIco(p.name, 48) + '<div style="flex:1;min-width:0"><h1 class="big">' + esc(p.name) + cloudMark(comp) + '</h1><div class="sub mono" style="font-size:12px;overflow-wrap:anywhere">' + esc(p.path.replace(homeDir(), "~")) + "</div></div>" +
+      '<button class="btn pri" data-newin="' + esc(p.path) + '" data-newcomp="' + comp + '">' + ic("plus", 2) + '<span class="hide-sm">New chat here</span></button></div>' +
       '<div class="grid two" style="margin-top:22px">' +
       '<div class="card" style="cursor:default"><div class="ch">' + ic("book") + '<span class="ct">Instructions</span><span class="tag">CLAUDE.md</span></div>' +
       "<p>" + (info ? (info.claude ? esc(info.claude) : "No instructions yet. Rules you write here apply to every chat in " + esc(p.name) + ".") : "Loading…") + "</p>" +
-      '<button class="btn mt12" data-doc-create="' + esc(p.path + "/CLAUDE.md") + '">' + (info && info.claude ? "Edit instructions" : "Write instructions") + "</button></div>" +
+      '<button class="btn mt12" data-doc-create="' + esc(p.path + "/CLAUDE.md") + '" data-computer="' + comp + '">' + (info && info.claude ? "Edit instructions" : "Write instructions") + "</button></div>" +
       '<div class="card" style="cursor:default"><div class="ch">' + ic("zap") + '<span class="ct">Automations</span><span class="tag">' + (hooks.length + (info ? info.hooks : 0)) + " hooks</span></div>" +
       "<p>" + (hooks.length ? "Every chat runs your automations: " + esc([...new Set(hooks.map((h) => h.event))].slice(0, 5).join(", ")) + "." : "No automations configured.") + (info && info.hooks ? " This project adds " + info.hooks + " of its own." : "") + "</p>" +
       '<button class="btn mt12" data-stab-open="advanced">Manage</button></div></div>' +
       sec("inbox", "Chats", '<span class="tag">' + p.count + "</span>") +
       '<div class="list">' + (info && info.sessions ? info.sessions.slice(0, 30).map((s) => {
         const run = runningList().find((r) => r.id === s.id), need = S.home.needs.find((x) => x.id === s.id);
-        return '<button class="li" data-open="' + esc(p.key + "|" + s.id) + '"><span class="dot ' + (run ? "run" : need ? "wait" : "ok") + '"></span><div class="l"><b>' + esc(s.title) + "</b><span>" + esc(s.preview || "") + '</span></div><span class="r">' + (run ? '<span class="mono" data-since="' + run.started + '">' + fmtEl(Date.now() - run.started) + "</span>" : fmtShortAgo(s.mtime)) + "</span></button>";
+        return '<button class="li" data-open="' + openRef(p.key, s.id, comp) + '"><span class="dot ' + (run ? "run" : need ? "wait" : "ok") + '"></span><div class="l"><b>' + esc(s.title) + "</b><span>" + esc(s.preview || "") + '</span></div><span class="r">' + (run ? '<span class="mono" data-since="' + run.started + '">' + fmtEl(Date.now() - run.started) + "</span>" : fmtShortAgo(s.mtime)) + "</span></button>";
       }).join("") : '<div class="empty-c">Loading…</div>') + "</div>" +
       sec("file", "Files made here", '<span class="tag">' + made.length + "</span>", '<button class="more" data-browse="' + esc(p.path) + '">Browse folder</button>') +
       (made.length ? '<div class="grid">' + made.slice(0, 8).map(fileTile).join("") + "</div>" : empty("Nothing made here this week.")) +
@@ -151,7 +152,7 @@ const VIEWS = {
     else if (c.editing) body = c.lang === "markdown" ? '<div class="split"><textarea class="editor" id="editor" spellcheck="false">' + esc(c.text) + '</textarea><div class="mdpreview prose" id="mdprev">' + md(c.text) + "</div></div>" : '<textarea class="editor" id="editor" spellcheck="false">' + esc(c.text) + "</textarea>";
     else if (c.binary && /^(png|jpe?g|gif|webp|svg)$/.test(e)) body = '<div class="docbody"><img src="' + esc(c.url) + '"></div>';
     else if (c.binary) body = '<div class="docbody"><iframe src="' + esc(c.url) + '"></iframe></div>';
-    else if (e === "html" || e === "htm") body = '<div class="docbody" style="padding:0;overflow:hidden"><iframe sandbox="allow-scripts allow-popups" src="/api/raw?path=' + encodeURIComponent(c.path) + '" style="border:0;border-radius:0"></iframe></div>';
+    else if (e === "html" || e === "htm") body = '<div class="docbody" style="padding:0;overflow:hidden"><iframe sandbox="allow-scripts allow-popups" src="/api/raw?path=' + encodeURIComponent(c.path) + cq(c.computer) + '" style="border:0;border-radius:0"></iframe></div>';
     else if (c.lang === "markdown") body = '<div class="docbody prose">' + md(c.text) + "</div>";
     else body = '<div class="docbody prose" style="padding:0"><pre style="margin:0;border:0"><code>' + esc(c.text) + "</code></pre></div>";
     const acts = c.loading || c.denied ? "" : c.editing
@@ -240,18 +241,19 @@ function skillList() {
 /* project details: its sessions, whether it has instructions, its own hooks */
 const PINFO = {};
 async function loadProject(p) {
-  PINFO[p.key] = PINFO[p.key] || null;
+  const comp = p.computer || "mac", pk = comp + ":" + p.key;
+  PINFO[pk] = PINFO[pk] || null;
   const [sessions, claude, settings, hooks] = await Promise.all([
-    getJ("/api/sessions?key=" + encodeURIComponent(p.key)).catch(() => []),
-    p.path ? getJ("/api/file?path=" + encodeURIComponent(p.path + "/CLAUDE.md")).catch(() => ({})) : {},
-    p.path ? getJ("/api/file?path=" + encodeURIComponent(p.path + "/.claude/settings.json")).catch(() => ({})) : {},
+    getJ("/api/sessions?key=" + encodeURIComponent(p.key) + cq(comp)).catch(() => []),
+    p.path ? getJ("/api/file?path=" + encodeURIComponent(p.path + "/CLAUDE.md") + cq(comp)).catch(() => ({})) : {},
+    p.path ? getJ("/api/file?path=" + encodeURIComponent(p.path + "/.claude/settings.json") + cq(comp)).catch(() => ({})) : {},
     S.hooks ? S.hooks : getJ("/api/hooks").catch(() => []),
   ]);
   S.hooks = hooks;
   let own = 0;
   try { const j = JSON.parse(settings.text || "{}"); own = Object.values(j.hooks || {}).reduce((a, arr) => a + (Array.isArray(arr) ? arr.reduce((b, m) => b + ((m.hooks || []).length), 0) : 0), 0); } catch (e) {}
-  PINFO[p.key] = { sessions: Array.isArray(sessions) ? sessions : [], claude: claude.text ? plainText(claude.text).slice(0, 220) + (claude.text.length > 220 ? "…" : "") : "", hooks: own };
-  if (S.view === "project" && S.proj === p.key) softRender();
+  PINFO[pk] = { sessions: Array.isArray(sessions) ? sessions : [], claude: claude.text ? plainText(claude.text).slice(0, 220) + (claude.text.length > 220 ? "…" : "") : "", hooks: own };
+  if (S.view === "project" && S.proj === (comp === "cloud" ? "cloud:" : "") + p.key) softRender();
 }
 const plainText = (t) => String(t || "").replace(/^---[\s\S]*?---/, "").replace(/```[\s\S]*?```/g, " ").replace(/[#*_`>|-]/g, " ").replace(/\s+/g, " ").trim();
 async function openDir(path) {
@@ -273,9 +275,11 @@ async function openDoc(path, title, opts) {
   opts = opts || {};
   const back = S.view === "doc" ? (S.doc && S.doc.back) : { home: "Home", chat: "Chat", inbox: "Inbox", projects: "Projects", project: "Project", files: "Files", agents: "Agents & skills", configs: "Settings files", activity: "Activity" }[S.view] || "Back";
   const from = S.view === "doc" && S.doc ? S.doc.from : S.view;
-  S.doc = { path, title: title || base(path), back, from, loading: true, text: "" };
+  const computer = opts.computer === "cloud" ? "cloud" : "mac";
+  S.doc = { path, title: title || base(path), back, from, loading: true, text: "", computer };
   go("doc");
-  const d = await getJ("/api/file?path=" + encodeURIComponent(path)).catch((e) => ({ error: String(e) }));
+  const d = await getJ("/api/file?path=" + encodeURIComponent(path) + cq(computer)).catch((e) => ({ error: String(e) }));
+  if (d.url) d.url += cq(computer);
   if (!S.doc || S.doc.path !== path) return;
   const missing = d.error && /not a file/.test(d.error);
   if (missing && opts.create) Object.assign(S.doc, { loading: false, text: "", lang: extOf(path) === "md" ? "markdown" : "text", editing: true, isNew: true });
@@ -288,7 +292,7 @@ async function saveDoc() {
   const c = S.doc; if (!c) return;
   const ed = $("#editor");
   const text = ed ? ed.value : c.text;
-  const r = await post("/api/save", { path: c.path, text });
+  const r = await post("/api/save", { path: c.path, text, computer: c.computer });
   if (r.error) return toast(r.error);
   Object.assign(c, { text, size: r.size, editing: false, isNew: false });
   previewCache.delete(c.path);
@@ -331,7 +335,7 @@ document.addEventListener("click", (e) => {
     softRender();
   }
   else if (d.dir !== undefined) openDir(d.dir);
-  else if (d.docCreate) openDoc(d.docCreate, "Instructions", { create: true });
+  else if (d.docCreate) openDoc(d.docCreate, "Instructions", { create: true, computer: d.computer });
   else if (d.browse) { S.filesF = "browse"; go("files"); openDir(d.browse); }
   else if (d.stabOpen) { S.setTab = d.stabOpen; openSettings(); }
   else if (d.addfolder) { setRoots(S.roots.concat([d.addfolder])).then(() => S.doc && openDoc(S.doc.path)); }
@@ -396,10 +400,10 @@ function palRender(q) {
     ...[["New chat", "act", "new", "⌘T"], ["Talk to " + daName(), "act", "voice", ""], ["Search every chat's transcript", "act", "finder", "⌘F"], ["Inbox", "go", "inbox", ""], ["Files", "go", "files", ""], ["Activity log", "go", "activity", ""], ["Settings files", "go", "configs", ""],
       ["Toggle theme", "act", "theme", "⌘J"], ["Settings", "act", "settings", ""], [S.tech ? "Hide technical details" : "Show technical details", "act", "tech", ""], [authed() ? "Claude account" : "Sign in to Claude Code", "act", "signin", ""]]
       .map(([l, k, v, kb]) => ["Actions", "data-" + k + '="' + v + '"', l, kb, "bolt"]),
-    ...runningList().map((r) => ["Working now", 'data-open="' + esc(r.key + "|" + r.id) + '"', r.title, r.projectName + " · " + r.step, "bolt"]),
-    ...S.recent.slice(0, 80).map((s) => ["Chats", 'data-open="' + esc(s.project + "|" + s.id) + '"', s.title, projectName(s.projectPath) + " · " + fmtAgo(s.mtime), "inbox"]),
-    ...S.home.projects.filter((p) => p.path !== homeDir()).map((p) => ["Projects", 'data-proj="' + esc(p.key) + '"', p.name, p.path.replace(homeDir(), "~"), "folder"]),
-    ...S.home.made.map((f) => ["Files", 'data-doc="' + esc(f.path) + '"', f.name, f.sessionTitle, "file"]),
+    ...runningList().map((r) => ["Working now", 'data-open="' + openRef(r.key, r.id, r.computer) + '"', r.title, r.projectName + " · " + r.step, "bolt"]),
+    ...S.recent.slice(0, 80).map((s) => ["Chats", 'data-open="' + openRef(s.project, s.id, s.computer) + '"', s.title, projectName(s.projectPath) + " · " + fmtAgo(s.mtime), "inbox"]),
+    ...S.home.projects.filter((p) => p.path !== homeDir()).map((p) => ["Projects", 'data-proj="' + esc((p.computer === "cloud" ? "cloud:" : "") + p.key) + '"', p.name, p.path.replace(homeDir(), "~"), "folder"]),
+    ...S.home.made.map((f) => ["Files", 'data-doc="' + esc(f.path) + '" data-computer="' + esc(f.computer || "mac") + '"', f.name, f.sessionTitle, "file"]),
     ...S.agents.map((a) => ["Agents", 'data-assign="' + esc(a.name) + '"', a.name, String(a.description || "").slice(0, 90), "agents"]),
     ...S.skills.map((s) => ["Skills", 'data-doc="' + esc(s.path) + '"', s.label, String(s.desc || "").slice(0, 90), "spark"]),
     ...S.configs.filter((c) => c.group === "Core" || c.group === "Memory").map((c) => ["Settings files", 'data-doc="' + esc(c.path) + '"', c.label, c.path.replace(homeDir(), "~"), "file"]),
@@ -489,9 +493,19 @@ async function openSettings() {
       row("Default model", "Effort " + esc(EFFORTS[S.effort] || S.effort), '<span class="tag">' + esc(S.ultra ? "God mode" : (MODELS[S.model] || [S.model])[0]) + "</span>") +
       row("New chats start in", esc(S.newPath ? S.newPath.replace(homeDir(), "~") : "Your home folder"), '<button class="btn" data-act="choosefolder">Change</button>') +
       '<p class="faint" style="font-size:12px;margin-top:10px">Bridge remembers whatever you last picked in the composer and uses it for the next chat.</p>',
-    computers: () => row(esc(userName()) + "'s Mac", "Online · runs every chat here, with your local tools and simulators", '<span class="tag ok">Online</span>') +
-      row("Cloud computer", "A second Bridge on a Fly sprite keeps working when this Mac sleeps. It is its own app for now: open it to run chats there.", '<a class="btn" href="https://bridge-x2x6.sprites.app/" target="_blank" rel="noopener">' + ic("ext") + "Open</a>") +
-      row("Chats survive closing Bridge", "A chat keeps running on this Mac when you close the window. Reopen it and it picks up where it is.", '<span class="tag acc">Always on</span>'),
+    computers: () => {
+      const c = cloudInfo();
+      const status = !c.configured ? '<span class="tag">Not connected</span>' : c.online ? '<span class="tag ok">Online</span>' : '<span class="tag warn">Offline</span>';
+      const how = !c.configured ? "Another Bridge, on a Fly sprite, that keeps chats running when this Mac sleeps or is closed. Pick it per chat in the project menu."
+        : (c.via === "sprite-proxy" ? "Through the sprite CLI's tunnel to " + esc(c.sprite.org + "/" + c.sprite.name) + " (port " + c.sprite.port + ")" : "At " + esc(c.url)) +
+          (c.online ? " · " + esc(c.version || "") + (c.home ? " · home " + esc(c.home) : "") : " · " + esc(c.error || "unreachable"));
+      return row(esc(userName()) + "'s Mac", "Online · runs chats here, with your local tools and simulators", '<span class="tag ok">Online</span>') +
+        row("Cloud computer", how, status) +
+        '<div class="setting"><div class="l"><b>' + (c.configured ? "Change the connection" : "Connect") + "</b><span>A sprite as <code>org/name</code> (Bridge opens <code>sprite proxy</code> itself, with the CLI's own login" + (c.spriteCli ? "" : "; the sprite CLI is not installed") + "), or a URL.</span>" +
+        '<div class="row mt8"><input class="sheet-in" id="cloudIn" style="height:34px;flex:1;min-width:0" placeholder="nestor-280/bridge  or  https://…" value="' + esc(c.sprite ? c.sprite.org + "/" + c.sprite.name + (c.sprite.port !== 8080 ? ":" + c.sprite.port : "") : c.url || "") + '" spellcheck="false" autocomplete="off">' +
+        '<button class="btn pri" data-cloudset>Connect</button>' + (c.configured ? '<button class="btn" data-cloudclear>Disconnect</button>' : "") + "</div></div></div>" +
+        row("Chats survive closing Bridge", "A chat keeps running where it started when you close the window. Reopen it and it picks up where it is.", '<span class="tag acc">Always on</span>');
+    },
     advanced: () => row("Show technical details", "Raw tool calls next to each step, and their input and output on click", '<button class="toggle ' + (S.tech ? "on" : "") + '" data-act="tech"></button>') +
       row("Settings files", "CLAUDE.md, settings.json, memory, skills and agents", '<button class="btn" data-go="configs">Open</button>') +
       row("Global instructions", "~/.claude/CLAUDE.md applies to every chat", '<button class="btn" data-doc="' + esc(S.boot.claudeDir + "/CLAUDE.md") + '">Edit</button>') +
@@ -506,7 +520,7 @@ async function openSettings() {
   if (S.setTab === "advanced" && !S.hooks) { S.hooks = await getJ("/api/hooks").catch(() => []); if (S.setTab === "advanced" && $("#modal").classList.contains("on")) openSettings(); }
 }
 $("#modal").addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-stab],[data-sv],[data-rmroot],[data-damodel],[data-dareset],[data-go],[data-doc]");
+  const t = e.target.closest("[data-stab],[data-sv],[data-rmroot],[data-damodel],[data-dareset],[data-go],[data-doc],[data-cloudset],[data-cloudclear]");
   if (!t) return;
   const d = t.dataset;
   if (d.stab) { S.setTab = d.stab; openSettings(); }
@@ -516,6 +530,15 @@ $("#modal").addEventListener("click", async (e) => {
   else if (d.sv === "hands" && window.Voice) { Voice.setHands(!Voice.state().hands); openSettings(); }
   else if (d.rmroot) { if (confirm("Stop showing " + d.rmroot + " in Bridge?")) { await setRoots(S.roots.filter((x) => x !== d.rmroot)); openSettings(); } }
   else if (d.damodel !== undefined) { toast("Restarting " + daName() + "…"); await post("/api/da/config", { model: d.damodel }); if (window.Voice) await Voice.refresh(); openSettings(); }
+  else if (d.cloudset !== undefined || d.cloudclear !== undefined) {
+    const v = ($("#cloudIn") || {}).value || "";
+    const body = d.cloudclear !== undefined ? { clear: true } : /^https?:\/\//.test(v.trim()) ? { url: v.trim() } : { sprite: v.trim() };
+    t.disabled = true; t.textContent = d.cloudclear !== undefined ? "Disconnecting…" : "Connecting…";
+    const r = await post("/api/computers", body).catch((err) => ({ error: String(err) }));
+    if (r.error) toast(r.error);
+    else { S.computers = r.computers; toast(cloudInfo().online ? "Cloud computer online" : cloudInfo().configured ? "Saved. The cloud computer is not answering yet" : "Cloud computer disconnected"); refreshHome(); refreshRecent(); }
+    openSettings();
+  }
   else if (d.dareset !== undefined) { await post("/api/da/reset"); if (window.Voice) Voice.refresh(); toast("Fresh conversation started"); }
 });
 
