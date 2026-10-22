@@ -343,7 +343,7 @@ function renderSide() {
       groups[g].slice(0, g === "Earlier" ? 15 : 40).map((s) => item(s.id, s.project, s.title, "", "", s.computer)).join("")).join("") +
     (!S.recent.length && !runs.length ? '<div class="side-empty">Your chats show up here.</div>' : "") +
     "</div>" +
-    '<div class="me"><div class="avatar">' + esc(u.slice(0, 2).toUpperCase()) + '</div><div class="who"><b>' + esc(u) + "</b><span>" +
+    '<div class="me"><div class="avatar" data-menu="me" title="Account">' + esc(u.slice(0, 2).toUpperCase()) + '</div><div class="who"><b>' + esc(u) + "</b><span>" +
     esc(authed() ? (S.auth.subscriptionType ? S.auth.subscriptionType.replace(/^\w/, (c) => c.toUpperCase()) + " plan" : S.auth.email || "Signed in") : "Not signed in") + "</span></div>" +
     '<button class="icon-btn" data-act="theme" title="Theme (⌘J)">' + ic(document.documentElement.dataset.theme === "dark" ? "sun" : "moon") + "</button>" +
     '<button class="icon-btn" data-act="settings" title="Settings">' + ic("gear") + "</button></div>";
@@ -490,6 +490,10 @@ function openMenu(kind, anchor) {
       mi('data-act="mention"', ic("at") + lb("Mention a file", "Point at something in the project") + "<kbd>@</kbd>") +
       mi('data-act="skill"', ic("spark") + lb("Use a skill", S.skills.slice(0, 3).map((s) => s.label).join(", ") + "…") + "<kbd>/</kbd>") +
       mi('data-act="instructions"', ic("book") + lb("Project instructions", "View or edit CLAUDE.md"));
+  } else if (kind === "me") {
+    m.innerHTML = '<div class="menu-h">' + esc(Auth.email || userName()) + "</div>" +
+      mi('data-act="settings"', ic("gear") + lb("Settings")) + mi('data-act="signin"', ic("shield") + lb("Claude account", authed() ? S.auth.email || "Signed in" : "Not signed in")) +
+      (Auth.required ? "<hr>" + mi('data-act="signout"', ic("x") + lb("Sign out of Bridge")) : "");
   } else if (kind === "chatmenu") {
     const c = S.chat, busy = c && chatBusy(c);
     m.innerHTML = mi('data-act="rename"', ic("edit") + lb("Rename")) +
@@ -883,10 +887,10 @@ async function previewInto(path, el) {
   if (!el.isConnected) return;
   if (d.error) { el.innerHTML = '<span class="faint">' + esc(d.error) + "</span>"; return; }
   const e = extOf(path);
-  if (d.binary && /png|jpe?g|gif|webp|svg/.test(e)) el.innerHTML = '<img src="' + esc(d.url) + '">';
+  if (d.binary && /png|jpe?g|gif|webp|svg/.test(e)) el.innerHTML = '<img src="' + esc(Auth.withToken(d.url)) + '">';
   else if (d.binary) el.innerHTML = '<button class="btn" data-doc="' + esc(path) + '">Open ' + esc(e.toUpperCase()) + "</button>";
   else if (d.lang === "markdown") el.innerHTML = '<div class="prose">' + md(String(d.text).slice(0, 20000)) + "</div>";
-  else if (e === "html") el.innerHTML = '<iframe sandbox="allow-scripts" src="/api/raw?path=' + encodeURIComponent(path) + cq(comp) + '" style="width:100%;height:46vh;border:1px solid var(--border);border-radius:8px;background:#fff"></iframe>';
+  else if (e === "html") el.innerHTML = '<iframe sandbox="allow-scripts" src="' + esc(Auth.withToken("/api/raw?path=" + encodeURIComponent(path) + cq(comp))) + '" style="width:100%;height:46vh;border:1px solid var(--border);border-radius:8px;background:#fff"></iframe>';
   else el.innerHTML = '<div class="prose"><pre><code>' + esc(String(d.text).slice(0, 12000)) + "</code></pre></div>";
 }
 
@@ -1065,7 +1069,7 @@ function refreshComposerBar() {
   paintTray(S.chat);
 }
 async function refreshComputers() {
-  try { S.computers = await getJ("/api/computers"); } catch (e) { return; }
+  try { const c = await getJ("/api/computers"); if (!Array.isArray(c)) return; S.computers = c; } catch (e) { return; }
   if (S.computer === "cloud" && !cloudInfo().configured) { S.computer = "mac"; ls("bridgeComputer", "mac"); S.newPath = ls("bridgeCwd") || ""; }
 }
 /** copy a Mac chat to the cloud computer and continue it there */
@@ -1117,14 +1121,15 @@ function onServerEvent(e) {
 
 /* ─────────────────────────── data ─────────────────────────── */
 async function refreshHome() {
-  try { S.home = await getJ("/api/home"); S.homeAt = Date.now(); } catch (e) { return; }
+  // a refusal (401, an error) is not a Home: keep what is on screen
+  try { const h = await getJ("/api/home"); if (!h || !Array.isArray(h.running)) return; S.home = h; S.homeAt = Date.now(); } catch (e) { return; }
   // a chat open in this page that the server says is running, but nothing here follows it yet
   for (const r of S.home.running) { const c = S.chats.get(r.id); if (c && c.loaded && !c.streaming && !c.follow) attach(c); }
   renderSide();
   if (S.view === "home" || S.view === "inbox") softRender();
 }
 async function refreshRecent() {
-  try { S.recent = await getJ("/api/recent?limit=120"); } catch (e) { return; }
+  try { const r = await getJ("/api/recent?limit=120"); if (!Array.isArray(r)) return; S.recent = r; } catch (e) { return; }
   renderSide();
   if (S.view === "inbox") softRender();
 }
@@ -1261,7 +1266,8 @@ function act(a, t, e) {
   else if (a === "instructions") { closeMenu(); const p = (S.view === "chat" && S.chat && S.chat.path) || S.newPath || homeDir(); openDoc(p === homeDir() ? S.boot.claudeDir + "/CLAUDE.md" : p + "/CLAUDE.md", "Instructions", { create: true }); }
   else if (a === "choosefolder") { closeMenu(); chooseFolder(); }
   else if (a === "cloud") { closeMenu(); toast("The cloud computer runs its own Bridge. Open it from Settings › Computers."); }
-  else if (a === "signin") openSignin();
+  else if (a === "signin") { closeMenu(); openSignin(); }
+  else if (a === "signout") { closeMenu(); Auth.signOut(); }
 }
 function beginRename() {
   const c = S.chat;
@@ -1351,7 +1357,7 @@ async function boot() {
   const b = await getJ("/api/bootstrap").catch(() => null);
   Object.assign(S, { boot: b || { models: [], permissionModes: Object.keys(MODES), efforts: Object.keys(EFFORTS), home: "" }, auth: (b && b.auth) || { loggedIn: false } });
   if (!S.boot.permissionModes.includes(S.perm)) S.perm = "acceptEdits";
-  const later = (p, apply) => p.then((v) => { if (v) { apply(v); renderSide(); if (S.view !== "chat") softRender(); } });
+  const later = (p, apply) => p.then((v) => { if (v && !v.error) { apply(v); renderSide(); if (S.view !== "chat") softRender(); } });
   later(rq, (v) => (S.recent = v));
   later(hq, (v) => (S.home = v));
   later(oq, (v) => (S.roots = v));

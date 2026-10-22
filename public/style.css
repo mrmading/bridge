@@ -595,3 +595,19 @@ body.tech .tdet.open{display:block}
 .cmark{display:inline-grid;place-items:center;color:var(--accent);margin:0 3px;flex:none;vertical-align:-2px}
 .cmark svg{width:13px;height:13px}
 .side-empty svg{width:13px;height:13px;display:inline;vertical-align:-2px}
+
+/* sign in to Bridge */
+#login{position:fixed;inset:0;z-index:300;display:grid;place-items:center;padding:16px;background:
+  radial-gradient(900px 380px at 50% -12%, color-mix(in srgb, var(--accent) 26%, transparent), transparent 68%),
+  radial-gradient(820px 560px at 100% 110%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 72%), var(--bg)}
+.login-card{width:min(420px,100%);text-align:center;display:flex;flex-direction:column;align-items:center}
+.login-card canvas{width:132px;height:132px;margin-bottom:4px}
+.login-brand{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.login-brand .name{font-family:"Orbitron",ui-monospace,monospace;font-weight:700;font-size:15px;letter-spacing:.08em}
+.login-card h1{font-size:26px;font-weight:600;letter-spacing:-.02em;margin-bottom:8px}
+.login-card .sub{color:var(--fg-muted);margin-bottom:20px}
+.login-card form{display:flex;flex-direction:column;gap:10px;width:100%}
+.login-card .sheet-in{height:44px;font-family:var(--sans);font-size:15px}
+.login-card .btn.pri{height:44px;justify-content:center;font-size:14.5px}
+.login-card .sheet-err{width:100%;text-align:left}
+.me .avatar{cursor:pointer}

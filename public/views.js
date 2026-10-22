@@ -22,7 +22,7 @@ function fileTile(f) {
   const e = f.ext || extOf(f.path), img = /^(png|jpe?g|gif|webp|svg)$/.test(e);
   return '<button class="card ftile" data-doc="' + esc(f.path) + '" data-computer="' + esc(f.computer || "mac") + '" title="' + esc(f.path) + '"><div class="fthumb" style="background:linear-gradient(160deg,color-mix(in srgb,' + extColor(e) + ' 22%,var(--bg-sunken)),var(--bg-sunken))">' +
     '<span class="ext" style="background:' + extColor(e) + '">' + esc((e || "file").toUpperCase().slice(0, 4)) + "</span>" +
-    (img ? '<img loading="lazy" src="/api/raw?path=' + encodeURIComponent(f.path) + cq(f.computer) + '" alt="">' : '<div class="mock"><i class="h"></i><i></i><i style="width:80%"></i><i></i><i style="width:55%"></i></div>') + "</div>" +
+    (img ? '<img loading="lazy" src="' + esc(Auth.withToken("/api/raw?path=" + encodeURIComponent(f.path) + cq(f.computer))) + '" alt="">' : '<div class="mock"><i class="h"></i><i></i><i style="width:80%"></i><i></i><i style="width:55%"></i></div>') + "</div>" +
     '<div class="fbody"><div class="ct">' + esc(f.name) + cloudMark(f.computer) + '</div><div class="row" style="margin-top:4px;font-size:12px;color:var(--fg-faint);min-width:0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.sessionTitle || projectName(f.path.slice(0, f.path.lastIndexOf("/")))) + " · " + fmtShortAgo(f.mtime) + "</span></div></div></button>";
 }
 function projCard(p) {
@@ -150,9 +150,9 @@ const VIEWS = {
     if (c.loading) body = '<div class="empty-big"><span class="spin-s" style="display:inline-block"></span></div>';
     else if (c.denied) body = '<div class="empty-big"><h3>Outside your folders</h3>' + esc(c.text) + '<div class="row mt12" style="justify-content:center"><button class="btn pri" data-addfolder="' + esc(c.path.slice(0, c.path.lastIndexOf("/"))) + '">Let Bridge see this folder</button></div></div>';
     else if (c.editing) body = c.lang === "markdown" ? '<div class="split"><textarea class="editor" id="editor" spellcheck="false">' + esc(c.text) + '</textarea><div class="mdpreview prose" id="mdprev">' + md(c.text) + "</div></div>" : '<textarea class="editor" id="editor" spellcheck="false">' + esc(c.text) + "</textarea>";
-    else if (c.binary && /^(png|jpe?g|gif|webp|svg)$/.test(e)) body = '<div class="docbody"><img src="' + esc(c.url) + '"></div>';
-    else if (c.binary) body = '<div class="docbody"><iframe src="' + esc(c.url) + '"></iframe></div>';
-    else if (e === "html" || e === "htm") body = '<div class="docbody" style="padding:0;overflow:hidden"><iframe sandbox="allow-scripts allow-popups" src="/api/raw?path=' + encodeURIComponent(c.path) + cq(c.computer) + '" style="border:0;border-radius:0"></iframe></div>';
+    else if (c.binary && /^(png|jpe?g|gif|webp|svg)$/.test(e)) body = '<div class="docbody"><img src="' + esc(Auth.withToken(c.url)) + '"></div>';
+    else if (c.binary) body = '<div class="docbody"><iframe src="' + esc(Auth.withToken(c.url)) + '"></iframe></div>';
+    else if (e === "html" || e === "htm") body = '<div class="docbody" style="padding:0;overflow:hidden"><iframe sandbox="allow-scripts allow-popups" src="' + esc(Auth.withToken("/api/raw?path=" + encodeURIComponent(c.path) + cq(c.computer))) + '" style="border:0;border-radius:0"></iframe></div>';
     else if (c.lang === "markdown") body = '<div class="docbody prose">' + md(c.text) + "</div>";
     else body = '<div class="docbody prose" style="padding:0"><pre style="margin:0;border:0"><code>' + esc(c.text) + "</code></pre></div>";
     const acts = c.loading || c.denied ? "" : c.editing
@@ -479,6 +479,7 @@ async function openSettings() {
   const L = S.lifeos;
   const body = {
     general: () => row("Appearance", "Dark is the Bridge default", '<div class="seg" style="width:170px"><button class="' + (theme === "light" ? "on" : "") + '" data-act="theme">Light</button><button class="' + (theme === "dark" ? "on" : "") + '" data-act="theme">Dark</button></div>') +
+      (Auth.required ? row("Bridge account", "Signed in as " + esc(Auth.email || "you"), '<button class="btn" data-act="signout">Sign out</button>') : "") +
       row("Claude account", authed() ? "Signed in as " + esc(S.auth.email || (S.auth.keyAuth ? "an API key" : "Claude")) : "Not signed in", '<button class="btn" data-act="signin">' + (authed() ? "Manage" : "Sign in") + "</button>") +
       row("Notifications", "A card, a voice line and a Mac notification when a chat finishes or needs you", tog(ls("bridgeNotify") !== "0", 'data-sv="notify"')) +
       row("LifeOS", L && L.installed ? esc(L.versions.slice(0, 2).join(" · ")) : "Not installed under ~/.claude", L && L.dims && L.dims.length ? "" : "") +
@@ -619,4 +620,5 @@ async function finishSignin() {
 $("#signinClose").onclick = closeSignin;
 $("#signinBg").onclick = (e) => { if (e.target.id === "signinBg") closeSignin(); };
 
-boot();
+// a gated Bridge boots once there is a session; the sign-in screen stands in until then
+Auth.start().then((ok) => { if (ok) boot(); });

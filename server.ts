@@ -1471,14 +1471,17 @@ function passThrough(src: ReadableStream<Uint8Array>, onText: (s: string) => voi
     cancel() { end(); reader.cancel().catch(() => {}); },
   });
 }
-async function proxyCloud(path: string, method: string, body?: any): Promise<Response> {
+async function proxyCloud(path: string, method: string, body?: any, auth = ""): Promise<Response> {
   const base = cloudBase();
   if (!base) return json({ error: "No cloud computer is connected. Connect one in Settings › Computers." }, 503);
   const p = path.split("?")[0];
   const long = p === "/api/chat" || p === "/api/follow";
   let r: Response;
   try {
-    r = await fetch(base + path, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined,
+    // a cloud Bridge behind its own gate takes the same Supabase session
+    const headers: Record<string, string> = body ? { "content-type": "application/json" } : {};
+    if (auth) headers.authorization = auth;
+    r = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined,
       signal: long ? undefined : AbortSignal.timeout(20_000) });
   } catch (e) {
     health = { ...health, at: Date.now(), online: false, error: "unreachable" };
@@ -1986,10 +1989,51 @@ async function transcribe(path: string): Promise<{ text?: string; error?: string
   return { error: "no transcriber on this machine — install parakeet-mlx (or mlx_whisper) or type instead" };
 }
 
+/* ─────────────────────────── who may use this Bridge ───────────────────────────
+ * Served from the open internet (a Worker in front of the sprite), every /api call needs a Supabase
+ * session: `Authorization: Bearer <access_token>`, or `?access_token=` where a header cannot be set
+ * (EventSource, <img>, <iframe>). The token is checked against Supabase itself and the email against an
+ * allowlist; a good answer is cached until the token expires (at most 5 minutes). With no Supabase URL
+ * configured there is no gate, which keeps a local Bridge exactly as it was. */
+const AUTH_URL = (process.env.BRIDGE_SUPABASE_URL || "").replace(/\/+$/, "");
+const AUTH_KEY = process.env.BRIDGE_SUPABASE_KEY || "";
+const AUTH_EMAILS = new Set((process.env.BRIDGE_ALLOWED_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
+const authRequired = () => !!AUTH_URL;
+const tokenCache = new Map<string, { ok: boolean; email: string; until: number }>();
+async function checkToken(token: string): Promise<{ ok: boolean; email: string }> {
+  if (!token) return { ok: false, email: "" };
+  const key = new Bun.CryptoHasher("sha256").update(token).digest("hex");
+  const hit = tokenCache.get(key);
+  if (hit && hit.until > Date.now()) return hit;
+  let exp = 0;
+  try { exp = Number(JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString()).exp || 0) * 1000; } catch {}
+  let v = { ok: false, email: "", until: Date.now() + 10_000 };     // a refusal is remembered briefly, so a bad token cannot hammer Supabase
+  if (!exp || exp > Date.now()) {
+    try {
+      const r = await fetch(AUTH_URL + "/auth/v1/user", { headers: { apikey: AUTH_KEY, authorization: "Bearer " + token }, signal: AbortSignal.timeout(5000) });
+      if (r.ok) {
+        const u: any = await r.json();
+        const email = String(u.email || "").toLowerCase();
+        const ok = !!email && (AUTH_EMAILS.size === 0 ? false : AUTH_EMAILS.has(email));
+        v = { ok, email, until: ok ? Math.min(exp || Date.now() + 300_000, Date.now() + 300_000) : Date.now() + 10_000 };
+        if (!ok) logRow({ ts: Date.now(), kind: "auth.denied", msg: (email || "no email") + " is not on the allowlist" });
+      } else if (r.status >= 500) v.until = 0;                       // Supabase down: do not cache, try again next request
+    } catch { v.until = 0; }
+  }
+  if (v.until) tokenCache.set(key, v);
+  if (tokenCache.size > 500) for (const [k, x] of tokenCache) if (x.until < Date.now()) tokenCache.delete(k);
+  return v;
+}
+function bearer(req: Request, q: URLSearchParams) {
+  const h = req.headers.get("authorization") || "";
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  return (m ? m[1] : q.get("access_token") || "").trim();
+}
+
 /* ───────────────────────────── routing ─────────────────────────────── */
 
 function corsHeaders(req: Request): Record<string, string> {
-  return { "access-control-allow-origin": req.headers.get("origin") || "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-credentials": "true" };
+  return { "access-control-allow-origin": req.headers.get("origin") || "*", "access-control-allow-headers": "content-type, authorization", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-credentials": "true" };
 }
 const server = Bun.serve({
   port: PORT,
@@ -2008,14 +2052,16 @@ async function route(req: Request): Promise<Response> {
     if (CORS && req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req) });
 
     try {
+      if (p === "/api/authconfig") return json({ required: authRequired(), supabaseUrl: AUTH_URL, supabaseKey: AUTH_KEY });
+      if (p.startsWith("/api/") && authRequired() && !(await checkToken(bearer(req, q))).ok) return json({ error: "auth" }, 401);
       if (!rootsReady) { ROOTS = await readRoots(); await ensureRoots(); }
       if (q.get("computer") === "cloud" && req.method === "GET" && PROXY_GET.has(p)) {
         const fwd = new URLSearchParams(q); fwd.delete("computer");
-        return proxyCloud(p + "?" + fwd.toString(), "GET");
+        return proxyCloud(p + "?" + fwd.toString(), "GET", undefined, req.headers.get("authorization") || "");
       }
       if (req.method === "POST" && PROXY_POST.has(p)) {
         const body = await req.clone().json().catch(() => null);
-        if (body?.computer === "cloud") { delete body.computer; return proxyCloud(p, "POST", body); }
+        if (body?.computer === "cloud") { delete body.computer; return proxyCloud(p, "POST", body, req.headers.get("authorization") || ""); }
       }
       if (p === "/api/computers") return json(req.method === "POST" ? await setComputers(await req.json().catch(() => ({}))) : await computersList());
       if (p === "/api/move" && req.method === "POST") {
