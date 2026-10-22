@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// Bridge colour tokens. They mirror the desktop client so the two feel like one product.
 class Tokens extends ThemeExtension<Tokens> {
@@ -132,6 +133,8 @@ ThemeData buildTheme(Brightness b) {
       scrolledUnderElevation: 0,
       centerTitle: false,
       titleTextStyle: TextStyle(color: k.fg, fontSize: 17, fontWeight: FontWeight.w700),
+      // Transparent app bars (Home, New chat) cannot guess the status bar colour from their own.
+      systemOverlayStyle: b == Brightness.dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
     ),
     dividerColor: k.border,
     splashFactory: NoSplash.splashFactory,

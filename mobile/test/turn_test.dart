@@ -40,6 +40,13 @@ void main() {
     expect(f, {'/r/GO-LIVE.md': true, '/r/a.dart': false});
   });
 
+  test('task notifications are harness notes with a one-line summary', () {
+    final n = Msg(kind: 'user', text: '<task-notification>\n<task-id>b3</task-id>\n<status>completed</status>\n<summary>Background command "Sleep" completed (exit code 0)</summary>\n</task-notification>');
+    expect(isHarnessNote(n), isTrue);
+    expect(harnessNoteText(n), 'Background command "Sleep" completed (exit code 0)');
+    expect(isHarnessNote(Msg(kind: 'user', text: 'deploy it')), isFalse);
+  });
+
   Widget host(Widget child) => MaterialApp(theme: buildTheme(Brightness.dark), home: Scaffold(body: SingleChildScrollView(child: child)));
 
   testWidgets('a finished turn is one work line, the prose and a file card; tap expands the steps', (tester) async {

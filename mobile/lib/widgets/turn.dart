@@ -71,6 +71,24 @@ String stepSentence(Msg m) {
   return 'Used $n';
 }
 
+/// User-role rows the harness writes (background task done, slash-command output): part of the
+/// assistant's turn, not something the person said.
+bool isHarnessNote(Msg m) {
+  if (!m.isUser) return false;
+  final s = m.text.trimLeft();
+  return s.startsWith('<task-notification>') || s.startsWith('<local-command-') || s.startsWith('<command-name>') || s.startsWith('<system-reminder>');
+}
+
+/// One plain line for a harness note: the task summary when there is one.
+String harnessNoteText(Msg m) {
+  String tag(String t) => RegExp('<$t>([\\s\\S]*?)</$t>').firstMatch(m.text)?.group(1)?.trim() ?? '';
+  final summary = tag('summary');
+  if (summary.isNotEmpty) return summary;
+  final cmd = tag('command-name');
+  if (cmd.isNotEmpty) return 'Ran $cmd';
+  return 'Background work finished';
+}
+
 String cap1(String s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
 
 IconData stepIcon(String name) => switch (name) {
@@ -178,7 +196,7 @@ class AssistantTurn extends StatelessWidget {
     }
     final main = msgs.where((m) => !m.side).toList();
     final tools = msgs.where((m) => m.isTool && !m.side).toList();
-    final texts = main.where((m) => m.isAssistant || m.kind == 'choices').toList();
+    final texts = main.where((m) => m.isAssistant || m.kind == 'choices' || isHarnessNote(m)).toList();
     DateTime? end;
     for (final m in msgs) {
       if (m.ts != null && (end == null || m.ts!.isAfter(end))) end = m.ts;
@@ -197,7 +215,16 @@ class AssistantTurn extends StatelessWidget {
         const SizedBox(height: 6),
         if (tools.isNotEmpty || live) WorkBlock(tools: tools, thinking: msgs.where((m) => m.isThinking).toList(), took: took, live: live, liveSince: liveSince),
         for (var i = 0; i < texts.length; i++)
-          texts[i].kind == 'choices'
+          isHarnessNote(texts[i])
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(children: [
+                    Icon(Icons.task_alt_rounded, size: 15, color: t.ok),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(harnessNoteText(texts[i]), maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 13))),
+                  ]),
+                )
+              : texts[i].kind == 'choices'
               ? ChoiceChips(options: texts[i].options, onChoice: onChoice)
               : AssistantText(key: ObjectKey(texts[i]), msg: texts[i], onChoice: i == lastText ? onChoice : null, padding: const EdgeInsets.only(top: 4, bottom: 4)),
         for (final f in files.entries.take(4)) FileCard(path: f.key, isNew: f.value, onTap: onOpenFile == null ? null : () => onOpenFile!(f.key)),

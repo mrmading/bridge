@@ -676,7 +676,7 @@ class _SessionScreenState extends State<SessionScreen> {
   Widget build(BuildContext context) {
     final t = context.t;
     final folder = folderLabel(_cwd);
-    final firstAsk = _msgs.where((m) => m.isUser).map((m) => m.text.trim()).firstOrNull ?? '';
+    final firstAsk = _msgs.where((m) => m.isUser && !isHarnessNote(m)).map((m) => m.text.trim()).firstOrNull ?? '';
     final title = _title.isNotEmpty ? _title : (firstAsk.isNotEmpty ? firstAsk.replaceAll(RegExp(r'\s+'), ' ') : 'New chat');
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -739,7 +739,7 @@ class _SessionScreenState extends State<SessionScreen> {
     Msg? user;
     var rest = <Msg>[];
     for (final m in _msgs) {
-      if (m.isUser && !m.side) {
+      if (m.isUser && !m.side && !isHarnessNote(m)) {
         if (user != null || rest.isNotEmpty) out.add((user: user, rest: rest));
         user = m;
         rest = <Msg>[];
