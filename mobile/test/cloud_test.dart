@@ -48,6 +48,7 @@ void main() {
     expect(c.name, 'Cloud computer');
     expect(c.online, isFalse);
     expect(c.reason, 'asleep');
+    expect(Computer.fromJson({'id': 'cloud', 'configured': false}).configured, isFalse);
     final m = Computer.fromJson({});
     expect(m.id, 'mac');
     expect(m.online, isTrue);
@@ -58,12 +59,17 @@ void main() {
     expect(s.computers.single.id, 'mac');
     await s.setComputer('cloud');
     expect(s.computer, 'mac', reason: 'no cloud computer on this server');
+    s.debugSetComputers([mac, Computer.fromJson({'id': 'cloud', 'online': false, 'configured': false})]);
+    expect(s.hasCloud, isFalse, reason: 'listed but not set up');
+    expect(s.computer, 'mac');
     s.debugSetComputers([mac, cloud()]);
     expect(s.computer, 'cloud');
     expect(s.cloudOffline, isFalse);
     s.debugSetComputers([mac, cloud(online: false)]);
     expect(s.cloudOffline, isTrue);
+    expect(s.computer, 'mac', reason: 'new chats go to the Mac while the cloud is offline');
     s.debugSetComputers([mac, cloud()]);
+    expect(s.computer, 'cloud', reason: 'and back to the cloud once it is online');
     s.home = HomeData(cloudOffline: true);
     expect(s.cloudOffline, isTrue);
     expect(s.computerLabel('mac'), "Nestor's Mac");

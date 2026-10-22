@@ -87,7 +87,7 @@ class AppStore extends ChangeNotifier {
 
   /// Where chats can run (/api/computers). Before it loads, or on a server without cloud support,
   /// there is one computer: the server itself.
-  List<Computer> get computers => _computers.isNotEmpty ? _computers : [Computer(id: 'mac', name: computerName, kind: 'local', online: conn == ConnState.ready)];
+  List<Computer> get computers => _computers.any((c) => c.configured) ? _computers.where((c) => c.configured).toList() : [Computer(id: 'mac', name: computerName, kind: 'local', online: conn == ConnState.ready)];
   List<Computer> _computers = const [];
 
   @visibleForTesting
@@ -113,9 +113,9 @@ class AppStore extends ChangeNotifier {
     return computerName;
   }
 
-  /// Where new chats run; the last one used, kept across launches. Falls back to the Mac when the
-  /// cloud computer is not set up.
-  String get computer => _computer == 'cloud' && hasCloud ? 'cloud' : 'mac';
+  /// Where new chats run; the last one used, kept across launches. Falls back to the Mac while the
+  /// cloud computer is not set up or offline (the choice is kept for when it is back).
+  String get computer => _computer == 'cloud' && hasCloud && !cloudOffline ? 'cloud' : 'mac';
   String _computer = 'mac';
 
   Future<void> setComputer(String id) async {

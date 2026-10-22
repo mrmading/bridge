@@ -689,7 +689,7 @@ class _SessionScreenState extends State<SessionScreen> {
       unawaited(_store.refreshRecent());
       unawaited(_store.pollHome());
       // Reopen it where it now lives; the follower and jobs poll switch computer with it.
-      Nav.instance.openChat(ChatRef(key: r.key, id: r.id, cwd: _cwd, title: _title, computer: 'cloud'));
+      Nav.instance.openChat(ChatRef(key: r.key, id: r.id, cwd: r.cwd.isNotEmpty ? r.cwd : _cwd, title: _title, computer: 'cloud'));
     } catch (e) {
       if (mounted) toast(context, 'Could not move it: $e');
     }

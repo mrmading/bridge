@@ -197,12 +197,12 @@ class BridgeApi {
   /// The live state of one chat; polled every few seconds while it is open.
   Future<JobsState> jobs(String key, String id, {String computer = 'mac'}) async =>
       JobsState.fromJson(_m(await _get('/api/jobs', q: {'key': key, 'id': id, ..._cq(computer)}, timeout: const Duration(seconds: 10))));
-  /// Moves a Mac chat to the cloud computer. Returns the id/key it has there (the same ones when
-  /// the server keeps them), or throws with the server's reason.
-  Future<({String id, String key})> moveToCloud(String key, String id) async {
-    final j = _m(await _post('/api/move', {'key': key, 'id': id, 'to': 'cloud'}, timeout: const Duration(seconds: 120)));
-    if (j['ok'] == false || j['error'] != null) throw ApiException((j['error'] ?? 'could not move the chat').toString());
-    return (id: (j['id'] ?? id).toString(), key: (j['key'] ?? key).toString());
+  /// POST /api/move: copies a Mac chat to the cloud computer. Returns its id, key and folder there,
+  /// or throws with the server's reason (not connected, offline, still running…).
+  Future<({String id, String key, String cwd})> moveToCloud(String key, String id) async {
+    final j = _m(await _post('/api/move', {'key': key, 'id': id}, timeout: const Duration(seconds: 120)));
+    if (j['ok'] != true || j['error'] != null) throw ApiException((j['error'] ?? 'could not move the chat').toString());
+    return (id: (j['id'] ?? id).toString(), key: (j['key'] ?? key).toString(), cwd: (j['cwd'] ?? '').toString());
   }
 
   /// Where chats can run. Throws ApiException(status: 404) on a server without cloud support.

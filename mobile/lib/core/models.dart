@@ -381,9 +381,11 @@ class TurnOptions {
 
 /// GET /api/computers: where chats can run. id ∈ mac · cloud.
 class Computer {
-  Computer({required this.id, required this.name, required this.kind, required this.online, this.url = '', this.reason = ''});
+  Computer({required this.id, required this.name, required this.kind, required this.online, this.url = '', this.reason = '', this.configured = true});
   final String id, name, kind, url;
   final bool online;
+  /// The server always lists the cloud computer; `configured: false` means it is not set up yet.
+  final bool configured;
   /// Why it is offline, when the server says.
   final String reason;
   bool get isCloud => id == 'cloud';
@@ -397,6 +399,7 @@ class Computer {
       online: j['online'] != false,
       url: _s(j['url']),
       reason: _s(j['reason']).isNotEmpty ? _s(j['reason']) : _s(j['error']),
+      configured: j['configured'] != false,
     );
   }
 }
