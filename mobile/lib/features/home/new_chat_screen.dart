@@ -52,15 +52,16 @@ class _NewChatScreenState extends State<NewChatScreen> {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    final projects = [..._store.projects.where((p) => p.exists && p.path != defaultCwd())]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: const RootAppBar(title: 'New chat'),
-      body: Stack(children: [
-        const Bloom(),
-        ListView(
+    final projects = [..._store.projects.where((p) => p.exists && isProjectPath(p.path))]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
+    return Stack(children: [
+      Positioned.fill(child: ColoredBox(color: t.bg)),
+      const Bloom(),
+      Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: const RootAppBar(title: 'New chat'),
+        body: ListView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: EdgeInsets.fromLTRB(16, MediaQuery.paddingOf(context).top + kToolbarHeight + MediaQuery.sizeOf(context).height * .08, 16, 32),
+          padding: EdgeInsets.fromLTRB(16, MediaQuery.sizeOf(context).height * .08, 16, 32),
           children: [
             Text('What should we work on?', textAlign: TextAlign.center, style: TextStyle(color: t.fg, fontSize: 26, fontWeight: FontWeight.w600, letterSpacing: -.4)),
             const SizedBox(height: 10),
@@ -86,7 +87,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
             ]),
           ],
         ),
-      ]),
-    );
+      ),
+    ]);
   }
 }

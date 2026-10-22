@@ -45,8 +45,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _greeting() {
     final h = DateTime.now().hour;
     final part = h < 12 ? 'Good morning' : (h < 18 ? 'Good afternoon' : 'Good evening');
-    final u = _store.home.user.isNotEmpty ? _store.home.user : (_store.boot?.user ?? '');
-    return u.isEmpty ? part : '$part, ${cap1(u)}';
+    final u = _store.displayName;
+    return u.isEmpty ? part : '$part, $u';
   }
 
   @override
@@ -56,17 +56,20 @@ class _HomeScreenState extends State<HomeScreen> {
       listenable: _store,
       builder: (context, _) {
         final h = _store.home;
-        return Scaffold(
-          extendBodyBehindAppBar: true,
-          appBar: const RootAppBar(),
-          body: Stack(children: [
-            const Bloom(),
-            RefreshIndicator(
+        // The bloom sits behind a transparent scaffold so it lights the app bar too, while the
+        // list scrolls under the bar instead of through it.
+        return Stack(children: [
+          Positioned.fill(child: ColoredBox(color: t.bg)),
+          const Bloom(),
+          Scaffold(
+            backgroundColor: Colors.transparent,
+            appBar: const RootAppBar(),
+            body: RefreshIndicator(
               color: t.accent,
               onRefresh: _store.refreshAll,
               child: ListView(
                 keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top + kToolbarHeight, bottom: 40),
+                padding: const EdgeInsets.only(top: 4, bottom: 40),
                 children: [
                   _hero(context),
                   if (_store.conn == ConnState.ready && !_store.auth.loggedIn) _signIn(context),
@@ -98,8 +101,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-          ]),
-        );
+          ),
+        ]);
       },
     );
   }
@@ -122,21 +125,27 @@ class _HomeScreenState extends State<HomeScreen> {
         Composer(controller: _input, focusNode: _focus, hint: 'Ask anything, or tell your team what to do…', showProject: true, cwd: _cwd, onCwd: (c) => setState(() => _cwd = c), onSend: _send),
         const RunsOn(),
         const SizedBox(height: 12),
-        Wrap(alignment: WrapAlignment.center, spacing: 8, runSpacing: 8, children: [
-          for (final s in suggestions)
-            ActionChip(
-              label: Text(s),
-              labelStyle: TextStyle(color: t.muted, fontSize: 13),
-              backgroundColor: t.raised.withValues(alpha: .6),
-              side: BorderSide(color: t.border),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-              onPressed: () {
-                _input.text = s;
-                _input.selection = TextSelection.collapsed(offset: s.length);
-                _focus.requestFocus();
-              },
-            ),
-        ]),
+        SizedBox(
+          height: 44,
+          child: ListView(scrollDirection: Axis.horizontal, clipBehavior: Clip.none, children: [
+            for (final s in suggestions)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ActionChip(
+                  label: Text(s),
+                  labelStyle: TextStyle(color: t.muted, fontSize: 13),
+                  backgroundColor: t.raised.withValues(alpha: .6),
+                  side: BorderSide(color: t.border),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                  onPressed: () {
+                    _input.text = s;
+                    _input.selection = TextSelection.collapsed(offset: s.length);
+                    _focus.requestFocus();
+                  },
+                ),
+              ),
+          ]),
+        ),
       ]),
     );
   }
@@ -191,7 +200,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _projects(BuildContext context, List<HomeProject> list) {
-    final sorted = [...list]..sort((a, b) => b.mtime.compareTo(a.mtime));
+    final sorted = [...list.where((p) => isProjectPath(p.path))]..sort((a, b) => b.mtime.compareTo(a.mtime));
     final top = sorted.take(4).toList();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -300,6 +309,7 @@ class RunCard extends StatelessWidget {
                     Expanded(
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 300),
+                        layoutBuilder: (cur, prev) => Stack(alignment: Alignment.centerLeft, children: [...prev, ?cur]),
                         transitionBuilder: (c, a) => FadeTransition(opacity: a, child: SlideTransition(position: Tween(begin: const Offset(0, .4), end: Offset.zero).animate(a), child: c)),
                         child: Text(r.step.isNotEmpty ? r.step : 'Working…', key: ValueKey(r.step), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 13)),
                       ),

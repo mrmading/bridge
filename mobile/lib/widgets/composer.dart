@@ -216,6 +216,7 @@ class _ComposerState extends State<Composer> {
                 if (widget.showProject)
                   // The only chip that gives way when the bar is tight: its name ellipsizes.
                   Flexible(
+                    flex: 6,
                     child: _Chip(
                       key: const ValueKey('chip-project'),
                       onTap: _pickProject,
@@ -438,7 +439,7 @@ Future<String?> showProjectSheet(BuildContext context, String current) => _sheet
       final rows = <({String path, String name})>[];
       final projects = [...store.projects]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
       for (final p in projects) {
-        if (p.path.isNotEmpty && p.exists && p.path != defaultCwd() && seen.add(p.path)) rows.add((path: p.path, name: p.name.isNotEmpty ? p.name : baseName(p.path)));
+        if (p.path.isNotEmpty && p.exists && isProjectPath(p.path) && seen.add(p.path)) rows.add((path: p.path, name: p.name.isNotEmpty ? p.name : baseName(p.path)));
       }
       for (final r in store.roots) {
         if (r.isNotEmpty && seen.add(r)) rows.add((path: r, name: baseName(r)));

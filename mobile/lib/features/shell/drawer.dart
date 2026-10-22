@@ -240,8 +240,7 @@ class _Footer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    final user = store.boot?.user ?? '';
-    final name = user.isEmpty ? 'You' : cap1(user);
+    final name = store.displayName.isEmpty ? 'You' : store.displayName;
     final a = store.auth;
     final sub = a.loggedIn ? (a.subscriptionType.isNotEmpty ? '${cap1(a.subscriptionType)} plan' : (a.email.isNotEmpty ? a.email : 'Signed in')) : 'Not signed in';
     final dark = Theme.of(context).brightness == Brightness.dark;
@@ -254,7 +253,7 @@ class _Footer extends StatelessWidget {
           height: 32,
           alignment: Alignment.center,
           decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [t.accent, t.think])),
-          child: Text(initials(name).toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+          child: Text(name[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
         ),
         const SizedBox(width: 10),
         Expanded(

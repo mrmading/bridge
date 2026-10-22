@@ -26,10 +26,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   String _q = '';
 
   List<Project> _merged() {
-    final out = [..._store.projects.where((p) => p.exists)]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
+    final out = [..._store.projects.where((p) => p.exists && isProjectPath(p.path))]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
     final paths = out.map((p) => p.path).toSet();
     for (final r in _store.roots) {
-      if (r.isEmpty || paths.contains(r)) continue;
+      if (r.isEmpty || paths.contains(r) || !isProjectPath(r)) continue;
       out.add(Project(key: projectKeyFor(r), path: r, name: baseName(r), sessions: 0, lastActivity: 0, exists: true));
     }
     final q = _q.toLowerCase();

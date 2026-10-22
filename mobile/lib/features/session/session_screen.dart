@@ -675,17 +675,22 @@ class _SessionScreenState extends State<SessionScreen> {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    final folder = baseName(_cwd);
+    final folder = folderLabel(_cwd);
+    final firstAsk = _msgs.where((m) => m.isUser).map((m) => m.text.trim()).firstOrNull ?? '';
+    final title = _title.isNotEmpty ? _title : (firstAsk.isNotEmpty ? firstAsk.replaceAll(RegExp(r'\s+'), ' ') : 'New chat');
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
         leading: widget.onMenu == null ? null : IconButton(tooltip: 'Menu', onPressed: widget.onMenu, icon: const Icon(Icons.menu_rounded)),
         titleSpacing: widget.onMenu == null ? 0 : 4,
         title: Row(children: [
-          if (folder.isNotEmpty) ...[ProjectIcon(projectLabel(_cwd) == 'Any project' ? folder : projectLabel(_cwd), size: 24), const SizedBox(width: 9)],
+          if (folder == 'Home')
+            ...[Ava(name: 'Home', size: 24, color: t.active, letter: '⌂'), const SizedBox(width: 9)]
+          else if (folder.isNotEmpty)
+            ...[ProjectIcon(projectLabel(_cwd), size: 24), const SizedBox(width: 9)],
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_title.isNotEmpty ? _title : 'New chat', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16)),
+              Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16)),
               if (folder.isNotEmpty)
                 Row(children: [
                   if (_busy) ...[PulseDot(color: t.accent, size: 6), const SizedBox(width: 2)],

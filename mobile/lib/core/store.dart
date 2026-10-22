@@ -70,10 +70,18 @@ class AppStore extends ChangeNotifier {
     return h.endsWith('sprites.app') || h.endsWith('fly.dev');
   }
 
+  /// What to call the user: the name in their Claude email ("nestor@…" → Nestor), else the
+  /// account name on the server.
+  String get displayName {
+    final local = auth.email.split('@').first;
+    final u = RegExp(r'^[A-Za-z]{2,}$').hasMatch(local) ? local : (boot?.user ?? '');
+    return u.isEmpty ? '' : '${u[0].toUpperCase()}${u.substring(1)}';
+  }
+
   String get computerName {
     if (isCloud) return 'Cloud computer';
-    final u = boot?.user ?? '';
-    return u.isEmpty ? 'Your Mac' : "${u[0].toUpperCase()}${u.substring(1)}'s Mac";
+    final u = displayName;
+    return u.isEmpty ? 'Your Mac' : "$u's Mac";
   }
 
   /// Tests and screens that mutate fields directly call this to repaint listeners.
@@ -94,6 +102,9 @@ class AppStore extends ChangeNotifier {
 
   /// On the web the app is served by the Bridge server itself, so the page origin is the server.
   String _defaultServer() {
+    // Dev builds: `flutter run --dart-define=BRIDGE_SERVER=http://localhost:4291` skips onboarding.
+    const dev = String.fromEnvironment('BRIDGE_SERVER');
+    if (dev.isNotEmpty) return dev;
     if (kIsWeb) {
       final u = Uri.base;
       if (u.host.isNotEmpty && u.host != 'localhost' || u.port == 4270 || u.port == 4271) return '${u.scheme}://${u.host}${u.hasPort ? ':${u.port}' : ''}';

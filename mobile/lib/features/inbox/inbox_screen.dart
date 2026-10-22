@@ -31,7 +31,7 @@ class _InboxScreenState extends State<InboxScreen> {
       for (final n in h.needs) (kind: 'need', id: n.id, key: n.key, cwd: cwdOf(n.id), title: n.title, sub: [if (n.ask.isNotEmpty) n.ask, if (n.projectName.isNotEmpty) n.projectName].join(' · '), at: n.since),
       for (final r in h.running) (kind: 'run', id: r.id, key: r.key, cwd: r.cwd, title: r.title, sub: [if (r.step.isNotEmpty) r.step, if (r.projectName.isNotEmpty) r.projectName].join(' · '), at: r.started),
       for (final s in _store.recent.where((s) => !busy.contains(s.id)).take(40))
-        (kind: 'done', id: s.id, key: s.key, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, sub: [if (s.projectName.isNotEmpty) s.projectName else s.folder, if (s.preview.isNotEmpty && s.preview != s.title) s.preview].join(' · '), at: s.mtime),
+        (kind: 'done', id: s.id, key: s.key, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, sub: [projectNameOf(s), if (s.preview.isNotEmpty && s.preview != s.title) s.preview].join(' · '), at: s.mtime),
     ].where((x) => _filter == 'all' || x.kind == _filter).toList();
   }
 

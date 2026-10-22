@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -34,7 +35,8 @@ class Clock extends ChangeNotifier {
 String fmtElapsed(int sinceMs, {int? now}) {
   if (sinceMs <= 0) return '';
   final n = now ?? DateTime.now().millisecondsSinceEpoch;
-  final s = ((n - sinceMs) / 1000).floor().clamp(0, 1 << 31);
+  // No big shifts or clamps here: `1 << 31` is negative on dart2js.
+  final s = math.max(0, ((n - sinceMs) / 1000).floor());
   final h = s ~/ 3600, m = (s % 3600) ~/ 60, x = s % 60;
   if (h > 0) return '${h}h ${m.toString().padLeft(2, '0')}m';
   if (m > 0) return '${m}m ${x.toString().padLeft(2, '0')}s';
