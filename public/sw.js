@@ -1,7 +1,7 @@
 /* Bridge service worker: makes the client installable and keeps the shell openable offline.
  * Network first for everything; the last good copy of the shell is the fallback. /api is never cached. */
-const SHELL = "bridge-shell-v1";
-const FILES = ["/", "/index.html", "/style.css", "/app.js", "/desk.js", "/manifest.webmanifest", "/icon.svg"];
+const SHELL = "bridge-shell-v2";
+const FILES = ["/", "/index.html", "/style.css", "/app.js", "/views.js", "/voice.js", "/manifest.webmanifest", "/icon.svg"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(FILES)).catch(() => {}));
   self.skipWaiting();
