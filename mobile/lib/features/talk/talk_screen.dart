@@ -1,6 +1,6 @@
-/// The home tab: talk to the desk (the server's long-lived assistant session).
-/// Voice mode shows the orb, two caption lines and a hold-to-talk mic. Text mode shows the chat.
-/// Contract: docs/api-contract.md §6 (desk) and §7 (voice).
+/// Talk: a full-screen voice overlay over the desk (the server's long-lived assistant session).
+/// Voice mode shows the orb, two caption lines and a hold-to-talk mic. The keyboard button swaps
+/// to the desk conversation as text. Contract: docs/api-contract.md §6 (desk) and §7 (voice).
 library;
 
 import 'dart:async';
@@ -17,9 +17,20 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/api.dart';
 import '../../core/models.dart';
 import '../../core/store.dart';
+import '../../core/nav.dart';
 import '../../core/theme.dart';
 import '../../widgets/common.dart';
 import '../../widgets/orb.dart';
+import '../settings/settings_screen.dart';
+
+/// Opens Talk over whatever is on screen.
+Future<void> openTalk(BuildContext context) => Nav.instance.navigatorKey.currentState!.push(PageRouteBuilder<void>(
+      opaque: true,
+      transitionDuration: const Duration(milliseconds: 220),
+      reverseTransitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (_, _, _) => const TalkScreen(),
+      transitionsBuilder: (_, a, _, child) => FadeTransition(opacity: a, child: ScaleTransition(scale: Tween(begin: .98, end: 1.0).animate(a), child: child)),
+    ));
 
 /// One row of the desk conversation. kind ∈ user · assistant · tool.
 class _Item {
@@ -29,17 +40,14 @@ class _Item {
   bool live;
 }
 
-class AssistantTab extends StatefulWidget {
-  const AssistantTab({super.key});
-
-  /// Set to a tab index to ask the Shell to switch tabs (3 = Settings). The Shell resets it to -1.
-  static final ValueNotifier<int> requestedTab = ValueNotifier(-1);
+class TalkScreen extends StatefulWidget {
+  const TalkScreen({super.key});
 
   @override
-  State<AssistantTab> createState() => _AssistantTabState();
+  State<TalkScreen> createState() => _TalkScreenState();
 }
 
-class _AssistantTabState extends State<AssistantTab> {
+class _TalkScreenState extends State<TalkScreen> {
   final store = AppStore.instance;
 
   // ── desk stream ──
@@ -61,7 +69,6 @@ class _AssistantTabState extends State<AssistantTab> {
   String? _echoSkip; // optimistic text we already showed; skip its echo once
   String _youCaption = '';
   String _daCaption = '';
-  final List<LiveEvent> _events = [];
 
   // ── voice ──
   final SpeechToText _stt = SpeechToText();
@@ -126,7 +133,6 @@ class _AssistantTabState extends State<AssistantTab> {
     _sub?.cancel();
     _sub = null;
     _items.clear();
-    _events.clear();
     _liveText = null;
     _turnReply = null;
     _historyLoaded = false;
@@ -199,12 +205,6 @@ class _AssistantTabState extends State<AssistantTab> {
       case 'da':
         final d = f.dMap;
         if (d != null) _onDa(d, f.json['ts']);
-      case 'event':
-        final m = f.dMap;
-        if (m != null) {
-          _events.insert(0, LiveEvent.fromJson(m));
-          if (_events.length > 100) _events.removeLast();
-        }
     }
     if (seq is num && seq.toInt() > _seq) _seq = seq.toInt();
     if (mounted) setState(() {});
@@ -582,30 +582,25 @@ class _AssistantTabState extends State<AssistantTab> {
     };
   }
 
-  List<LiveEvent> get _allEvents {
-    final seen = <String>{};
-    final all = <LiveEvent>[];
-    for (final e in [..._events, ...store.live.events]) {
-      if (seen.add('${e.kind}|${e.id}|${e.at}')) all.add(e);
-    }
-    all.sort((a, b) => b.at.compareTo(a.at));
-    return all;
-  }
-
   // ═══ ui ═══════════════════════════════════════════════════════════════
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    return ColoredBox(
-      color: t.bg,
-      child: SafeArea(
-        child: Column(children: [
-          _header(context),
-          ..._banners(context),
-          Expanded(child: AnimatedSwitcher(duration: const Duration(milliseconds: 180), child: _textMode ? _chat(context) : _voice(context))),
-          if (_textMode) _composer(context) else _voiceControls(context),
-        ]),
+    return Scaffold(
+      backgroundColor: t.bg,
+      body: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(center: const Alignment(0, -.2), radius: .9, colors: [Color.alphaBlend(store.accent.withValues(alpha: .16), t.bg), t.bg]),
+        ),
+        child: SafeArea(
+          child: Column(children: [
+            _header(context),
+            ..._banners(context),
+            Expanded(child: AnimatedSwitcher(duration: const Duration(milliseconds: 180), child: _textMode ? _chat(context) : _voice(context))),
+            if (_textMode) _composer(context) else _voiceControls(context),
+          ]),
+        ),
       ),
     );
   }
@@ -621,8 +616,10 @@ class _AssistantTabState extends State<AssistantTab> {
       _ => store.auth.loggedIn ? t.ok : t.warn,
     };
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 12, 4),
+      padding: const EdgeInsets.fromLTRB(6, 6, 12, 4),
       child: Row(children: [
+        IconButton(tooltip: 'Close', onPressed: () => Navigator.of(context).maybePop(), icon: Icon(Icons.close_rounded, color: t.muted)),
+        const SizedBox(width: 4),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(store.assistantName, style: TextStyle(color: t.fg, fontSize: 22, fontWeight: FontWeight.w700)),
@@ -634,18 +631,27 @@ class _AssistantTabState extends State<AssistantTab> {
             ]),
           ]),
         ),
-        if (_textMode)
-          // Same sheet as the voice-mode button; 48x48 hit area.
-          SizedBox.square(
-            dimension: 48,
-            child: IconButton(
-              tooltip: 'Updates',
-              onPressed: () => _openUpdates(context),
-              style: IconButton.styleFrom(minimumSize: const Size(48, 48), tapTargetSize: MaterialTapTargetSize.padded),
-              icon: Badge(isLabelVisible: _allEvents.isNotEmpty, smallSize: 7, backgroundColor: t.accent, child: Icon(Icons.notifications_none_rounded, color: t.muted)),
-            ),
-          ),
+        _handsFreePill(context),
       ]),
+    );
+  }
+
+  Widget _handsFreePill(BuildContext context) {
+    final t = context.t;
+    final on = store.handsFree;
+    return Material(
+      color: on ? t.accentSoft : t.raised,
+      shape: StadiumBorder(side: BorderSide(color: on ? t.accent.withValues(alpha: .4) : t.border)),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: () => store.setHandsFree(!on),
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          alignment: Alignment.center,
+          child: Text(on ? 'Hands-free on' : 'Hands-free off', style: TextStyle(color: on ? t.accent : t.muted, fontSize: 13, fontWeight: FontWeight.w600)),
+        ),
+      ),
     );
   }
 
@@ -656,7 +662,7 @@ class _AssistantTabState extends State<AssistantTab> {
       out.add(Card2(
         margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
         accent: true,
-        onTap: () => AssistantTab.requestedTab.value = 3,
+        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen())),
         child: Row(children: [
           Icon(Icons.lock_outline_rounded, color: t.accent, size: 20),
           const SizedBox(width: 12),
@@ -775,25 +781,22 @@ class _AssistantTabState extends State<AssistantTab> {
             child: Icon(_listening ? Icons.graphic_eq_rounded : Icons.mic_rounded, size: 30, color: _listening ? t.accentFg : (offline ? t.faint : t.fg)),
           ),
         ),
-        _roundButton(context, Icons.notifications_none_rounded, 'Updates', () => _openUpdates(context), badge: _allEvents.isNotEmpty),
+        _roundButton(context, Icons.close_rounded, 'End voice', () => Navigator.of(context).maybePop(), danger: true),
       ]),
     );
   }
 
-  Widget _roundButton(BuildContext context, IconData icon, String tip, VoidCallback onTap, {bool badge = false}) {
+  Widget _roundButton(BuildContext context, IconData icon, String tip, VoidCallback onTap, {bool danger = false}) {
     final t = context.t;
     return Tooltip(
       message: tip,
       child: Material(
-        color: t.raised,
-        shape: CircleBorder(side: BorderSide(color: t.border)),
+        color: danger ? t.err : t.raised,
+        shape: CircleBorder(side: BorderSide(color: danger ? Colors.transparent : t.border)),
         child: InkWell(
           customBorder: const CircleBorder(),
           onTap: onTap,
-          child: SizedBox.square(
-            dimension: 52,
-            child: Badge(isLabelVisible: badge, smallSize: 7, backgroundColor: t.accent, child: Icon(icon, color: t.muted, size: 22)),
-          ),
+          child: SizedBox.square(dimension: 54, child: Icon(icon, color: danger ? Colors.white : t.muted, size: 22)),
         ),
       ),
     );
@@ -959,67 +962,6 @@ class _AssistantTabState extends State<AssistantTab> {
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
           children: [_markdown(context, text)],
         ),
-      ),
-    );
-  }
-
-  void _openUpdates(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => ListenableBuilder(
-        listenable: store,
-        builder: (context, _) {
-          final t = context.t;
-          final evs = _allEvents;
-          return DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: .6,
-            maxChildSize: .95,
-            builder: (context, scroll) => evs.isEmpty
-                ? ListView(controller: scroll, children: const [EmptyState(icon: Icons.notifications_none_rounded, title: 'Nothing yet', body: 'What your sessions do lands here.')])
-                : ListView.separated(
-                    controller: scroll,
-                    padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
-                    itemCount: evs.length + 1,
-                    separatorBuilder: (_, i) => i == 0 ? const SizedBox.shrink() : Divider(height: 1, indent: 44, color: t.border),
-                    itemBuilder: (context, i) {
-                      if (i == 0) return const SectionHeader('Updates');
-                      final e = evs[i - 1];
-                      final color = switch (e.kind) {
-                        'waiting' => t.err,
-                        'done' => t.ok,
-                        'started' => t.accent,
-                        _ => t.faint,
-                      };
-                      final title = e.title.isNotEmpty ? e.title : (e.name.isNotEmpty ? e.name : e.folder);
-                      return Padding(
-                        padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
-                        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Padding(padding: const EdgeInsets.only(top: 6), child: StatusDot(color, size: 8)),
-                          const SizedBox(width: 18),
-                          Expanded(
-                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Row(children: [
-                                Expanded(child: Text(title.isEmpty ? 'Session' : title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 15, fontWeight: FontWeight.w600))),
-                                const SizedBox(width: 8),
-                                Text(relTime(e.at), style: TextStyle(color: t.faint, fontSize: 12)),
-                              ]),
-                              const SizedBox(height: 2),
-                              Text([e.kind, if (e.folder.isNotEmpty) e.folder].join(' · '), style: TextStyle(color: t.muted, fontSize: 12.5)),
-                              if (e.text.isNotEmpty) ...[
-                                const SizedBox(height: 4),
-                                Text(e.text, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 14)),
-                              ],
-                            ]),
-                          ),
-                        ]),
-                      );
-                    },
-                  ),
-          );
-        },
       ),
     );
   }

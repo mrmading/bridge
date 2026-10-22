@@ -65,6 +65,12 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  fonts:
+    # The "B" brand mark and the BRIDGE wordmark (SIL OFL, assets/fonts/OFL.txt).
+    - family: Orbitron
+      fonts:
+        - asset: assets/fonts/Orbitron.ttf
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

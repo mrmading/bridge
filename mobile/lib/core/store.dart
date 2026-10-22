@@ -1,5 +1,5 @@
-/// App-wide state: which server, who we are, what is live. One ChangeNotifier, read with
-/// `AppStore.of(context)`. Screens call the API through `store.api`.
+/// App-wide state: which server, who we are, what is running and waiting. One ChangeNotifier,
+/// read with `AppStore.of(context)`. Screens call the API through `store.api`.
 library;
 
 import 'dart:async';
@@ -30,18 +30,21 @@ class AppStore extends ChangeNotifier {
   Bootstrap? boot;
   AuthStatus auth = AuthStatus.signedOut;
   VoiceHealth voice = VoiceHealth.unknown;
-  LiveSnapshot live = LiveSnapshot(now: 0, sessions: const [], events: const []);
+  /// Needs you · working now · made for you · projects. Polled every 5 s in the foreground.
+  HomeData home = HomeData.empty;
   List<SessionMeta> recent = const [];
+  List<Project> projects = const [];
   List<AgentInfo> agents = const [];
   List<String> roots = const [];
   TurnOptions turn = TurnOptions();
   bool speakReplies = true;
   bool handsFree = false;
+  /// Settings › Advanced: raw tool calls in chats instead of the one-line work summary.
+  bool showTech = false;
   ThemeMode themeMode = ThemeMode.system;
-  /// The id of a session this app started that is still running (sessionId → cwd).
-  final Map<String, String> runningTurns = {};
 
-  Timer? _liveTimer;
+  Timer? _homeTimer;
+  int _homeTicks = 0;
   bool _foreground = true;
 
   String get assistantName => boot?.assistant.isNotEmpty == true ? boot!.assistant : 'Assistant';
@@ -51,13 +54,37 @@ class AppStore extends ChangeNotifier {
     return m == null ? const Color(0xFF4AA8FF) : Color(int.parse('FF${m.group(1)}', radix: 16));
   }
 
-  int get waitingCount => live.sessions.where((s) => s.waiting != null).length;
+  int get waitingCount => home.needs.length;
+  bool isRunning(String id) => home.running.any((r) => r.id == id);
+  bool needsYou(String id) => home.needs.any((n) => n.id == id);
+  Run? runFor(String id) {
+    for (final r in home.running) {
+      if (r.id == id) return r;
+    }
+    return null;
+  }
+
+  /// Where chats run: a Fly sprite is the cloud computer, anything else is the user's Mac.
+  bool get isCloud {
+    final h = Uri.tryParse(serverUrl.contains('://') ? serverUrl : 'https://$serverUrl')?.host ?? '';
+    return h.endsWith('sprites.app') || h.endsWith('fly.dev');
+  }
+
+  String get computerName {
+    if (isCloud) return 'Cloud computer';
+    final u = boot?.user ?? '';
+    return u.isEmpty ? 'Your Mac' : "${u[0].toUpperCase()}${u.substring(1)}'s Mac";
+  }
+
+  /// Tests and screens that mutate fields directly call this to repaint listeners.
+  void changed() => notifyListeners();
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
     serverUrl = _prefs.getString('server') ?? _defaultServer();
     speakReplies = _prefs.getBool('speak') ?? true;
     handsFree = _prefs.getBool('handsFree') ?? false;
+    showTech = _prefs.getBool('showTech') ?? false;
     themeMode = ThemeMode.values[_prefs.getInt('theme') ?? 0];
     try {
       turn = TurnOptions.fromJson(jsonDecode(_prefs.getString('turn') ?? '{}') as Map<String, dynamic>);
@@ -76,6 +103,7 @@ class AppStore extends ChangeNotifier {
 
   Future<bool> connect(String url) async {
     serverUrl = url.trim();
+    _homeMissing = false;
     _api?.close();
     _api = BridgeApi(serverUrl);
     conn = ConnState.connecting;
@@ -88,7 +116,7 @@ class AppStore extends ChangeNotifier {
       await _prefs.setString('server', serverUrl);
       notifyListeners();
       unawaited(refreshAll());
-      _startLivePolling();
+      _startHomePolling();
       return true;
     } catch (e) {
       conn = ConnState.failed;
@@ -105,12 +133,15 @@ class AppStore extends ChangeNotifier {
       api.recent(limit: 80).catchError((_) => <SessionMeta>[]),
       api.agents().catchError((_) => <AgentInfo>[]),
       api.roots().catchError((_) => <String>[]),
+      api.projects().catchError((_) => <Project>[]),
     ]);
     voice = results[0] as VoiceHealth;
     recent = results[1] as List<SessionMeta>;
     agents = results[2] as List<AgentInfo>;
     roots = results[3] as List<String>;
+    projects = results[4] as List<Project>;
     notifyListeners();
+    await pollHome();
   }
 
   Future<void> refreshRecent() async {
@@ -125,23 +156,40 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _startLivePolling() {
-    _liveTimer?.cancel();
-    _liveTimer = Timer.periodic(const Duration(seconds: 5), (_) => pollLive());
-    pollLive();
+  void _startHomePolling() {
+    _homeTimer?.cancel();
+    _homeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      // The drawer's chat list changes slower than running work: refresh it every 20 s.
+      if (++_homeTicks % 4 == 0) unawaited(refreshRecent());
+      pollHome();
+    });
   }
 
-  Future<void> pollLive() async {
+  bool _homeMissing = false;
+
+  Future<void> pollHome() async {
     if (!hasServer || !_foreground || conn != ConnState.ready) return;
-    try {
-      live = await api.live();
+    if (!_homeMissing) {
+      try {
+        home = await api.home();
+        notifyListeners();
+        return;
+      } on ApiException catch (e) {
+        // An older server: derive what we can from /api/recent and stop asking.
+        if (e.status == 404) _homeMissing = true;
+      } catch (_) {
+        return;
+      }
+    }
+    if (_homeMissing) {
+      home = HomeData.derive(recent, projects);
       notifyListeners();
-    } catch (_) {}
+    }
   }
 
   void setForeground(bool fg) {
     _foreground = fg;
-    if (fg) pollLive();
+    if (fg) pollHome();
   }
 
   Future<void> setTurn(TurnOptions t) async {
@@ -162,6 +210,12 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setShowTech(bool v) async {
+    showTech = v;
+    await _prefs.setBool('showTech', v);
+    notifyListeners();
+  }
+
   Future<void> setTheme(ThemeMode m) async {
     themeMode = m;
     await _prefs.setInt('theme', m.index);
@@ -169,7 +223,9 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> forgetServer() async {
-    _liveTimer?.cancel();
+    _homeTimer?.cancel();
+    _homeMissing = false;
+    home = HomeData.empty;
     _api?.close();
     _api = null;
     serverUrl = '';

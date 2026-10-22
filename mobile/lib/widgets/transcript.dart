@@ -118,16 +118,17 @@ Future<void> openLink(String? href) async {
 }
 
 class AssistantText extends StatelessWidget {
-  const AssistantText({super.key, required this.msg, this.onChoice});
+  const AssistantText({super.key, required this.msg, this.onChoice, this.padding = const EdgeInsets.fromLTRB(16, 8, 16, 4)});
   final Msg msg;
   final ValueChanged<String>? onChoice;
+  final EdgeInsets padding;
   @override
   Widget build(BuildContext context) {
     // While streaming, a half-written ```choices block is just text; split once it is complete.
     final split = msg.live ? (text: msg.text, options: const <String>[]) : splitChoices(msg.text);
     final text = split.text.trim();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      padding: padding,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (text.isNotEmpty)
           MarkdownBody(
@@ -142,6 +143,8 @@ class AssistantText extends StatelessWidget {
   }
 }
 
+/// A decision the assistant asked for (a ```choices block): a warm card with one big button per
+/// option. Tapping sends the option as the next message.
 class ChoiceChips extends StatelessWidget {
   const ChoiceChips({super.key, required this.options, this.onChoice});
   final List<String> options;
@@ -149,17 +152,46 @@ class ChoiceChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Wrap(spacing: 8, runSpacing: 8, children: [
-        for (final o in options)
-          ActionChip(
-            label: Text(o, style: TextStyle(color: t.accent, fontSize: 14, fontWeight: FontWeight.w600)),
-            backgroundColor: t.accentSoft,
-            materialTapTargetSize: MaterialTapTargetSize.padded,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: t.accent.withValues(alpha: .35))),
-            onPressed: onChoice == null ? null : () => onChoice!(o),
+    return Container(
+      margin: const EdgeInsets.only(top: 10, bottom: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: t.warnSoft.withValues(alpha: .55), borderRadius: BorderRadius.circular(14), border: Border.all(color: t.warn.withValues(alpha: .45))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8, left: 2),
+          child: Row(children: [
+            Icon(Icons.back_hand_outlined, size: 15, color: t.warn),
+            const SizedBox(width: 7),
+            Text(onChoice == null ? 'You were asked' : 'Your call', style: TextStyle(color: t.warn, fontSize: 13, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+        for (var i = 0; i < options.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Material(
+              color: t.raised,
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: onChoice == null ? null : () => onChoice!(options[i]),
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 46),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: t.border)),
+                  child: Row(children: [
+                    Container(
+                      width: 22,
+                      height: 22,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(color: t.active, borderRadius: BorderRadius.circular(7)),
+                      child: Text('${i + 1}', style: TextStyle(color: t.fg, fontSize: 12, fontWeight: FontWeight.w700)),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(options[i], style: TextStyle(color: onChoice == null ? t.muted : t.fg, fontSize: 14.5, fontWeight: FontWeight.w600))),
+                  ]),
+                ),
+              ),
+            ),
           ),
       ]),
     );

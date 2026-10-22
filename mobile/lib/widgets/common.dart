@@ -61,7 +61,7 @@ class SectionHeader extends StatelessWidget {
           Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1), decoration: BoxDecoration(color: t.active, borderRadius: BorderRadius.circular(10)), child: Text('$count', style: TextStyle(color: t.muted, fontSize: 11, fontWeight: FontWeight.w700))),
         ],
         const Spacer(),
-        if (trailing != null) trailing!,
+        ?trailing,
       ]),
     );
   }

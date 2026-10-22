@@ -50,10 +50,12 @@ class Project {
 }
 
 class SessionMeta {
-  SessionMeta({required this.id, required this.key, required this.title, required this.preview, required this.mtime, required this.turns, this.model = '', this.cwd = '', this.branch = '', this.named = false, this.projectKey = '', this.projectName = '', this.projectPath = ''});
+  SessionMeta({required this.id, required this.key, required this.title, required this.preview, required this.mtime, required this.turns, this.model = '', this.cwd = '', this.branch = '', this.named = false, this.projectKey = '', this.projectName = '', this.projectPath = '', this.running = false, this.needs = false});
   final String id, key, title, preview, model, cwd, branch, projectKey, projectName, projectPath;
   final int mtime, turns;
   final bool named;
+  /// A turn is running on the server right now / the chat is waiting on an answer.
+  final bool running, needs;
   factory SessionMeta.fromJson(Map<String, dynamic> j) => SessionMeta(
         id: _s(j['id']),
         key: _s(j['key']),
@@ -69,6 +71,8 @@ class SessionMeta {
         projectKey: _s(j['key']).isNotEmpty ? _s(j['key']) : _s(j['project']),
         projectName: _s(j['projectName']),
         projectPath: _s(j['projectPath']).isNotEmpty ? _s(j['projectPath']) : _s(j['cwd']),
+        running: _b(j['running']),
+        needs: _b(j['needs']),
       );
   String get folder {
     final p = projectPath.isNotEmpty ? projectPath : cwd;
@@ -162,58 +166,6 @@ class Transcript {
   }
 }
 
-class Waiting {
-  Waiting({required this.kind, required this.text, required this.options});
-  final String kind, text;
-  final List<String> options;
-  factory Waiting.fromJson(Map<String, dynamic> j) => Waiting(kind: _s(j['kind']), text: _s(j['text']), options: List<String>.from(j['options'] ?? const []));
-}
-
-class LiveSession {
-  LiveSession({required this.pid, required this.id, required this.key, required this.cwd, required this.name, required this.status, required this.title, required this.folder, required this.last, required this.lastTs, required this.lastUser, required this.startedAt, required this.updatedAt, required this.turns, this.waiting});
-  final int pid, lastTs, startedAt, updatedAt, turns;
-  final String id, key, cwd, name, status, title, folder, last, lastUser;
-  final Waiting? waiting;
-  bool get busy => status == 'busy';
-  factory LiveSession.fromJson(Map<String, dynamic> j) => LiveSession(
-        pid: _i(j['pid']),
-        id: _s(j['id']),
-        key: _s(j['key']),
-        cwd: _s(j['cwd']),
-        name: _s(j['name']),
-        status: _s(j['status']),
-        title: _s(j['title']),
-        folder: _s(j['folder']),
-        last: _s(j['last']),
-        lastTs: _i(j['lastTs']),
-        lastUser: _s(j['lastUser']),
-        startedAt: _i(j['startedAt']),
-        updatedAt: _i(j['updatedAt']),
-        turns: _i(j['turns']),
-        waiting: j['waiting'] is Map ? Waiting.fromJson(Map<String, dynamic>.from(j['waiting'] as Map)) : null,
-      );
-}
-
-class LiveEvent {
-  LiveEvent({required this.kind, required this.at, required this.id, required this.key, required this.name, required this.folder, required this.cwd, required this.title, required this.text, required this.options});
-  final String kind, id, key, name, folder, cwd, title, text;
-  final int at;
-  final List<String> options;
-  factory LiveEvent.fromJson(Map<String, dynamic> j) => LiveEvent(kind: _s(j['kind']), at: _i(j['at']), id: _s(j['id']), key: _s(j['key']), name: _s(j['name']), folder: _s(j['folder']), cwd: _s(j['cwd']), title: _s(j['title']), text: _s(j['text']), options: List<String>.from(j['options'] ?? const []));
-}
-
-class LiveSnapshot {
-  LiveSnapshot({required this.now, required this.sessions, required this.events});
-  final int now;
-  final List<LiveSession> sessions;
-  final List<LiveEvent> events;
-  factory LiveSnapshot.fromJson(Map<String, dynamic> j) => LiveSnapshot(
-        now: _i(j['now']),
-        sessions: [for (final s in (j['sessions'] as List? ?? const [])) LiveSession.fromJson(Map<String, dynamic>.from(s as Map))],
-        events: [for (final e in (j['events'] as List? ?? const [])) LiveEvent.fromJson(Map<String, dynamic>.from(e as Map))],
-      );
-}
-
 class DaState {
   DaState({required this.alive, required this.busy, required this.sessionId, required this.historyId, required this.turns, required this.queued, required this.error, required this.name, required this.model, required this.permissionMode});
   final bool alive, busy;
@@ -266,9 +218,146 @@ class DirListing {
 }
 
 class AgentInfo {
-  AgentInfo({required this.name, required this.description, required this.category});
-  final String name, description, category;
-  factory AgentInfo.fromJson(Map<String, dynamic> j) => AgentInfo(name: _s(j['name']), description: _s(j['description']), category: _s(j['category']));
+  AgentInfo({required this.name, required this.description, required this.category, this.model = '', this.color = '', this.source = ''});
+  final String name, description, category, model, color, source;
+  factory AgentInfo.fromJson(Map<String, dynamic> j) => AgentInfo(name: _s(j['name']), description: _s(j['description']), category: _s(j['category']), model: _s(j['model']), color: _s(j['color']), source: _s(j['source']));
+}
+
+class SkillInfo {
+  SkillInfo({required this.name, required this.description, required this.source, required this.path});
+  final String name, description, source, path;
+  factory SkillInfo.fromJson(Map<String, dynamic> j) => SkillInfo(name: _s(j['name']), description: _s(j['description']), source: _s(j['source']), path: _s(j['path']));
+}
+
+class HookInfo {
+  HookInfo({required this.event, required this.matcher, required this.command});
+  final String event, matcher, command;
+  factory HookInfo.fromJson(Map<String, dynamic> j) => HookInfo(event: _s(j['event']), matcher: _s(j['matcher']), command: _s(j['command']));
+}
+
+// ── /api/home and /api/jobs ──────────────────────────────────────────────
+
+/// Background work inside a running chat. kind ∈ subagent · background · workflow · tool.
+class Job {
+  Job({required this.kind, required this.title, required this.since, this.agent = ''});
+  final String kind, title, agent;
+  /// epoch ms
+  final int since;
+  factory Job.fromJson(Map<String, dynamic> j) => Job(kind: _s(j['kind']), title: _s(j['title']), since: _i(j['since']), agent: _s(j['agent']));
+}
+
+List<Job> _jobs(dynamic v) => [for (final e in (v is List ? v : const [])) if (e is Map) Job.fromJson(Map<String, dynamic>.from(e))];
+
+/// A chat with a turn running right now.
+class Run {
+  Run({required this.id, required this.key, required this.title, required this.projectName, required this.cwd, required this.started, required this.prompt, required this.model, required this.step, required this.jobs});
+  final String id, key, title, projectName, cwd, prompt, model, step;
+  /// epoch ms
+  final int started;
+  final List<Job> jobs;
+  factory Run.fromJson(Map<String, dynamic> j) => Run(
+        id: _s(j['id']),
+        key: _s(j['key']),
+        title: _s(j['title']).isNotEmpty ? _s(j['title']) : (_s(j['prompt']).isNotEmpty ? _s(j['prompt']) : 'Untitled chat'),
+        projectName: _s(j['projectName']),
+        cwd: _s(j['cwd']),
+        // Prefer `started`; fall back to now - elapsed when only a duration is sent.
+        started: _i(j['started']) > 0 ? _i(j['started']) : (_i(j['elapsed']) > 0 ? DateTime.now().millisecondsSinceEpoch - _i(j['elapsed']) : 0),
+        prompt: _s(j['prompt']),
+        model: _s(j['model']),
+        step: _s(j['step']),
+        jobs: _jobs(j['jobs']),
+      );
+}
+
+/// A chat waiting on the user.
+class Need {
+  Need({required this.id, required this.key, required this.title, required this.projectName, required this.ask, required this.since});
+  final String id, key, title, projectName, ask;
+  final int since;
+  factory Need.fromJson(Map<String, dynamic> j) => Need(id: _s(j['id']), key: _s(j['key']), title: _s(j['title']).isEmpty ? 'Untitled chat' : _s(j['title']), projectName: _s(j['projectName']), ask: _s(j['ask']), since: _i(j['since']));
+}
+
+/// A file a chat wrote.
+class Made {
+  Made({required this.path, required this.name, required this.ext, required this.sessionId, required this.key, required this.sessionTitle, required this.mtime});
+  final String path, name, ext, sessionId, key, sessionTitle;
+  final int mtime;
+  factory Made.fromJson(Map<String, dynamic> j) {
+    final path = _s(j['path']);
+    final name = _s(j['name']).isNotEmpty ? _s(j['name']) : path.split('/').last;
+    final dot = name.lastIndexOf('.');
+    return Made(
+      path: path,
+      name: name,
+      ext: (_s(j['ext']).isNotEmpty ? _s(j['ext']) : (dot > 0 ? name.substring(dot + 1) : '')).replaceFirst('.', '').toUpperCase(),
+      sessionId: _s(j['sessionId']),
+      key: _s(j['key']),
+      sessionTitle: _s(j['sessionTitle']),
+      mtime: _i(j['mtime']),
+    );
+  }
+}
+
+class HomeProject {
+  HomeProject({required this.key, required this.name, required this.path, required this.count, required this.mtime});
+  final String key, name, path;
+  final int count, mtime;
+  factory HomeProject.fromJson(Map<String, dynamic> j) => HomeProject(key: _s(j['key']), name: _s(j['name']), path: _s(j['path']), count: _i(j['count']), mtime: _i(j['mtime']));
+}
+
+class HomeData {
+  HomeData({this.user = '', this.assistant = '', this.running = const [], this.needs = const [], this.made = const [], this.projects = const [], this.derived = false});
+  final String user, assistant;
+  final List<Run> running;
+  final List<Need> needs;
+  final List<Made> made;
+  final List<HomeProject> projects;
+  /// true when built from /api/recent because the server has no /api/home yet
+  final bool derived;
+  factory HomeData.fromJson(Map<String, dynamic> j) {
+    List<T> list<T>(String k, T Function(Map<String, dynamic>) f) => [for (final e in (j[k] is List ? j[k] as List : const [])) if (e is Map) f(Map<String, dynamic>.from(e))];
+    return HomeData(
+      user: _s(j['user']),
+      assistant: _s(j['assistant']),
+      running: list('running', Run.fromJson),
+      needs: list('needs', Need.fromJson),
+      made: list('made', Made.fromJson),
+      projects: list('projects', HomeProject.fromJson),
+    );
+  }
+
+  /// What an older server can still tell us: running/needs flags on recent chats, projects.
+  factory HomeData.derive(List<SessionMeta> recent, List<Project> projects) => HomeData(
+        derived: true,
+        running: [
+          for (final s in recent.where((s) => s.running))
+            Run(id: s.id, key: s.key, title: s.title, projectName: s.projectName, cwd: s.cwd, started: s.mtime, prompt: s.preview, model: s.model, step: '', jobs: const []),
+        ],
+        needs: [
+          for (final s in recent.where((s) => s.needs)) Need(id: s.id, key: s.key, title: s.title, projectName: s.projectName, ask: s.preview, since: s.mtime),
+        ],
+        projects: [
+          for (final p in projects) HomeProject(key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity),
+        ],
+      );
+  static final empty = HomeData();
+}
+
+/// GET /api/jobs: the live state of one chat.
+class JobsState {
+  JobsState({required this.running, required this.started, required this.step, required this.jobs});
+  final bool running;
+  final int started;
+  final String step;
+  final List<Job> jobs;
+  factory JobsState.fromJson(Map<String, dynamic> j) => JobsState(
+        running: _b(j['running']),
+        started: _i(j['started']) > 0 ? _i(j['started']) : (_i(j['elapsed']) > 0 ? DateTime.now().millisecondsSinceEpoch - _i(j['elapsed']) : 0),
+        step: _s(j['step']),
+        jobs: _jobs(j['jobs']),
+      );
+  static final idle = JobsState(running: false, started: 0, step: '', jobs: const []);
 }
 
 /// Settings chosen for a turn; persisted per app, applied per session.

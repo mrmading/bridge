@@ -152,7 +152,7 @@ class BridgeApi {
   Future<List<SessionMeta>> recent({int limit = 60}) async => [for (final j in _l(await _get('/api/recent', q: {'limit': '$limit'}))) SessionMeta.fromJson(j)];
   Future<List<SessionMeta>> search(String q) async => q.trim().length < 2 ? const [] : [for (final j in _l(await _get('/api/search', q: {'q': q.trim()}))) SessionMeta.fromJson(j)];
   Future<List<SessionMeta>> find(String q, {String scope = 'all', String? key, String? cwd}) async =>
-      [for (final j in _l(await _get('/api/find', q: {'q': q, 'scope': scope, if (key != null) 'key': key, if (cwd != null) 'cwd': cwd}, timeout: const Duration(seconds: 60)))) SessionMeta.fromJson(j)];
+      [for (final j in _l(await _get('/api/find', q: {'q': q, 'scope': scope, 'key': ?key, 'cwd': ?cwd}, timeout: const Duration(seconds: 60)))) SessionMeta.fromJson(j)];
   Future<Transcript> session(String key, String id) async => Transcript.fromJson(_m(await _get('/api/session', q: {'key': key, 'id': id}, timeout: const Duration(seconds: 60))));
   Future<void> rename(String id, String title) => _post('/api/rename', {'id': id, 'title': title});
 
@@ -183,12 +183,12 @@ class BridgeApi {
   Future<bool> abort(String sessionId) async => _m(await _post('/api/abort', {'sessionId': sessionId}))['ok'] == true;
   Future<String> route(String prompt, {String previous = ''}) async => (_m(await _post('/api/route', {'prompt': prompt, 'previous': previous}))['agent'] ?? '').toString();
 
-  // ── live terminal sessions ───────────────────────────────────────────
-  Future<LiveSnapshot> live() async => LiveSnapshot.fromJson(_m(await _get('/api/live', timeout: const Duration(seconds: 15))));
-  Future<({bool ok, String error})> takeover(int pid, String id) async {
-    final j = _m(await _post('/api/live/takeover', {'pid': pid, 'id': id}, timeout: const Duration(seconds: 40)));
-    return (ok: j['ok'] == true, error: (j['error'] ?? '').toString());
-  }
+  // ── home + live work ─────────────────────────────────────────────────
+  /// Everything the Home screen and the drawer show. Throws ApiException(status: 404) on a server
+  /// that predates it; the store falls back to /api/recent then.
+  Future<HomeData> home() async => HomeData.fromJson(_m(await _get('/api/home', timeout: const Duration(seconds: 15))));
+  /// The live state of one chat; polled every few seconds while it is open.
+  Future<JobsState> jobs(String key, String id) async => JobsState.fromJson(_m(await _get('/api/jobs', q: {'key': key, 'id': id}, timeout: const Duration(seconds: 10))));
 
   // ── the desk (assistant) ─────────────────────────────────────────────
   Future<DaState> daState() async => DaState.fromJson(_m(await _get('/api/da/state')));
@@ -203,7 +203,7 @@ class BridgeApi {
   }
   Future<bool> daInterrupt() async => _m(await _post('/api/da/interrupt', {}))['ok'] == true;
   Future<DaState> daReset() async => DaState.fromJson(_m(await _post('/api/da/reset', {}, timeout: const Duration(seconds: 40))));
-  Future<DaState> daConfig({String? permissionMode, String? model}) async => DaState.fromJson(_m(await _post('/api/da/config', {if (permissionMode != null) 'permissionMode': permissionMode, if (model != null) 'model': model}, timeout: const Duration(seconds: 40))));
+  Future<DaState> daConfig({String? permissionMode, String? model}) async => DaState.fromJson(_m(await _post('/api/da/config', {'permissionMode': ?permissionMode, 'model': ?model}, timeout: const Duration(seconds: 40))));
 
   // ── voice ────────────────────────────────────────────────────────────
   Future<VoiceHealth> voiceHealth() async => VoiceHealth.fromJson(_m(await _get('/api/voice/health', timeout: const Duration(seconds: 15))));
@@ -236,6 +236,9 @@ class BridgeApi {
 
   // ── catalogs ─────────────────────────────────────────────────────────
   Future<List<AgentInfo>> agents() async => [for (final j in _l(await _get('/api/agents'))) AgentInfo.fromJson(j)];
+  Future<List<SkillInfo>> skills() async => [for (final j in _l(await _get('/api/skills'))) SkillInfo.fromJson(j)];
+  Future<List<HookInfo>> hooks() async => [for (final j in _l(await _get('/api/hooks'))) HookInfo.fromJson(j)];
+  Future<List<Map<String, dynamic>>> instructions() async => _l(await _get('/api/instructions'));
   Future<Map<String, dynamic>> activity() async => _m(await _get('/api/activity'));
   Future<Map<String, dynamic>> lifeos() async => _m(await _get('/api/lifeos'));
   Future<void> notify(String title, String body) => _post('/api/notify', {'title': title, 'subtitle': '', 'body': body}).catchError((_) => null);

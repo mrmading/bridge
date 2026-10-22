@@ -1,4 +1,6 @@
-/// Settings: server, Claude account, voice, appearance, the desk's mode and model, about.
+/// Settings: General (appearance, Claude account) · Voice · Defaults (teammate, freedom, model) ·
+/// Computers (this Bridge server) · Advanced (technical details, the assistant's desk, folders,
+/// global instructions) · About.
 library;
 
 import 'package:flutter/material.dart';
@@ -6,17 +8,22 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/models.dart';
+import '../../core/nav.dart';
 import '../../core/store.dart';
 import '../../core/theme.dart';
+import '../../widgets/bridge.dart';
 import '../../widgets/common.dart';
+import '../../widgets/composer.dart';
+import '../files/file_screen.dart';
+import '../session/session_utils.dart';
 
-class SettingsTab extends StatefulWidget {
-  const SettingsTab({super.key});
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
   @override
-  State<SettingsTab> createState() => _SettingsTabState();
+  State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsTabState extends State<SettingsTab> {
+class _SettingsScreenState extends State<SettingsScreen> {
   final store = AppStore.instance;
   late final TextEditingController _url = TextEditingController(text: store.serverUrl);
   final TextEditingController _code = TextEditingController();
@@ -226,23 +233,21 @@ class _SettingsTabState extends State<SettingsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.t;
-    return ColoredBox(
-      color: t.bg,
-      child: SafeArea(
-        child: ListView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.only(bottom: 32),
-          children: [
-            Padding(padding: const EdgeInsets.fromLTRB(20, 12, 20, 0), child: Text('Settings', style: TextStyle(color: t.fg, fontSize: 22, fontWeight: FontWeight.w700))),
-            ..._server(context),
-            ..._account(context),
-            ..._voice(context),
-            ..._appearance(context),
-            ..._desk(context),
-            ..._about(context),
-          ],
-        ),
+    return Scaffold(
+      appBar: AppBar(titleSpacing: 0, title: const Text('Settings')),
+      body: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.only(bottom: 32),
+        children: [
+          ..._appearance(context),
+          ..._account(context),
+          ..._voice(context),
+          ..._defaults(context),
+          ..._server(context),
+          ..._advanced(context),
+          ..._desk(context),
+          ..._about(context),
+        ],
       ),
     );
   }
@@ -251,7 +256,24 @@ class _SettingsTabState extends State<SettingsTab> {
     final t = context.t;
     final ready = store.conn == ConnState.ready;
     return [
-      const SectionHeader('Server'),
+      const SectionHeader('Computers'),
+      Card2(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(children: [
+          ListTile(
+            leading: Icon(store.isCloud ? Icons.cloud_outlined : Icons.laptop_mac_rounded, color: t.accent),
+            title: Text(store.computerName, style: TextStyle(color: t.fg, fontSize: 16)),
+            subtitle: Text(store.isCloud ? 'Keeps working when your Mac sleeps or the app is closed' : 'Fast, uses your local tools and simulators', style: TextStyle(color: t.muted, fontSize: 13)),
+            trailing: ready ? const Tag('Online', kind: 'ok') : const Tag('Offline'),
+          ),
+          Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
+          ListTile(
+            leading: Icon(Icons.devices_rounded, color: t.muted),
+            title: Text('Same chats everywhere', style: TextStyle(color: t.fg, fontSize: 16)),
+            subtitle: Text('Desktop, phone and web are one Bridge. Every chat starts here; no terminal, no syncing.', style: TextStyle(color: t.muted, fontSize: 13)),
+          ),
+        ]),
+      ),
       Card2(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           TextField(
@@ -427,7 +449,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
   List<Widget> _appearance(BuildContext context) {
     return [
-      const SectionHeader('Appearance'),
+      const SectionHeader('General'),
       Card2(
         child: SizedBox(
           width: double.infinity,
@@ -446,6 +468,84 @@ class _SettingsTabState extends State<SettingsTab> {
     ];
   }
 
+  List<Widget> _defaults(BuildContext context) {
+    final t = context.t;
+    final turn = store.turn;
+    Widget row(String title, String value, VoidCallback onTap, {Widget? lead}) => ListTile(
+          onTap: onTap,
+          minTileHeight: 52,
+          leading: lead,
+          title: Text(title, style: TextStyle(color: t.fg, fontSize: 16)),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(value, style: TextStyle(color: t.muted, fontSize: 14)),
+            Icon(Icons.chevron_right_rounded, color: t.faint),
+          ]),
+        );
+    return [
+      const SectionHeader('Defaults for new messages'),
+      Card2(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(children: [
+          row('Teammate', agentLabel(turn.agent), () => showAgentSheet(context)),
+          Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
+          row('Freedom', modeInfo(turn.permissionMode).label, () => showModeSheet(context)),
+          Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
+          row('Model', '${modelLabel(turn.model)} · ${effortLabel(turn.effort)}', () => showModelSheet(context)),
+        ]),
+      ),
+    ];
+  }
+
+  List<Widget> _advanced(BuildContext context) {
+    final t = context.t;
+    final home = store.boot?.home ?? '';
+    return [
+      const SectionHeader('Advanced'),
+      Card2(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(children: [
+          SwitchListTile(
+            value: store.showTech,
+            onChanged: store.setShowTech,
+            title: Text('Show technical details', style: TextStyle(color: t.fg, fontSize: 16)),
+            subtitle: Text('Raw tool calls, thinking and hooks in every chat', style: TextStyle(color: t.muted, fontSize: 13)),
+          ),
+          if (home.isNotEmpty) ...[
+            Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
+            ListTile(
+              minTileHeight: 52,
+              onTap: () => Nav.instance.push(FileScreen(path: '$home/.claude/CLAUDE.md')),
+              title: Text('Global instructions', style: TextStyle(color: t.fg, fontSize: 16)),
+              subtitle: Text('~/.claude/CLAUDE.md', style: TextStyle(color: t.muted, fontSize: 13)),
+              trailing: Icon(Icons.chevron_right_rounded, color: t.faint),
+            ),
+          ],
+          Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Folders Bridge can see', style: TextStyle(color: t.fg, fontSize: 16)),
+              const SizedBox(height: 4),
+              if (store.roots.isEmpty) Text('None yet. Add them in Bridge on your computer.', style: TextStyle(color: t.muted, fontSize: 13)),
+              for (final r in store.roots)
+                InkWell(
+                  onTap: () => Nav.instance.push(FileScreen(path: r, isDir: true)),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(children: [
+                      Icon(Icons.folder_outlined, size: 17, color: t.muted),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(prettyPath(r), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 13.5))),
+                    ]),
+                  ),
+                ),
+            ]),
+          ),
+        ]),
+      ),
+    ];
+  }
+
   List<Widget> _desk(BuildContext context) {
     final t = context.t;
     final ready = store.conn == ConnState.ready;
@@ -454,7 +554,7 @@ class _SettingsTabState extends State<SettingsTab> {
     final mode = _da?.permissionMode ?? '';
     final model = _da?.model ?? '';
     return [
-      SectionHeader(store.assistantName, trailing: _deskBusy ? SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2, color: t.muted)) : null),
+      SectionHeader('${store.assistantName} (Talk)', trailing: _deskBusy ? SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2, color: t.muted)) : null),
       Card2(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Column(children: [
@@ -509,7 +609,7 @@ class _SettingsTabState extends State<SettingsTab> {
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Column(children: [
           _infoRow(context, 'Claude Code on server', (store.boot?.version ?? '').isEmpty ? 'unknown' : store.boot!.version),
-          _infoRow(context, 'App', 'Bridge Mobile 0.1'),
+          _infoRow(context, 'App', 'Bridge Mobile 0.2'),
         ]),
       ),
     ];
