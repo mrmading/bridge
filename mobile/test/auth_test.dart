@@ -96,6 +96,7 @@ void main() {
     await tester.tap(find.text('Email me a sign-in link'));
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Enter your email address'), findsOneWidget);
+    expect(find.byKey(const ValueKey('otp')), findsNothing, reason: 'the code field comes after the email is sent');
     await tester.binding.setSurfaceSize(null);
   });
 

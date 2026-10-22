@@ -50,6 +50,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     store.addListener(_onStore);
     _onStore();
+    store.refreshComputers();
   }
 
   @override
@@ -262,13 +263,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
       Card2(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Column(children: [
-          ListTile(
-            leading: Icon(store.isLocalHost ? Icons.laptop_mac_rounded : Icons.cloud_outlined, color: ready ? t.accent : t.faint),
-            title: Text(store.isLocalHost ? store.computerName : 'Bridge server', style: TextStyle(color: t.fg, fontSize: 16)),
-            subtitle: Text('${store.serverHost} · every chat runs here, and keeps running when this app is closed', style: TextStyle(color: t.muted, fontSize: 13)),
-            trailing: ready ? const Tag('Online', kind: 'ok') : const Tag('Offline', kind: 'warn'),
-          ),
-          Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
+          // With a cloud computer (the Mac as hub): both, with status. Without one: the one server.
+          if (store.hasCloud)
+          for (final c in store.computers) ...[
+            ListTile(
+              leading: Icon(c.isCloud ? Icons.cloud_outlined : Icons.laptop_mac_rounded, color: c.online ? t.accent : t.faint),
+              title: Text(store.computerLabel(c.id), style: TextStyle(color: t.fg, fontSize: 16)),
+              subtitle: Text(
+                [
+                  if (!c.online && c.reason.isNotEmpty) c.reason else (c.isCloud ? 'Keeps working when your Mac sleeps or the app is closed' : 'Fast, uses your local tools and simulators'),
+                  if (c.url.isNotEmpty) Uri.tryParse(c.url)?.host ?? c.url,
+                  if (store.computer == c.id) 'New chats run here',
+                ].join(' · '),
+                style: TextStyle(color: t.muted, fontSize: 13),
+              ),
+              trailing: c.online && (c.isCloud || ready) ? const Tag('Online', kind: 'ok') : const Tag('Offline', kind: 'warn'),
+            ),
+            Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
+          ],
+          if (!store.hasCloud) ...[
+            ListTile(
+              leading: Icon(store.isLocalHost ? Icons.laptop_mac_rounded : Icons.cloud_outlined, color: ready ? t.accent : t.faint),
+              title: Text(store.isLocalHost ? store.computerName : 'Bridge server', style: TextStyle(color: t.fg, fontSize: 16)),
+              subtitle: Text('${store.serverHost} · every chat runs here, and keeps running when this app is closed', style: TextStyle(color: t.muted, fontSize: 13)),
+              trailing: ready ? const Tag('Online', kind: 'ok') : const Tag('Offline', kind: 'warn'),
+            ),
+            Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
+          ],
           ListTile(
             leading: Icon(Icons.devices_rounded, color: t.muted),
             title: Text('Same chats everywhere', style: TextStyle(color: t.fg, fontSize: 16)),

@@ -122,7 +122,19 @@ class AppStore extends ChangeNotifier {
     return computerName;
   }
 
-  /// The one backend's host, for "Runs on …": the sprite, a Worker domain, or the Mac.
+  /// Where new chats run when the server is a Mac hub with a cloud computer: the last one used,
+  /// kept across launches. Falls back to the Mac while the cloud is not set up or offline.
+  String get computer => _computer == 'cloud' && hasCloud && !cloudOffline ? 'cloud' : 'mac';
+  String _computer = 'mac';
+
+  Future<void> setComputer(String id) async {
+    _computer = id == 'cloud' ? 'cloud' : 'mac';
+    await _prefs.setString('computer', _computer);
+    notifyListeners();
+  }
+
+  /// The backend's host, for "Runs on …" when there is no cloud to choose: the sprite or Worker
+  /// domain, or the Mac by name.
   String get serverHost {
     final u = Uri.tryParse(serverUrl.contains('://') ? serverUrl : 'https://$serverUrl');
     final h = u?.host ?? '';
@@ -153,6 +165,7 @@ class AppStore extends ChangeNotifier {
     speakReplies = _prefs.getBool('speak') ?? true;
     handsFree = _prefs.getBool('handsFree') ?? false;
     showTech = _prefs.getBool('showTech') ?? false;
+    _computer = _prefs.getString('computer') ?? 'mac';
     try {
       _chatProviders = Map<String, String>.from(jsonDecode(_prefs.getString('chatProviders') ?? '{}') as Map);
     } catch (_) {}

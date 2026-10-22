@@ -665,6 +665,40 @@ class _SessionScreenState extends State<SessionScreen> {
     }
   }
 
+  Future<void> _moveToCloud() async {
+    if (_isNew || _busy) {
+      toast(context, _isNew ? 'Send a message first, then move it' : 'Wait for the running work to finish, then move it');
+      return;
+    }
+    if (_store.cloudOffline) {
+      toast(context, 'The cloud computer is offline');
+      return;
+    }
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Move to the cloud computer?'),
+        content: const Text('The chat and its history move to the cloud computer, so it keeps working when your Mac sleeps. Files it needs must exist there too.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Move')),
+        ],
+      ),
+    );
+    if (yes != true || !mounted) return;
+    toast(context, 'Moving to the cloud computer…');
+    try {
+      final r = await _api.moveToCloud(_key, _id);
+      if (!mounted) return;
+      unawaited(_store.refreshRecent());
+      unawaited(_store.pollHome());
+      // Reopen it where it now lives; the follower and jobs poll switch computer with it.
+      Nav.instance.openChat(ChatRef(key: r.key, id: r.id, cwd: r.cwd.isNotEmpty ? r.cwd : _cwd, title: _title, computer: 'cloud'));
+    } catch (e) {
+      if (mounted) toast(context, 'Could not move it: $e');
+    }
+  }
+
   void _openFile(String path) => Nav.instance.push(FileScreen(path: path, computer: _computer));
 
   void _openPanel() => showChatPanel(
@@ -721,6 +755,8 @@ class _SessionScreenState extends State<SessionScreen> {
                   toast(context, 'Chat id copied');
                 case 'stop':
                   _stopTurn();
+                case 'cloud':
+                  _moveToCloud();
                 case 'folder':
                   Nav.instance.push(FileScreen(path: _cwd, isDir: true, computer: _computer));
               }
@@ -729,6 +765,7 @@ class _SessionScreenState extends State<SessionScreen> {
               const PopupMenuItem(value: 'rename', child: Text('Rename')),
               const PopupMenuItem(value: 'folder', child: Text('Browse project folder')),
               const PopupMenuItem(value: 'copy', child: Text('Copy chat id')),
+              if (_computer == 'mac' && _store.hasCloud) const PopupMenuItem(value: 'cloud', child: Text('Move to cloud computer')),
               PopupMenuItem(value: 'stop', enabled: _busy, child: const Text('Stop all running work')),
             ],
           ),

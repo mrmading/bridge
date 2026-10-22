@@ -100,7 +100,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 8),
                   Text(
                     _sent
-                        ? 'We sent a sign-in link to ${_email.text.trim()}. ${kIsWeb ? 'Open it on this device and you are in.' : 'Open it, or paste the link or code here.'}'
+                        ? 'Enter the 6-digit code we sent to ${_email.text.trim()}.'
                         : 'Your chats, your team, from anywhere. We email you a link; no password.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: t.muted, fontSize: 15, height: 1.45),
@@ -143,45 +143,58 @@ class _LoginScreenState extends State<LoginScreen> {
         _primary(context, label: 'Email me a sign-in link', onTap: _busy ? null : _send),
       ];
 
+  /// The 6-digit code is the main path (native apps and home-screen web apps cannot catch the link);
+  /// the link is the fallback, and a pasted link works in the same field.
   List<Widget> _sentStep(BuildContext context) {
     final t = context.t;
+    final code = _paste.text.replaceAll(RegExp(r'\s'), '');
+    final ready = RegExp(r'^\d{6,10}$').hasMatch(code) || _paste.text.contains('http');
     return [
-      if (!kIsWeb) ...[
-        TextField(
-          controller: _paste,
-          autocorrect: false,
-          enableSuggestions: false,
-          minLines: 1,
-          maxLines: 3,
-          onChanged: (_) => setState(() {}),
-          style: TextStyle(color: t.fg, fontSize: 15),
-          decoration: InputDecoration(
-            hintText: 'Paste the link or code from the email',
-            prefixIcon: const Icon(Icons.link_rounded),
-            suffixIcon: IconButton(
-              tooltip: 'Paste',
-              icon: const Icon(Icons.content_paste_rounded),
-              onPressed: () async {
-                final d = await Clipboard.getData(Clipboard.kTextPlain);
-                if (d?.text != null) setState(() => _paste.text = d!.text!);
-              },
-            ),
+      TextField(
+        key: const ValueKey('otp'),
+        controller: _paste,
+        autofocus: true,
+        autocorrect: false,
+        enableSuggestions: false,
+        keyboardType: TextInputType.number,
+        autofillHints: const [AutofillHints.oneTimeCode],
+        textAlign: TextAlign.center,
+        textInputAction: TextInputAction.done,
+        onChanged: (v) {
+          setState(() {});
+          // Six digits typed or autofilled: sign in without another tap.
+          if (RegExp(r'^\d{6}$').hasMatch(v.trim()) && !_busy) _verify();
+        },
+        onSubmitted: (_) => ready ? _verify() : null,
+        style: TextStyle(color: t.fg, fontSize: 24, fontWeight: FontWeight.w600, letterSpacing: 8, fontFeatures: const [FontFeature.tabularFigures()]),
+        decoration: InputDecoration(
+          hintText: '000000',
+          hintStyle: TextStyle(color: t.faint.withValues(alpha: .5), fontSize: 24, letterSpacing: 8),
+          suffixIcon: IconButton(
+            tooltip: 'Paste',
+            icon: const Icon(Icons.content_paste_rounded),
+            onPressed: () async {
+              final d = await Clipboard.getData(Clipboard.kTextPlain);
+              if (d?.text == null) return;
+              setState(() => _paste.text = d!.text!.trim());
+              if (!_busy) _verify();
+            },
           ),
         ),
-        const SizedBox(height: 12),
-        _primary(context, label: 'Sign in', onTap: _busy || _paste.text.trim().isEmpty ? null : _verify),
-        const SizedBox(height: 8),
-      ] else
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: t.raised, borderRadius: BorderRadius.circular(14), border: Border.all(color: t.border)),
-          child: Row(children: [
-            Icon(Icons.mark_email_read_outlined, color: t.accent),
-            const SizedBox(width: 12),
-            Expanded(child: Text('The link signs you in right here. You can close this tab.', style: TextStyle(color: t.muted, fontSize: 13.5))),
-          ]),
+      ),
+      const SizedBox(height: 12),
+      _primary(context, label: 'Sign in', onTap: _busy || !ready ? null : _verify),
+      const SizedBox(height: 12),
+      Row(children: [
+        Icon(Icons.link_rounded, size: 16, color: t.faint),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            kIsWeb ? 'Or tap the link in the email on this device.' : 'Or paste the link from the email here.',
+            style: TextStyle(color: t.faint, fontSize: 13),
+          ),
         ),
+      ]),
       const SizedBox(height: 4),
       Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         TextButton(onPressed: _busy ? null : _send, child: const Text('Send it again')),
