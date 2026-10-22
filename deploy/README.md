@@ -26,11 +26,12 @@ stays behind Fly's login (`--url-auth sprite`) until that gate has been proven o
 
 | What | Command |
 |---|---|
-| Assemble assets (public/ + mobile/build/web → worker/dist) | `deploy/build.sh` (`BUILD_FLUTTER=1` rebuilds Flutter first) |
-| Deploy the Worker | `deploy/deploy.sh` (extra args go to `wrangler deploy`, e.g. `--dry-run`) |
+| Stage a commit (its files via `git archive` + a Flutter web build of it, cached per commit in `~/Library/Caches/bridge-deploy/<sha>`) | `deploy/stage.sh [commit]` |
+| Assemble the Worker for a commit (its public/ at /, its Flutter build at /m/, its own deploy/worker) | `deploy/build.sh [commit]` |
+| Deploy the Worker from a commit | `deploy/deploy.sh [commit] [wrangler args]` (e.g. `deploy/deploy.sh 07cb824 --dry-run`) |
 | Local Worker against a local Bridge | `cd deploy/worker && wrangler dev --port 8811 --var BACKEND_URL:http://localhost:4293` |
 | Push auth config to Supabase | `deploy/supabase/auth.sh [ref]` (`SITE_URL=` to change the site URL) |
-| Ship a commit + Flutter build + env to the sprite, restart, health-check | `deploy/sprite.sh [commit]` (`SKIP_WEB=1` keeps the sprite's Flutter build) |
+| Ship a commit + its Flutter build + env to the sprite, restart, health-check | `deploy/sprite.sh [commit]` (`SKIP_WEB=1` keeps the sprite's Flutter build) |
 | Health check only | `deploy/sprite.sh --check` (passes only if `/api/authconfig` has `required:true` and `/api/home` without a token is 401) |
 | Make the sprite URL public (ONLY after `--check` passes) | `sprite config update -o nestor-280 -s bridge --url-auth public` |
 | Worker logs | `cd deploy/worker && wrangler tail` |
@@ -39,7 +40,13 @@ stays behind Fly's login (`--url-auth sprite`) until that gate has been proven o
 `BRIDGE_SUPABASE_KEY` (publishable key), `BRIDGE_ALLOWED_EMAILS`, `RUNPOD_QWEN_ENDPOINT` and
 `RUNPOD_QWEN_API_KEY`. The key is read by name from `~/.claude/.env` and sent over stdin: it never
 appears in argv, logs or output. The script also installs `deploy/sprite-run.sh` as `~/bridge/run.sh`
-so the service sources that file. It ships committed work only: uncommitted changes stay local.
+so the service sources that file.
+
+**Everything ships from a commit, never the working tree.** The repo is shared by several agents, and
+the working tree is routinely mid-edit. `stage.sh` extracts the commit with `git archive` and builds Flutter
+from that copy, so the Worker and the sprite get the same code, the same `public/` and the same `/m/` build.
+Ship the same commit to both: `deploy/sprite.sh <sha> && deploy/deploy.sh <sha>`. The Worker deploy is tagged `bridge <sha>`,
+which `wrangler deployments list` shows.
 
 ## Supabase auth (bridge-dev)
 

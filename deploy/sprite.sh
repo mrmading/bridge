@@ -2,7 +2,7 @@
 # Ship Bridge to the Fly sprite: a commit, the Flutter web build, the env file, a restart, a health check.
 # Idempotent: run it again with the same commit and nothing changes but the restart.
 #
-#   deploy/sprite.sh [commit]     # default HEAD of the local checkout (committed work only)
+#   deploy/sprite.sh [commit]     # default HEAD; code AND the Flutter build come from that commit, never the working tree
 #   deploy/sprite.sh --check      # health check only
 #   SKIP_WEB=1 deploy/sprite.sh   # leave the sprite's Flutter build as it is
 #
@@ -32,6 +32,8 @@ if [[ "${1:-}" == "--check" ]]; then check; exit; fi
 commit="$(git -C "$repo" rev-parse --verify "${1:-HEAD}^{commit}")"
 echo "commit: $commit ($(git -C "$repo" log -1 --format=%s "$commit"))"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+# build first: a failed Flutter build must not leave the sprite half-updated
+[[ "${SKIP_WEB:-0}" == 1 ]] || stage="$("$here/stage.sh" "$commit")"
 
 # 1. code: bundle just what the sprite lacks (its HEAD if we know it, else everything) and check it out
 have="$(sx 'cd ~/bridge && git rev-parse HEAD' 2>/dev/null || true)"
@@ -49,10 +51,9 @@ if [[ -f "$tmp/x.bundle" ]]; then
 fi
 sx "cd ~/bridge && git checkout -q -f -B $BRANCH $commit && git log -1 --oneline"
 
-# 2. the Flutter web build (not in git)
+# 2. the Flutter web build of that same commit (not in git; built and cached by stage.sh)
 if [[ "${SKIP_WEB:-0}" != 1 ]]; then
-  [[ -f "$repo/mobile/build/web/index.html" ]] || { echo "no mobile/build/web; build it or SKIP_WEB=1" >&2; exit 1; }
-  tar -C "$repo/mobile/build/web" -czf "$tmp/web.tgz" .
+  tar -C "$stage/web" -czf "$tmp/web.tgz" .
   "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -c 'd=~/bridge/mobile/build/web; rm -rf "$d.new" && mkdir -p "$d.new" && tar -xzf - -C "$d.new" && rm -rf "$d" && mv "$d.new" "$d" && echo "web: $(find "$d" -type f | wc -l) files"' < "$tmp/web.tgz"
 fi
 
@@ -68,7 +69,7 @@ qwen_key="$(grep -E '^(export )?RUNPOD_QWEN_API_KEY=' "$SECRETS" | tail -1 | sed
 } | "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -c 'umask 077; cat > ~/.bridge.env.new && chmod 600 ~/.bridge.env.new && mv ~/.bridge.env.new ~/.bridge.env && echo "env: $(cut -d= -f1 ~/.bridge.env | tr "\n" " ")($(stat -c %a ~/.bridge.env))"'
 unset qwen_key
 
-# 4. run.sh that sources the env, then restart
-"$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -c 'cat > ~/bridge/run.sh && chmod 755 ~/bridge/run.sh' < "$here/sprite-run.sh"
+# 4. run.sh (the commit's own copy) that sources the env, then restart
+git -C "$repo" show "$commit:deploy/sprite-run.sh" | "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -c 'cat > ~/bridge/run.sh && chmod 755 ~/bridge/run.sh'
 sx 'sprite-env services restart bridge >/dev/null && echo "restarted"'
 check
