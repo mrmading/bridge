@@ -13,6 +13,7 @@ Future<void> seed() async {
   final s = AppStore.instance;
   await s.init();
   final now = DateTime.now().millisecondsSinceEpoch;
+  s.auth = AuthStatus(loggedIn: true, email: 'nestor@example.com', subscriptionType: 'max');
   s.home = HomeData(
     user: 'nestor',
     running: [
@@ -40,7 +41,7 @@ void main() {
     await seed();
     await tester.pumpWidget(app());
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.textContaining('nestor', findRichText: true).evaluate().isNotEmpty || find.textContaining('Nestor').evaluate().isNotEmpty, isTrue);
+    expect(find.textContaining(', Nestor'), findsOneWidget); // greeted by the Claude account's name
     expect(find.textContaining('1 thing needs you', findRichText: true), findsOneWidget);
     expect(find.text('Needs you'), findsOneWidget);
     expect(find.text('Deploy the Fly switch now or wait for Alba?'), findsOneWidget);
