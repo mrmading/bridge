@@ -29,7 +29,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     _error = _store.authError;
-    _email.text = _store.session?.email ?? '';
+    _email.text = _store.session?.email ?? _store.lastEmail;
   }
 
   @override

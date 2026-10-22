@@ -173,8 +173,7 @@ class AppStore extends ChangeNotifier {
     final r = parseRedirect(uri);
     if (r.session == null && r.error.isEmpty) return;
     if (r.session != null) {
-      session = r.session;
-      _prefs.setString('bridgeSession', jsonEncode(session!.toJson()));
+      _saveSession(r.session);
     } else {
       authError = r.error;
     }
@@ -202,8 +201,12 @@ class AppStore extends ChangeNotifier {
     }();
   }
 
+  /// The email of the last session, so the login screen can offer it again.
+  String get lastEmail => _prefs.getString('bridgeEmail') ?? '';
+
   Future<void> _saveSession(AuthSession? s) async {
     session = s;
+    if (s != null && s.email.isNotEmpty) await _prefs.setString('bridgeEmail', s.email);
     if (s == null) {
       await _prefs.remove('bridgeSession');
     } else {
