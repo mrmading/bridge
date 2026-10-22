@@ -282,11 +282,33 @@ function extractMessage(res: Json): { msg: Json; meta: Json } {
   return { msg: { content: JSON.stringify(out).slice(0, 2000) }, meta: out };
 }
 
+/** A whole reply that is just `{"name": …, "arguments"|"parameters": …}`, optionally fenced. */
+function bareCall(text: string): { name: string; args: unknown } | null {
+  const body = text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/, "$1");
+  if (!body.startsWith("{")) return null;
+  try {
+    const o = JSON.parse(body);
+    if (typeof o?.name === "string" && ("arguments" in o || "parameters" in o)) return { name: o.name, args: o.arguments ?? o.parameters };
+  } catch {}
+  return null;
+}
+
+/**
+ * True when the model answered with a pseudo tool call to a tool that does not exist, which
+ * it does now and then under Claude Code's huge prompt. Worth one retry rather than showing it.
+ */
+export function isMalformedToolCall(msg: AnthropicMessage, toolNames: Set<string>): boolean {
+  if (msg.content.length !== 1 || msg.content[0].type !== "text") return false;
+  const call = bareCall(msg.content[0].text);
+  return !!call && !toolNames.has(call.name);
+}
+
 /**
  * Builds the Anthropic message from a finished RunPod job. Strips Qwen's <think> output and
- * recovers <tool_call> JSON the model wrote as text when the handler did not parse it.
+ * recovers tool calls the model wrote as text when the handler did not parse them: <tool_call>
+ * tags, or a bare JSON reply naming one of `toolNames`.
  */
-export function ollamaToAnthropic(res: Json, inputEstimate: number): AnthropicMessage {
+export function ollamaToAnthropic(res: Json, inputEstimate: number, toolNames?: Set<string>): AnthropicMessage {
   const { msg, meta } = extractMessage(res);
   let text = String(msg.content ?? "")
     .replace(/<think>[\s\S]*?<\/think>/g, "")
@@ -305,6 +327,11 @@ export function ollamaToAnthropic(res: Json, inputEstimate: number): AnthropicMe
     });
   }
   text = text.trim();
+  const bare = !raw.length && toolNames ? bareCall(text) : null;
+  if (bare && toolNames!.has(bare.name)) {
+    raw.push({ function: { name: bare.name, arguments: bare.args } });
+    text = "";
+  }
 
   const content: Block[] = [];
   if (text) content.push({ type: "text", text });
@@ -423,10 +450,19 @@ async function messages(req: Request, cfg: Cfg): Promise<Response> {
   const inputEstimate = estimateTokens(sizeOf(payload.messages, payload.tools));
   const abort = new AbortController();
   req.signal?.addEventListener("abort", () => abort.abort());
+  const toolNames = new Set((payload.tools || []).map((t) => t.function.name));
+  const complete = async () => {
+    let msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate, toolNames);
+    if (isMalformedToolCall(msg, toolNames)) {
+      console.error("[qwen] reply was a pseudo tool call to an unknown tool; retrying once");
+      msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate, toolNames);
+    }
+    return msg;
+  };
 
   if (!body.stream) {
     try {
-      const msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate);
+      const msg = await complete();
       return Response.json(msg, { headers: trimmed.length ? { "x-qwen-trimmed": trimmed.join("; ") } : {} });
     } catch (e) {
       return apiError(500, "api_error", String((e as Error).message || e));
@@ -450,7 +486,7 @@ async function messages(req: Request, cfg: Cfg): Promise<Response> {
       send(sse("ping", { type: "ping" }));
       const timer = setInterval(() => send(sse("ping", { type: "ping" })), cfg.pingMs);
       try {
-        const msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate);
+        const msg = await complete();
         for (const e of sseEvents(msg)) send(e);
       } catch (e) {
         send(sse("error", { type: "error", error: { type: "api_error", message: String((e as Error).message || e) } }));

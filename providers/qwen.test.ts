@@ -3,6 +3,7 @@ import {
   anthropicToOllama,
   estimateTokens,
   handleQwen,
+  isMalformedToolCall,
   ollamaToAnthropic,
   sseEvents,
 } from "./qwen";
@@ -196,6 +197,21 @@ describe("ollamaToAnthropic", () => {
     expect(msg.stop_reason).toBe("tool_use");
   });
 
+  test("a bare JSON reply naming a real tool becomes tool_use; one naming no tool is flagged malformed", () => {
+    const tools = new Set(["Bash"]);
+    const real = ollamaToAnthropic({ output: { message: { content: '```json\n{"name": "Bash", "arguments": {"command": "ls"}}\n```' } } }, 1, tools);
+    expect(real.stop_reason).toBe("tool_use");
+    expect(real.content).toHaveLength(1);
+    expect((real.content[0] as any).input).toEqual({ command: "ls" });
+    expect(isMalformedToolCall(real, tools)).toBe(false);
+
+    // Seen live from Bridge: the whole reply was a pseudo tool call to a tool that does not exist.
+    const junk = ollamaToAnthropic({ output: { message: { content: '{"name": "qwen", "parameters": {"type": "string", "required": "[]"}}' } } }, 1, tools);
+    expect(isMalformedToolCall(junk, tools)).toBe(true);
+    expect(isMalformedToolCall(ollamaToAnthropic({ output: { message: { content: '{"answer": 42}' } } }, 1, tools), tools)).toBe(false);
+    expect(isMalformedToolCall(ollamaToAnthropic({ output: { message: { content: "qwen is alive" } } }, 1, tools), tools)).toBe(false);
+  });
+
   test("length stop maps to max_tokens; OpenAI-shaped and bare-string outputs are understood", () => {
     expect(ollamaToAnthropic({ output: { message: { content: "x" }, done_reason: "length" } }, 1).stop_reason).toBe("max_tokens");
     expect(ollamaToAnthropic({ output: { choices: [{ message: { content: "oa" } }] } }, 1).content).toEqual([{ type: "text", text: "oa" }]);
@@ -287,6 +303,19 @@ describe("handleQwen", () => {
     expect(names).toContain("ping");
     expect(names.slice(-2)).toEqual(["message_delta", "message_stop"]);
     expect(text).toContain('"type":"input_json_delta"');
+  });
+
+  test("a malformed pseudo tool call is retried once with a fresh job", async () => {
+    let runs = 0;
+    globalThis.fetch = (async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/run")) return Response.json({ id: `job${++runs}`, status: "IN_QUEUE" });
+      const content = url.endsWith("job1") ? '{"name": "qwen", "parameters": {}}' : "qwen is alive";
+      return Response.json({ status: "COMPLETED", output: { message: { content } } });
+    }) as typeof fetch;
+    const res = await handleQwen(post({ messages: [{ role: "user", content: "hi" }], tools: [{ name: "Bash", input_schema: { type: "object" } }] }), "v1/messages");
+    expect((await res.json()).content).toEqual([{ type: "text", text: "qwen is alive" }]);
+    expect(runs).toBe(2);
   });
 
   test("count_tokens returns an estimate without calling RunPod", async () => {
