@@ -1270,7 +1270,8 @@ function closeOverlays() {
   $("#scrim").classList.remove("on"); $("#palette").classList.remove("on"); $("#modal").classList.remove("on");
 }
 $("#scrim").addEventListener("click", closeOverlays);
-$("#nscrim").addEventListener("click", () => $("#app").classList.remove("mnav"));
+// a tap outside the phone sidebar closes it
+document.addEventListener("click", (e) => { const app = $("#app"); if (app.classList.contains("mnav") && !e.target.closest(".side") && !e.target.closest('[data-act="mnav"]')) { app.classList.remove("mnav"); e.stopPropagation(); } }, true);
 $("#fileInput").addEventListener("change", (e) => { const fi = e.target; if (fi.files.length) addFiles(Array.from(fi.files)); fi.value = ""; });
 document.addEventListener("keydown", (e) => {
   const meta = e.metaKey || e.ctrlKey;

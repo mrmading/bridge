@@ -382,8 +382,8 @@ a{color:var(--accent);text-decoration:none}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:6px;border:3px solid transparent;background-clip:content-box}
 ::-webkit-scrollbar-track{background:transparent}
-.nscrim{position:fixed;inset:0;z-index:104;background:rgba(3,5,9,.45);display:none}
-@media (max-width:900px){#app.mnav ~ .nscrim{display:block}}
+/* the phone sidebar's scrim lives inside #app, under the sidebar's own stacking level */
+@media (max-width:900px){#app.mnav .main::after{content:"";position:fixed;inset:0;z-index:104;background:rgba(3,5,9,.45)}}
 .side .nav-i kbd{margin-left:auto}
 .chat-i .m.el{font-family:var(--mono);color:var(--accent)}
 .side-empty{font-size:12.5px;color:var(--fg-faint);padding:4px 10px}
