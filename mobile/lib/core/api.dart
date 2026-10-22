@@ -80,6 +80,10 @@ class BridgeApi {
     return j;
   }
 
+  /// Per-chat calls name the computer only for cloud chats, so a server without cloud support sees
+  /// exactly the requests it always did.
+  Map<String, String> _cq(String computer) => computer == 'cloud' ? const {'computer': 'cloud'} : const {};
+
   Map<String, dynamic> _m(dynamic j) => j is Map ? Map<String, dynamic>.from(j) : <String, dynamic>{};
   List<Map<String, dynamic>> _l(dynamic j) => j is List ? [for (final e in j) _m(e)] : const [];
 
@@ -153,11 +157,12 @@ class BridgeApi {
   Future<List<SessionMeta>> search(String q) async => q.trim().length < 2 ? const [] : [for (final j in _l(await _get('/api/search', q: {'q': q.trim()}))) SessionMeta.fromJson(j)];
   Future<List<SessionMeta>> find(String q, {String scope = 'all', String? key, String? cwd}) async =>
       [for (final j in _l(await _get('/api/find', q: {'q': q, 'scope': scope, 'key': ?key, 'cwd': ?cwd}, timeout: const Duration(seconds: 60)))) SessionMeta.fromJson(j)];
-  Future<Transcript> session(String key, String id) async => Transcript.fromJson(_m(await _get('/api/session', q: {'key': key, 'id': id}, timeout: const Duration(seconds: 60))));
-  Future<void> rename(String id, String title) => _post('/api/rename', {'id': id, 'title': title});
+  Future<Transcript> session(String key, String id, {String computer = 'mac'}) async =>
+      Transcript.fromJson(_m(await _get('/api/session', q: {'key': key, 'id': id, ..._cq(computer)}, timeout: const Duration(seconds: 60))));
+  Future<void> rename(String id, String title, {String computer = 'mac'}) => _post('/api/rename', {'id': id, 'title': title, ..._cq(computer)});
 
   /// Live follow of a transcript file. Frames: events (events, patches, usage, offset) · ping · gone · error.
-  Stream<Frame> follow(String key, String id, int from) => sse('/api/follow', q: {'key': key, 'id': id, 'from': '$from'});
+  Stream<Frame> follow(String key, String id, int from, {String computer = 'mac'}) => sse('/api/follow', q: {'key': key, 'id': id, 'from': '$from', ..._cq(computer)});
 
   // ── turns ────────────────────────────────────────────────────────────
   /// Runs one turn. Frames: auth · start · msg · stderr · raw · ping · end · error.
@@ -167,6 +172,7 @@ class BridgeApi {
     String? sessionId,
     required String cwd,
     TurnOptions? options,
+    String computer = 'mac',
     List<Map<String, dynamic>> attachments = const [],
   }) =>
       sse('/api/chat', post: {
@@ -179,8 +185,9 @@ class BridgeApi {
         if (options != null && options.effort.isNotEmpty) 'effort': options.effort,
         if (options != null && options.agent.isNotEmpty && options.agent != 'auto') 'agent': options.agent,
         if (attachments.isNotEmpty) 'attachments': attachments,
+        ..._cq(computer),
       });
-  Future<bool> abort(String sessionId) async => _m(await _post('/api/abort', {'sessionId': sessionId}))['ok'] == true;
+  Future<bool> abort(String sessionId, {String computer = 'mac'}) async => _m(await _post('/api/abort', {'sessionId': sessionId, ..._cq(computer)}))['ok'] == true;
   Future<String> route(String prompt, {String previous = ''}) async => (_m(await _post('/api/route', {'prompt': prompt, 'previous': previous}))['agent'] ?? '').toString();
 
   // ── home + live work ─────────────────────────────────────────────────
@@ -188,7 +195,18 @@ class BridgeApi {
   /// that predates it; the store falls back to /api/recent then.
   Future<HomeData> home() async => HomeData.fromJson(_m(await _get('/api/home', timeout: const Duration(seconds: 15))));
   /// The live state of one chat; polled every few seconds while it is open.
-  Future<JobsState> jobs(String key, String id) async => JobsState.fromJson(_m(await _get('/api/jobs', q: {'key': key, 'id': id}, timeout: const Duration(seconds: 10))));
+  Future<JobsState> jobs(String key, String id, {String computer = 'mac'}) async =>
+      JobsState.fromJson(_m(await _get('/api/jobs', q: {'key': key, 'id': id, ..._cq(computer)}, timeout: const Duration(seconds: 10))));
+  /// Moves a Mac chat to the cloud computer. Returns the id/key it has there (the same ones when
+  /// the server keeps them), or throws with the server's reason.
+  Future<({String id, String key})> moveToCloud(String key, String id) async {
+    final j = _m(await _post('/api/move', {'key': key, 'id': id, 'to': 'cloud'}, timeout: const Duration(seconds: 120)));
+    if (j['ok'] == false || j['error'] != null) throw ApiException((j['error'] ?? 'could not move the chat').toString());
+    return (id: (j['id'] ?? id).toString(), key: (j['key'] ?? key).toString());
+  }
+
+  /// Where chats can run. Throws ApiException(status: 404) on a server without cloud support.
+  Future<List<Computer>> computers() async => [for (final j in _l(await _get('/api/computers', timeout: const Duration(seconds: 15)))) Computer.fromJson(j)];
 
   // ── the desk (assistant) ─────────────────────────────────────────────
   Future<DaState> daState() async => DaState.fromJson(_m(await _get('/api/da/state')));
@@ -230,9 +248,10 @@ class BridgeApi {
   // ── files / folders ──────────────────────────────────────────────────
   Future<List<String>> roots() async => List<String>.from((await _get('/api/roots')) as List? ?? const []);
   Future<List<String>> setRoots(List<String> roots) async => List<String>.from((await _post('/api/roots', {'roots': roots})) as List? ?? const []);
-  Future<DirListing> dir(String path, {bool hidden = false}) async => DirListing.fromJson(_m(await _get('/api/dir', q: {'path': path, if (hidden) 'hidden': '1'})));
-  Future<Map<String, dynamic>> file(String path) async => _m(await _get('/api/file', q: {'path': path}));
-  Uri rawUrl(String path) => _u('/api/raw', {'path': path});
+  Future<DirListing> dir(String path, {bool hidden = false, String computer = 'mac'}) async =>
+      DirListing.fromJson(_m(await _get('/api/dir', q: {'path': path, if (hidden) 'hidden': '1', ..._cq(computer)})));
+  Future<Map<String, dynamic>> file(String path, {String computer = 'mac'}) async => _m(await _get('/api/file', q: {'path': path, ..._cq(computer)}));
+  Uri rawUrl(String path, {String computer = 'mac'}) => _u('/api/raw', {'path': path, ..._cq(computer)});
 
   // ── catalogs ─────────────────────────────────────────────────────────
   Future<List<AgentInfo>> agents() async => [for (final j in _l(await _get('/api/agents'))) AgentInfo.fromJson(j)];

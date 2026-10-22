@@ -64,7 +64,7 @@ class AppStore extends ChangeNotifier {
     return null;
   }
 
-  /// Where chats run: a Fly sprite is the cloud computer, anything else is the user's Mac.
+  /// The server itself runs on a Fly sprite (the app was pointed at the cloud computer directly).
   bool get isCloud {
     final h = Uri.tryParse(serverUrl.contains('://') ? serverUrl : 'https://$serverUrl')?.host ?? '';
     return h.endsWith('sprites.app') || h.endsWith('fly.dev');
@@ -78,10 +78,62 @@ class AppStore extends ChangeNotifier {
     return u.isEmpty ? '' : '${u[0].toUpperCase()}${u.substring(1)}';
   }
 
+  /// The server's own machine, by name.
   String get computerName {
     if (isCloud) return 'Cloud computer';
     final u = displayName;
     return u.isEmpty ? 'Your Mac' : "$u's Mac";
+  }
+
+  /// Where chats can run (/api/computers). Before it loads, or on a server without cloud support,
+  /// there is one computer: the server itself.
+  List<Computer> get computers => _computers.isNotEmpty ? _computers : [Computer(id: 'mac', name: computerName, kind: 'local', online: conn == ConnState.ready)];
+  List<Computer> _computers = const [];
+
+  @visibleForTesting
+  void debugSetComputers(List<Computer> c) {
+    _computers = c;
+    notifyListeners();
+  }
+
+  Computer? computerById(String id) {
+    for (final c in computers) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
+
+  bool get hasCloud => computerById('cloud') != null;
+  /// The cloud computer exists and is not answering (from /api/computers or /api/home).
+  bool get cloudOffline => hasCloud && (computerById('cloud')!.online == false || home.cloudOffline);
+
+  /// What to call a computer: "Nestor's Mac" (not the server's own "Mac"), "Cloud computer".
+  String computerLabel(String id) {
+    if (id == 'cloud') return computerById('cloud')?.name ?? 'Cloud computer';
+    return computerName;
+  }
+
+  /// Where new chats run; the last one used, kept across launches. Falls back to the Mac when the
+  /// cloud computer is not set up.
+  String get computer => _computer == 'cloud' && hasCloud ? 'cloud' : 'mac';
+  String _computer = 'mac';
+
+  Future<void> setComputer(String id) async {
+    _computer = id == 'cloud' ? 'cloud' : 'mac';
+    await _prefs.setString('computer', _computer);
+    notifyListeners();
+  }
+
+  Future<void> refreshComputers() async {
+    if (!hasServer || conn != ConnState.ready) return;
+    try {
+      _computers = await api.computers();
+    } on ApiException catch (e) {
+      if (e.status == 404) _computers = const [];
+    } catch (_) {
+      return;
+    }
+    notifyListeners();
   }
 
   /// Tests and screens that mutate fields directly call this to repaint listeners.
@@ -93,6 +145,7 @@ class AppStore extends ChangeNotifier {
     speakReplies = _prefs.getBool('speak') ?? true;
     handsFree = _prefs.getBool('handsFree') ?? false;
     showTech = _prefs.getBool('showTech') ?? false;
+    _computer = _prefs.getString('computer') ?? 'mac';
     themeMode = ThemeMode.values[_prefs.getInt('theme') ?? 0];
     try {
       turn = TurnOptions.fromJson(jsonDecode(_prefs.getString('turn') ?? '{}') as Map<String, dynamic>);
@@ -153,7 +206,7 @@ class AppStore extends ChangeNotifier {
     roots = results[3] as List<String>;
     projects = results[4] as List<Project>;
     notifyListeners();
-    await pollHome();
+    await Future.wait([pollHome(), refreshComputers()]);
   }
 
   Future<void> refreshRecent() async {
@@ -172,7 +225,10 @@ class AppStore extends ChangeNotifier {
     _homeTimer?.cancel();
     _homeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       // The drawer's chat list changes slower than running work: refresh it every 20 s.
-      if (++_homeTicks % 4 == 0) unawaited(refreshRecent());
+      if (++_homeTicks % 4 == 0) {
+        unawaited(refreshRecent());
+        unawaited(refreshComputers());
+      }
       pollHome();
     });
   }
@@ -237,6 +293,7 @@ class AppStore extends ChangeNotifier {
   Future<void> forgetServer() async {
     _homeTimer?.cancel();
     _homeMissing = false;
+    _computers = const [];
     home = HomeData.empty;
     _api?.close();
     _api = null;

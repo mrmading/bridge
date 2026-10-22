@@ -469,32 +469,87 @@ Future<String?> showProjectSheet(BuildContext context, String current) => _sheet
         ),
         for (final r in rows.take(30))
           PickRow(title: r.name, sub: prettyPath(r.path), leading: ProjectIcon(r.name, size: 26), selected: current == r.path, onTap: () => Navigator.pop(c, r.path)),
-        Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 6), child: Text('RUNS ON', style: TextStyle(color: t.faint, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 1.1))),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Row(children: [
-            Icon(store.isCloud ? Icons.cloud_outlined : Icons.laptop_mac_rounded, size: 18, color: t.accent),
-            const SizedBox(width: 10),
-            Expanded(child: Text('${store.computerName} · the computer this Bridge runs on', style: TextStyle(color: t.muted, fontSize: 13.5))),
-          ]),
-        ),
+        if (store.hasCloud) ...[
+          Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 2), child: Text('RUNS ON', style: TextStyle(color: t.faint, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 1.1))),
+          for (final c in store.computers) ComputerRow(c),
+        ],
       ]);
     });
 
-/// "Runs on Nestor's Mac" under the Home / New chat composer.
+IconData computerIcon(String id) => id == 'cloud' ? Icons.cloud_outlined : Icons.laptop_mac_rounded;
+
+/// One computer in a picker: name, status, the reason when offline (greyed, not selectable).
+class ComputerRow extends StatelessWidget {
+  const ComputerRow(this.c, {super.key, this.onPicked});
+  final Computer c;
+  final VoidCallback? onPicked;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final store = AppStore.instance;
+    final sub = c.online
+        ? (c.isCloud ? 'Keeps working when your Mac sleeps or the app is closed' : 'Fast, uses your local tools and simulators')
+        : 'Offline${c.reason.isNotEmpty ? ' · ${c.reason}' : ''}';
+    return Opacity(
+      opacity: c.online ? 1 : .5,
+      child: PickRow(
+        title: store.computerLabel(c.id),
+        sub: sub,
+        leading: Icon(computerIcon(c.id), color: c.online ? t.accent : t.faint),
+        selected: store.computer == c.id,
+        onTap: () {
+          if (!c.online) {
+            toast(context, '${store.computerLabel(c.id)} is offline${c.reason.isNotEmpty ? ': ${c.reason}' : ''}');
+            return;
+          }
+          store.setComputer(c.id);
+          onPicked?.call();
+        },
+      ),
+    );
+  }
+}
+
+/// Mac or cloud computer for new chats. Offline ones are listed, greyed, with the reason.
+Future<void> showComputerSheet(BuildContext context) => _sheet(context, (c) {
+      final store = AppStore.instance;
+      return ListView(shrinkWrap: true, padding: const EdgeInsets.only(bottom: 16), children: [
+        const SheetTitle('Run new chats on', sub: 'Every chat stays on the computer it started on.'),
+        for (final x in store.computers) ComputerRow(x, onPicked: () => Navigator.pop(c)),
+      ]);
+    });
+
+/// "Runs on Nestor's Mac ▾" under the Home / New chat composer: the computer picker.
 class RunsOn extends StatelessWidget {
   const RunsOn({super.key});
   @override
   Widget build(BuildContext context) {
     final t = context.t;
     final store = AppStore.instance;
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(store.isCloud ? Icons.cloud_outlined : Icons.laptop_mac_rounded, size: 14, color: t.faint),
-        const SizedBox(width: 6),
-        Text('Runs on ${store.computerName}', style: TextStyle(color: t.faint, fontSize: 12)),
-      ]),
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final id = store.computer;
+        final offline = store.computerById(id)?.online == false;
+        final color = offline ? t.warn : t.faint;
+        return Center(
+        child: InkWell(
+          key: const ValueKey('runs-on'),
+          borderRadius: BorderRadius.circular(16),
+          onTap: store.hasCloud ? () => showComputerSheet(context) : null,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 40),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(computerIcon(id), size: 15, color: color),
+              const SizedBox(width: 6),
+              Flexible(child: Text('Runs on ${store.computerLabel(id)}${offline ? ' · offline' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: color, fontSize: 12.5, fontWeight: FontWeight.w500))),
+              if (store.hasCloud) ...[const SizedBox(width: 2), Icon(Icons.expand_more_rounded, size: 16, color: color)],
+            ]),
+          ),
+        ),
+      );
+      },
     );
   }
 }

@@ -116,7 +116,7 @@ class _FilesScreenState extends State<FilesScreen> {
               SecHeader(icon: Icons.chat_bubble_outline_rounded, title: 'Chats that mention it', count: _found.length),
               for (final s in _found.take(20))
                 Card2(
-                  onTap: () => openSession(key: s.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title),
+                  onTap: () => openSession(key: s.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, computer: s.computer),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 15, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 2),

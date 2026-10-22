@@ -418,3 +418,43 @@ class PickRow extends StatelessWidget {
     );
   }
 }
+
+/// A small cloud mark on chats that run on the cloud computer.
+class CloudBadge extends StatelessWidget {
+  const CloudBadge({super.key, this.size = 14});
+  final double size;
+  @override
+  Widget build(BuildContext context) => Tooltip(message: 'On the cloud computer', child: Icon(Icons.cloud_outlined, size: size, color: context.t.accent2));
+}
+
+/// "The cloud computer is offline" with the reason when known. Shown on Home and in cloud chats.
+class CloudOfflineBanner extends StatelessWidget {
+  const CloudOfflineBanner({super.key, this.reason = '', this.inChat = false, this.margin = const EdgeInsets.fromLTRB(16, 8, 16, 0)});
+  final String reason;
+  final bool inChat;
+  final EdgeInsets margin;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Container(
+      margin: margin,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(color: t.warnSoft, borderRadius: BorderRadius.circular(12), border: Border.all(color: t.warn.withValues(alpha: .4))),
+      child: Row(children: [
+        Icon(Icons.cloud_off_rounded, size: 18, color: t.warn),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Text('Cloud computer offline', style: TextStyle(color: t.warn, fontSize: 14, fontWeight: FontWeight.w700)),
+            Text(
+              [if (reason.isNotEmpty) reason, inChat ? 'This chat continues once it is back.' : 'Cloud chats wait until it is back; your Mac still works.'].join(' · '),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: t.warn, fontSize: 12.5),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+}

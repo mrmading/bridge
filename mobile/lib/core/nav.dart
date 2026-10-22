@@ -9,8 +9,10 @@ import 'package:flutter/material.dart';
 
 /// Everything needed to open (or start) one chat.
 class ChatRef {
-  ChatRef({required this.key, required this.id, required this.cwd, this.title = '', this.isNew = false, this.prefill = '', this.sendPrefill = false, this.focus = false});
+  ChatRef({required this.key, required this.id, required this.cwd, this.title = '', this.isNew = false, this.prefill = '', this.sendPrefill = false, this.focus = false, this.computer = 'mac'});
   final String key, id, cwd, title, prefill;
+  /// mac · cloud: every per-chat call names it for cloud chats.
+  final String computer;
   final bool isNew, sendPrefill, focus;
 }
 
@@ -53,7 +55,8 @@ class Nav extends ChangeNotifier {
   }
 
   /// A brand-new chat in [cwd]; [message] is sent right away when set.
-  void startChat({required String cwd, String message = ''}) => openChat(ChatRef(
+  void startChat({required String cwd, String message = '', String computer = 'mac'}) => openChat(ChatRef(
+        computer: computer,
         key: projectKeyFor(cwd),
         id: uuidV4(),
         cwd: cwd,

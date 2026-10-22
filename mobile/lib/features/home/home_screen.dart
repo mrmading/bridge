@@ -40,7 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  void _send(String text) => Nav.instance.startChat(cwd: _cwd.isEmpty ? defaultCwd() : _cwd, message: text);
+  void _send(String text) => Nav.instance.startChat(cwd: _cwd.isEmpty ? defaultCwd() : _cwd, message: text, computer: _store.computer);
 
   String _greeting() {
     final h = DateTime.now().hour;
@@ -71,6 +71,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.only(top: 4, bottom: 40),
                 children: [
+                  if (_store.cloudOffline) CloudOfflineBanner(reason: _store.computerById('cloud')?.reason ?? '', margin: const EdgeInsets.fromLTRB(16, 0, 16, 12)),
                   _hero(context),
                   if (_store.conn == ConnState.ready && !_store.auth.loggedIn) _signIn(context),
                   if (h.needs.isNotEmpty) ...[
@@ -219,7 +220,7 @@ class NeedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    void open() => openSession(key: n.key, id: n.id, cwd: _cwdFor(n.id), title: n.title, focus: true);
+    void open() => openSession(key: n.key, id: n.id, cwd: _cwdFor(n.id), title: n.title, focus: true, computer: n.computer);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       child: Material(
@@ -240,6 +241,7 @@ class NeedCard extends StatelessWidget {
                 PulseDot(color: t.warn),
                 const SizedBox(width: 4),
                 Expanded(child: Text(n.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 15, fontWeight: FontWeight.w600))),
+                if (n.computer == 'cloud') ...[const CloudBadge(), const SizedBox(width: 6)],
                 if (n.since > 0) Text(relTime(n.since), style: TextStyle(color: t.faint, fontSize: 12)),
               ]),
               if (n.ask.isNotEmpty) ...[
@@ -286,7 +288,7 @@ class RunCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => openSession(key: r.key, id: r.id, cwd: r.cwd, title: r.title),
+          onTap: () => openSession(key: r.key, id: r.id, cwd: r.cwd, title: r.title, computer: r.computer),
           child: Container(
             decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: t.border)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -297,11 +299,12 @@ class RunCard extends StatelessWidget {
                     PulseDot(color: t.accent),
                     const SizedBox(width: 4),
                     Expanded(child: Text(r.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 15, fontWeight: FontWeight.w600))),
+                    if (r.computer == 'cloud') ...[const SizedBox(width: 6), const CloudBadge()],
                     const SizedBox(width: 8),
                     if (r.started > 0) Elapsed(r.started, style: TextStyle(color: t.muted, fontSize: 12.5, fontFamily: 'Menlo', fontFamilyFallback: const ['monospace'])),
                   ]),
                   const SizedBox(height: 4),
-                  Text([if (r.projectName.isNotEmpty) r.projectName, 'on ${store.computerName}'].join(' · '), style: TextStyle(color: t.muted, fontSize: 13)),
+                  Text([if (r.projectName.isNotEmpty) r.projectName, 'on ${store.computerLabel(r.computer)}'].join(' · '), style: TextStyle(color: t.muted, fontSize: 13)),
                   const SizedBox(height: 8),
                   Row(children: [
                     _Typing(color: t.accent),
@@ -377,7 +380,7 @@ class MadeTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => Nav.instance.push(FileScreen(path: m.path)),
+        onTap: () => Nav.instance.push(FileScreen(path: m.path, computer: m.computer)),
         child: Container(
           decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: t.border)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [

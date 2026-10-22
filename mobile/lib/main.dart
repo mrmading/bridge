@@ -91,7 +91,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
       ..showSnackBar(SnackBar(
         content: Text('${_store.needsYou(id) ? 'Needs you' : 'Finished'}: $title', maxLines: 2, overflow: TextOverflow.ellipsis),
         duration: const Duration(seconds: 5),
-        action: s == null ? null : SnackBarAction(label: 'Open', onPressed: () => openSession(key: s.key, id: s.id, cwd: s.cwd, title: s.title)),
+        action: s == null ? null : SnackBarAction(label: 'Open', onPressed: () => openSession(key: s.key, id: s.id, cwd: s.cwd, title: s.title, computer: s.computer)),
       ));
   }
 

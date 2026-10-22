@@ -107,7 +107,7 @@ class _SearchScreenState extends State<SearchScreen> {
         if (chats.isNotEmpty) header(_q.isEmpty ? 'Recent chats' : 'Chats'),
         for (final s in chats.take(_q.isEmpty ? 8 : 30))
           row(Icons.chat_bubble_outline_rounded, s.title, [s.projectName.isNotEmpty ? s.projectName : s.folder, relTimeShort(s.mtime)].where((x) => x.isNotEmpty).join(' · '),
-              () => openSession(key: s.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title)),
+              () => openSession(key: s.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, computer: s.computer)),
         if (projects.isNotEmpty) header('Projects'),
         for (final p in projects.take(10)) row(Icons.folder_outlined, p.name, prettyPath(p.path), () => Nav.instance.push(ProjectScreen(project: p)), lead: ProjectIcon(p.name, size: 26)),
         if (agents.isNotEmpty) header('Agents'),
@@ -117,7 +117,7 @@ class _SearchScreenState extends State<SearchScreen> {
           Nav.instance.newChat();
         }, lead: Ava(name: a.name, size: 26, color: parseHex(a.color))),
         if (files.isNotEmpty) header('Files'),
-        for (final f in files.take(10)) row(Icons.description_outlined, f.name, f.sessionTitle, () => Nav.instance.push(FileScreen(path: f.path)), lead: FileBadge(f.ext, size: 26)),
+        for (final f in files.take(10)) row(Icons.description_outlined, f.name, f.sessionTitle, () => Nav.instance.push(FileScreen(path: f.path, computer: f.computer)), lead: FileBadge(f.ext, size: 26)),
         if (actions.isNotEmpty) header('Actions'),
         for (final a in actions) row(a.$2, a.$1, '', a.$3),
       ]),

@@ -3,6 +3,8 @@
 library;
 
 String _s(dynamic v) => v == null ? '' : v.toString();
+/// Which computer a chat lives on. Anything but "cloud" (including a missing field) is the Mac.
+String _computer(dynamic v) => _s(v) == 'cloud' ? 'cloud' : 'mac';
 int _i(dynamic v) => v is num ? v.toInt() : int.tryParse(_s(v)) ?? 0;
 bool _b(dynamic v) => v == true;
 
@@ -50,8 +52,10 @@ class Project {
 }
 
 class SessionMeta {
-  SessionMeta({required this.id, required this.key, required this.title, required this.preview, required this.mtime, required this.turns, this.model = '', this.cwd = '', this.branch = '', this.named = false, this.projectKey = '', this.projectName = '', this.projectPath = '', this.running = false, this.needs = false});
+  SessionMeta({required this.id, required this.key, required this.title, required this.preview, required this.mtime, required this.turns, this.model = '', this.cwd = '', this.branch = '', this.named = false, this.projectKey = '', this.projectName = '', this.projectPath = '', this.running = false, this.needs = false, this.computer = 'mac'});
   final String id, key, title, preview, model, cwd, branch, projectKey, projectName, projectPath;
+  /// mac · cloud
+  final String computer;
   final int mtime, turns;
   final bool named;
   /// A turn is running on the server right now / the chat is waiting on an answer.
@@ -73,6 +77,7 @@ class SessionMeta {
         projectPath: _s(j['projectPath']).isNotEmpty ? _s(j['projectPath']) : _s(j['cwd']),
         running: _b(j['running']),
         needs: _b(j['needs']),
+        computer: _computer(j['computer']),
       );
   String get folder {
     final p = projectPath.isNotEmpty ? projectPath : cwd;
@@ -250,8 +255,8 @@ List<Job> _jobs(dynamic v) => [for (final e in (v is List ? v : const [])) if (e
 
 /// A chat with a turn running right now.
 class Run {
-  Run({required this.id, required this.key, required this.title, required this.projectName, required this.cwd, required this.started, required this.prompt, required this.model, required this.step, required this.jobs});
-  final String id, key, title, projectName, cwd, prompt, model, step;
+  Run({required this.id, required this.key, required this.title, required this.projectName, required this.cwd, required this.started, required this.prompt, required this.model, required this.step, required this.jobs, this.computer = 'mac'});
+  final String id, key, title, projectName, cwd, prompt, model, step, computer;
   /// epoch ms
   final int started;
   final List<Job> jobs;
@@ -267,21 +272,23 @@ class Run {
         model: _s(j['model']),
         step: _s(j['step']),
         jobs: _jobs(j['jobs']),
+        computer: _computer(j['computer']),
       );
 }
 
 /// A chat waiting on the user.
 class Need {
-  Need({required this.id, required this.key, required this.title, required this.projectName, required this.ask, required this.since});
-  final String id, key, title, projectName, ask;
+  Need({required this.id, required this.key, required this.title, required this.projectName, required this.ask, required this.since, this.computer = 'mac'});
+  final String id, key, title, projectName, ask, computer;
   final int since;
-  factory Need.fromJson(Map<String, dynamic> j) => Need(id: _s(j['id']), key: _s(j['key']), title: _s(j['title']).isEmpty ? 'Untitled chat' : _s(j['title']), projectName: _s(j['projectName']), ask: _s(j['ask']), since: _i(j['since']));
+  factory Need.fromJson(Map<String, dynamic> j) =>
+      Need(id: _s(j['id']), key: _s(j['key']), title: _s(j['title']).isEmpty ? 'Untitled chat' : _s(j['title']), projectName: _s(j['projectName']), ask: _s(j['ask']), since: _i(j['since']), computer: _computer(j['computer']));
 }
 
 /// A file a chat wrote.
 class Made {
-  Made({required this.path, required this.name, required this.ext, required this.sessionId, required this.key, required this.sessionTitle, required this.mtime});
-  final String path, name, ext, sessionId, key, sessionTitle;
+  Made({required this.path, required this.name, required this.ext, required this.sessionId, required this.key, required this.sessionTitle, required this.mtime, this.computer = 'mac'});
+  final String path, name, ext, sessionId, key, sessionTitle, computer;
   final int mtime;
   factory Made.fromJson(Map<String, dynamic> j) {
     final path = _s(j['path']);
@@ -295,6 +302,7 @@ class Made {
       key: _s(j['key']),
       sessionTitle: _s(j['sessionTitle']),
       mtime: _i(j['mtime']),
+      computer: _computer(j['computer']),
     );
   }
 }
@@ -307,7 +315,7 @@ class HomeProject {
 }
 
 class HomeData {
-  HomeData({this.user = '', this.assistant = '', this.running = const [], this.needs = const [], this.made = const [], this.projects = const [], this.derived = false});
+  HomeData({this.user = '', this.assistant = '', this.running = const [], this.needs = const [], this.made = const [], this.projects = const [], this.derived = false, this.cloudOffline = false});
   final String user, assistant;
   final List<Run> running;
   final List<Need> needs;
@@ -315,6 +323,8 @@ class HomeData {
   final List<HomeProject> projects;
   /// true when built from /api/recent because the server has no /api/home yet
   final bool derived;
+  /// The cloud computer is set up but not answering.
+  final bool cloudOffline;
   factory HomeData.fromJson(Map<String, dynamic> j) {
     List<T> list<T>(String k, T Function(Map<String, dynamic>) f) => [for (final e in (j[k] is List ? j[k] as List : const [])) if (e is Map) f(Map<String, dynamic>.from(e))];
     return HomeData(
@@ -324,6 +334,7 @@ class HomeData {
       needs: list('needs', Need.fromJson),
       made: list('made', Made.fromJson),
       projects: list('projects', HomeProject.fromJson),
+      cloudOffline: _b(j['cloudOffline']),
     );
   }
 
@@ -332,10 +343,10 @@ class HomeData {
         derived: true,
         running: [
           for (final s in recent.where((s) => s.running))
-            Run(id: s.id, key: s.key, title: s.title, projectName: s.projectName, cwd: s.cwd, started: s.mtime, prompt: s.preview, model: s.model, step: '', jobs: const []),
+            Run(id: s.id, key: s.key, title: s.title, projectName: s.projectName, cwd: s.cwd, started: s.mtime, prompt: s.preview, model: s.model, step: '', jobs: const [], computer: s.computer),
         ],
         needs: [
-          for (final s in recent.where((s) => s.needs)) Need(id: s.id, key: s.key, title: s.title, projectName: s.projectName, ask: s.preview, since: s.mtime),
+          for (final s in recent.where((s) => s.needs)) Need(id: s.id, key: s.key, title: s.title, projectName: s.projectName, ask: s.preview, since: s.mtime, computer: s.computer),
         ],
         projects: [
           for (final p in projects) HomeProject(key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity),
@@ -366,4 +377,26 @@ class TurnOptions {
   String model, permissionMode, effort, agent;
   Map<String, dynamic> toJson() => {'model': model, 'permissionMode': permissionMode, 'effort': effort, 'agent': agent};
   factory TurnOptions.fromJson(Map<String, dynamic>? j) => TurnOptions(model: _s(j?['model']), permissionMode: _s(j?['permissionMode']).isEmpty ? 'acceptEdits' : _s(j?['permissionMode']), effort: _s(j?['effort']), agent: _s(j?['agent']));
+}
+
+/// GET /api/computers: where chats can run. id ∈ mac · cloud.
+class Computer {
+  Computer({required this.id, required this.name, required this.kind, required this.online, this.url = '', this.reason = ''});
+  final String id, name, kind, url;
+  final bool online;
+  /// Why it is offline, when the server says.
+  final String reason;
+  bool get isCloud => id == 'cloud';
+  factory Computer.fromJson(Map<String, dynamic> j) {
+    final id = _computer(j['id']);
+    return Computer(
+      id: id,
+      name: _s(j['name']).isNotEmpty ? _s(j['name']) : (id == 'cloud' ? 'Cloud computer' : 'Your Mac'),
+      kind: _s(j['kind']).isNotEmpty ? _s(j['kind']) : (id == 'cloud' ? 'remote' : 'local'),
+      // A computer the server lists without a status is assumed reachable; only `false` is offline.
+      online: j['online'] != false,
+      url: _s(j['url']),
+      reason: _s(j['reason']).isNotEmpty ? _s(j['reason']) : _s(j['error']),
+    );
+  }
 }

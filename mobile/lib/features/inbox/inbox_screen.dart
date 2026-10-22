@@ -17,7 +17,7 @@ class InboxScreen extends StatefulWidget {
   State<InboxScreen> createState() => _InboxScreenState();
 }
 
-typedef _Item = ({String kind, String id, String key, String cwd, String title, String sub, int at});
+typedef _Item = ({String kind, String id, String key, String cwd, String title, String sub, int at, String computer});
 
 class _InboxScreenState extends State<InboxScreen> {
   final _store = AppStore.instance;
@@ -28,10 +28,10 @@ class _InboxScreenState extends State<InboxScreen> {
     final busy = {...h.running.map((r) => r.id), ...h.needs.map((n) => n.id)};
     String cwdOf(String id) => _store.recent.where((s) => s.id == id).map((s) => s.cwd.isNotEmpty ? s.cwd : s.projectPath).firstOrNull ?? '';
     return [
-      for (final n in h.needs) (kind: 'need', id: n.id, key: n.key, cwd: cwdOf(n.id), title: n.title, sub: [if (n.ask.isNotEmpty) n.ask, if (n.projectName.isNotEmpty) n.projectName].join(' · '), at: n.since),
-      for (final r in h.running) (kind: 'run', id: r.id, key: r.key, cwd: r.cwd, title: r.title, sub: [if (r.step.isNotEmpty) r.step, if (r.projectName.isNotEmpty) r.projectName].join(' · '), at: r.started),
+      for (final n in h.needs) (kind: 'need', id: n.id, key: n.key, cwd: cwdOf(n.id), title: n.title, sub: [if (n.ask.isNotEmpty) n.ask, if (n.projectName.isNotEmpty) n.projectName].join(' · '), at: n.since, computer: n.computer),
+      for (final r in h.running) (kind: 'run', id: r.id, key: r.key, cwd: r.cwd, title: r.title, sub: [if (r.step.isNotEmpty) r.step, if (r.projectName.isNotEmpty) r.projectName].join(' · '), at: r.started, computer: r.computer),
       for (final s in _store.recent.where((s) => !busy.contains(s.id)).take(40))
-        (kind: 'done', id: s.id, key: s.key, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, sub: [projectNameOf(s), if (s.preview.isNotEmpty && s.preview != s.title) s.preview].join(' · '), at: s.mtime),
+        (kind: 'done', id: s.id, key: s.key, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, sub: [projectNameOf(s), if (s.preview.isNotEmpty && s.preview != s.title) s.preview].join(' · '), at: s.mtime, computer: s.computer),
     ].where((x) => _filter == 'all' || x.kind == _filter).toList();
   }
 
@@ -107,7 +107,7 @@ class _Row extends StatelessWidget {
       'run' => (t.accentSoft, t.accent, Icons.bolt_rounded, 'Working'),
       _ => (t.okSoft, t.ok, Icons.check_rounded, 'Finished'),
     };
-    void open() => openSession(key: x.key, id: x.id, cwd: x.cwd, title: x.title, focus: x.kind == 'need');
+    void open() => openSession(key: x.key, id: x.id, cwd: x.cwd, title: x.title, focus: x.kind == 'need', computer: x.computer);
     return InkWell(
       onTap: open,
       child: Container(
@@ -118,7 +118,10 @@ class _Row extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(x.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 14.5, fontWeight: FontWeight.w600)),
+              Row(children: [
+                Flexible(child: Text(x.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 14.5, fontWeight: FontWeight.w600))),
+                if (x.computer == 'cloud') ...[const SizedBox(width: 6), const CloudBadge(size: 13)],
+              ]),
               const SizedBox(height: 2),
               Text(x.sub.isEmpty ? verb : '$verb · ${x.sub}', maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 13)),
             ]),

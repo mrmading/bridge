@@ -43,6 +43,8 @@ class _SessionScreenState extends State<SessionScreen> {
   late String _cwd = widget.chat.cwd;
   late String _title = widget.chat.title;
   late bool _isNew = widget.chat.isNew;
+  /// mac · cloud. A chat that moves reopens as a new screen, so this never changes in place.
+  late final String _computer = widget.chat.computer;
 
   final List<Msg> _msgs = [];
   final Map<String, Msg> _tools = {};
@@ -143,7 +145,7 @@ class _SessionScreenState extends State<SessionScreen> {
   Future<void> _resync() async {
     _stopFollow();
     try {
-      final tr = await _api.session(_key, _id);
+      final tr = await _api.session(_key, _id, computer: _computer);
       if (!mounted) return;
       setState(() {
         _msgs
@@ -186,7 +188,7 @@ class _SessionScreenState extends State<SessionScreen> {
   void _startFollow() {
     if (_disposed || _gone || _isNew) return;
     _followSub?.cancel();
-    _followSub = _api.follow(_key, _id, _offset).listen(
+    _followSub = _api.follow(_key, _id, _offset, computer: _computer).listen(
       _onFollowFrame,
       onError: (_) => _scheduleFollowRetry(),
       onDone: _scheduleFollowRetry,
@@ -263,7 +265,7 @@ class _SessionScreenState extends State<SessionScreen> {
     if (_disposed || _jobsMissing || (_isNew && _abortKey.isEmpty)) return;
     final wasRemote = _remoteRunning;
     try {
-      final j = await _api.jobs(_key, _abortKey.isNotEmpty ? _abortKey : _id);
+      final j = await _api.jobs(_key, _abortKey.isNotEmpty ? _abortKey : _id, computer: _computer);
       if (!mounted) return;
       setState(() => _jobs = j);
     } on ApiException catch (e) {
@@ -348,7 +350,7 @@ class _SessionScreenState extends State<SessionScreen> {
     if (!mounted) return;
 
     _chatSub = _api
-        .chat(prompt: text, resume: _isNew ? null : _id, sessionId: _isNew ? _id : null, cwd: _cwd, options: opts)
+        .chat(prompt: text, resume: _isNew ? null : _id, sessionId: _isNew ? _id : null, cwd: _cwd, options: opts, computer: _computer)
         .listen(_onChatFrame, onError: (Object e) {
       if (mounted) toast(context, e.toString());
       _finishTurn();
@@ -362,7 +364,7 @@ class _SessionScreenState extends State<SessionScreen> {
       return;
     }
     try {
-      final ok = await _api.abort(key);
+      final ok = await _api.abort(key, computer: _computer);
       if (!ok && mounted) toast(context, 'Nothing is running');
       if (ok) unawaited(_pollJobs());
     } catch (e) {
@@ -650,7 +652,7 @@ class _SessionScreenState extends State<SessionScreen> {
       return;
     }
     try {
-      await _api.rename(_id, title.trim());
+      await _api.rename(_id, title.trim(), computer: _computer);
       if (!mounted) return;
       setState(() => _title = title.trim());
       unawaited(_store.refreshRecent());
@@ -659,7 +661,41 @@ class _SessionScreenState extends State<SessionScreen> {
     }
   }
 
-  void _openFile(String path) => Nav.instance.push(FileScreen(path: path));
+  Future<void> _moveToCloud() async {
+    if (_isNew || _busy) {
+      toast(context, _isNew ? 'Send a message first, then move it' : 'Wait for the running work to finish, then move it');
+      return;
+    }
+    if (_store.cloudOffline) {
+      toast(context, 'The cloud computer is offline');
+      return;
+    }
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Move to the cloud computer?'),
+        content: const Text('The chat and its history move to the cloud computer, so it keeps working when your Mac sleeps. Files it needs must exist there too.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Move')),
+        ],
+      ),
+    );
+    if (yes != true || !mounted) return;
+    toast(context, 'Moving to the cloud computer…');
+    try {
+      final r = await _api.moveToCloud(_key, _id);
+      if (!mounted) return;
+      unawaited(_store.refreshRecent());
+      unawaited(_store.pollHome());
+      // Reopen it where it now lives; the follower and jobs poll switch computer with it.
+      Nav.instance.openChat(ChatRef(key: r.key, id: r.id, cwd: _cwd, title: _title, computer: 'cloud'));
+    } catch (e) {
+      if (mounted) toast(context, 'Could not move it: $e');
+    }
+  }
+
+  void _openFile(String path) => Nav.instance.push(FileScreen(path: path, computer: _computer));
 
   void _openPanel() => showChatPanel(
         context,
@@ -695,6 +731,7 @@ class _SessionScreenState extends State<SessionScreen> {
                 Row(children: [
                   if (_busy) ...[PulseDot(color: t.accent, size: 6), const SizedBox(width: 2)],
                   Flexible(child: Text(_busy ? 'Working · $folder' : folder, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 12, fontWeight: FontWeight.w500))),
+                  if (_computer == 'cloud') ...[const SizedBox(width: 5), const CloudBadge(size: 13)],
                 ]),
             ]),
           ),
@@ -713,14 +750,17 @@ class _SessionScreenState extends State<SessionScreen> {
                   toast(context, 'Chat id copied');
                 case 'stop':
                   _stopTurn();
+                case 'cloud':
+                  _moveToCloud();
                 case 'folder':
-                  Nav.instance.push(FileScreen(path: _cwd, isDir: true));
+                  Nav.instance.push(FileScreen(path: _cwd, isDir: true, computer: _computer));
               }
             },
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'rename', child: Text('Rename')),
               const PopupMenuItem(value: 'folder', child: Text('Browse project folder')),
               const PopupMenuItem(value: 'copy', child: Text('Copy chat id')),
+              if (_computer == 'mac' && _store.hasCloud) const PopupMenuItem(value: 'cloud', child: Text('Move to cloud computer')),
               PopupMenuItem(value: 'stop', enabled: _busy, child: const Text('Stop all running work')),
             ],
           ),
@@ -858,6 +898,7 @@ class _SessionScreenState extends State<SessionScreen> {
           padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             if (jobs.isNotEmpty) _JobsTray(jobs: jobs, since: _runSince),
+            if (_computer == 'cloud' && _store.cloudOffline) CloudOfflineBanner(reason: _store.computerById('cloud')?.reason ?? '', inChat: true, margin: const EdgeInsets.only(bottom: 8)),
             if (_busy)
               Padding(
                 padding: const EdgeInsets.fromLTRB(6, 2, 6, 6),
