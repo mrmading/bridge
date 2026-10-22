@@ -7,7 +7,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 
@@ -79,7 +79,7 @@ const LANGS: Record<string, string> = {
 
 type SessionMeta = {
   id: string; key: string; title: string; preview: string; mtime: number;
-  size: number; turns: number; model?: string; cwd?: string; branch?: string; named?: boolean;
+  size: number; turns: number; model?: string; cwd?: string; branch?: string; named?: boolean; desk?: boolean; v?: number;
 };
 
 async function firstLines(file: string, bytes = 65536): Promise<string[]> {
@@ -172,14 +172,14 @@ async function computeMeta(key: string, file: string): Promise<SessionMeta | nul
   const st = await stat(file).catch(() => null);
   if (!st || st.size === 0) return null;
   const cached = metaCache.get(file);
-  if (cached && cached.m === st.mtimeMs) return cached.v;
+  if (cached && cached.m === st.mtimeMs && cached.v.v === 2) return cached.v;
   const id = basename(file, ".jsonl");
-  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0 };
+  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0, v: 2 };
   for (const line of await firstLines(file, 300_000)) {
     let r: any; try { r = JSON.parse(line); } catch { continue; }
     if (r.cwd && !meta.cwd) { meta.cwd = r.cwd; meta.branch = r.gitBranch; }
     if (r.type === "ai-title" && r.aiTitle) meta.title = r.aiTitle;
-    if (r.type === "user" && !r.isSidechain && typeof r.message?.content === "string") meta.turns++;
+    if (r.type === "user" && !r.isSidechain && typeof r.message?.content === "string") { meta.turns++; if (meta.turns === 1 && r.message.content.startsWith("<bridge>")) meta.desk = true; }
     if (!meta.preview && r.type === "user" && !r.isSidechain && typeof r.message?.content === "string")
       meta.preview = r.message.content.replace(/<[^>]+>/g, " ").slice(0, 220).trim();
     if (!meta.preview && r.type === "user" && Array.isArray(r.message?.content)) {
@@ -596,7 +596,8 @@ async function findSessions(q: string, scope: string, key: string, cwd = "") {
 /* ───────────────────────────── live chat ───────────────────────────── */
 
 const live = new Map<string, ChildProcess>();
-type Run = { id: string; cwd: string; model?: string; started: number; prompt: string };
+/** a Bridge turn in flight. `key` is the transcript folder; `sid` is set when the CLI answers under another id */
+type Run = { id: string; key: string; sid?: string; cwd: string; model?: string; agent?: string; started: number; prompt: string };
 const running = new Map<string, Run>();
 
 /** everything Bridge does, newest last — the Activity page reads this */
@@ -611,7 +612,10 @@ try {
   settingsEnv = JSON.parse(raw).env || {};
 } catch {}
 
-async function runClaude(req: any, send: (o: any) => void, done: () => void) {
+/** `watched` says whether the page that started the turn is still connected: when it is, the page
+ *  announces the end itself; when it is gone, the server does, so a turn finishing in an empty room
+ *  still reaches the principal. */
+async function runClaude(req: any, send: (o: any) => void, done: () => void, watched: () => boolean = () => false) {
   // a signed-out CLI fails deep inside the stream; catch it here and hand the UI the sign-in sheet
   const auth = await authStatus();
   if (!auth.loggedIn) { send({ t: "auth", d: auth }); send({ t: "end", code: 0 }); done(); return null; }
@@ -681,8 +685,12 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void) {
   const key = req.resume || sessionId;
   live.set(key, child);
   const prompt = String(req.prompt).replace(/\s+/g, " ").trim().slice(0, 140);
-  running.set(key, { id: key, cwd, model: req.model, started: Date.now(), prompt });
+  const run: Run = { id: key, key: projectKey(cwd), cwd, model: req.model, agent, started: Date.now(), prompt };
+  running.set(key, run);
+  homeCache = null;
   logRow({ ts: Date.now(), kind: "turn.start", msg: prompt, session: key, cwd, model: req.model });
+  emitEvent({ kind: "started", at: Date.now(), id: key, key: run.key, folder: basename(cwd), cwd, title: prompt.slice(0, 60), text: prompt });
+  let outcome: { error: boolean; text: string } | null = null;
   send({ t: "start", sessionId: key, cwd, args });
 
   if (inputEnvelope && child.stdin) {
@@ -700,7 +708,9 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void) {
       if (!line) continue;
       try {
         const parsed = JSON.parse(line);
+        if (parsed?.type === "system" && parsed.subtype === "init" && parsed.session_id && parsed.session_id !== key) run.sid = parsed.session_id;
         if (parsed?.type === "result") {
+          outcome = { error: !!parsed.is_error, text: String(parsed.result || "") };
           logRow({ ts: Date.now(), kind: parsed.is_error ? "turn.error" : "turn.done",
             msg: running.get(key)?.prompt || parsed.subtype || "turn", outcome: parsed.subtype,
             session: key, cwd, model: req.model,
@@ -712,9 +722,29 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void) {
     }
   });
   child.stderr.on("data", (c) => send({ t: "stderr", d: c.toString() }));
-  child.on("close", (code) => { live.delete(key); running.delete(key); if (code) logRow({ ts: Date.now(), kind: "turn.exit", msg: prompt, outcome: "exit " + code, session: key, cwd }); send({ t: "end", code }); done(); });
+  child.on("close", (code) => {
+    live.delete(key); running.delete(key); homeCache = null;
+    if (code) logRow({ ts: Date.now(), kind: "turn.exit", msg: prompt, outcome: "exit " + code, session: key, cwd });
+    if (!stopped.delete(key)) announceEnd(run, outcome, code, watched());
+    send({ t: "end", code }); done();
+  });
   child.on("error", (e) => { logRow({ ts: Date.now(), kind: "turn.error", msg: String(e), session: key, cwd }); send({ t: "error", d: String(e) }); live.delete(key); running.delete(key); done(); });
   return sessionId;
+}
+/** turns stopped by hand end quietly */
+const stopped = new Set<string>();
+async function announceEnd(run: Run, outcome: { error: boolean; text: string } | null, code: number | null, watched: boolean) {
+  const id = run.sid || run.id;
+  const file = sessionFile(id, run.key);
+  const meta = file && existsSync(file) ? await sessionMeta(run.key, file) : null;
+  const title = meta?.title || run.prompt.slice(0, 60);
+  const folder = basename(run.cwd) || run.cwd;
+  const failed = !outcome || outcome.error || !!code;
+  const t = file ? await tailState(file, true) : null;
+  const ask = !failed && t?.waiting ? t.waiting : null;
+  const text = ask ? ask.text : plain(outcome?.text || "", 300);
+  emitEvent({ kind: ask ? "waiting" : failed ? "error" : "done", at: Date.now(), id, key: run.key, folder, cwd: run.cwd, title, text, options: ask?.options });
+  if (!watched) notifyDesktop(folder + (ask ? " needs you" : failed ? " stopped with an error" : " finished"), title, text);
 }
 
 
@@ -908,22 +938,32 @@ async function doLogout() {
   return { ok: !st.loggedIn, status: st, out: out.trim().slice(-200) };
 }
 
-/* ─────────────── live terminal sessions (the registry the CLI keeps) ───────────────
- * Every interactive `claude` writes ~/.claude/sessions/<pid>.json — pid, session id, the
- * folder it started in, a display name and a busy/idle status it keeps current. Bridge reads
- * that registry, drops anything whose process is gone, and mirrors the rest as tabs. Print-mode
- * turns (Bridge's own, and anyone's `claude -p`) do not register, so they never show up here. */
-const SESSIONS_DIR = join(CLAUDE_DIR, "sessions");
+/* ─────────────── what Bridge's own chats are doing ───────────────
+ * Bridge replaced the terminal: every chat starts here and runs as a `claude -p` child of this
+ * server, so it keeps going when the page closes. The transcript on disk is the truth about a
+ * turn in flight; these readers turn its tail into the things a person wants to see — what it is
+ * doing right now, what is running in the background, and whether a finished chat is waiting on
+ * an answer. Every reader is cached by file size + mtime, because the pages poll them. */
 /** the CLI names a project folder after the cwd with every non-alphanumeric turned into "-" */
 const projectKey = (cwd: string) => String(cwd).replace(/[^A-Za-z0-9]/g, "-");
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** a session's transcript, under the key it was started with or, failing that, wherever it is */
+function sessionFile(id: string, key = ""): string {
+  if (key) { const f = join(PROJECTS_DIR, key, id + ".jsonl"); if (existsSync(f)) return f; }
+  try {
+    for (const d of readdirSync(PROJECTS_DIR)) {
+      const f = join(PROJECTS_DIR, d, id + ".jsonl");
+      if (existsSync(f)) return f;
+    }
+  } catch {}
+  return key ? join(PROJECTS_DIR, key, id + ".jsonl") : "";
+}
 
 type Waiting = { kind: "question" | "plan" | "permission"; text: string; options?: string[] } | null;
 type TailState = { last: string; lastTs: number; lastUser: string; waiting: Waiting; turns: number; cwd: string };
 const tailCache = new Map<string, { m: number; v: TailState }>();
 /** What the end of a transcript says: the last thing the model said, and whether it is
- *  standing on a question. A pending AskUserQuestion / ExitPlanMode (tool_use with no
- *  tool_result) is the hard signal; an idle session whose last words end in "?" is the soft one. */
+ *  standing on a question. A pending (or, in -p mode, refused) AskUserQuestion / ExitPlanMode is
+ *  the hard signal; a `choices` block or last words ending in "?" are the soft ones. */
 async function tailState(file: string, idle: boolean): Promise<TailState> {
   const st = await stat(file).catch(() => null);
   const empty: TailState = { last: "", lastTs: 0, lastUser: "", waiting: null, turns: 0, cwd: "" };
@@ -932,150 +972,286 @@ async function tailState(file: string, idle: boolean): Promise<TailState> {
   if (hit && hit.m === st.mtimeMs) return { ...hit.v, waiting: softWaiting(hit.v, idle) };
   const lines = await lastLines(file, 120_000);
   const pending = new Map<string, any>();
+  let lastAsk: any = null;
   const v: TailState = { ...empty };
   for (const line of lines) {
     let r: any; try { r = JSON.parse(line); } catch { continue; }
     if (r.isSidechain) continue;
-    if (r.cwd) v.cwd = r.cwd;                       // where the work is actually happening now
+    if (r.cwd) v.cwd = r.cwd;
     const ts = r.timestamp ? Date.parse(r.timestamp) : 0;
     if (r.type === "assistant") {
       for (const c of r.message?.content || []) {
-        if (c.type === "text" && c.text?.trim()) { v.last = c.text; v.lastTs = ts; }
-        else if (c.type === "tool_use") pending.set(c.id, { name: c.name, input: c.input });
+        if (c.type === "text" && c.text?.trim()) { v.last = c.text; v.lastTs = ts; lastAsk = null; }
+        else if (c.type === "tool_use") {
+          pending.set(c.id, { name: c.name, input: c.input });
+          lastAsk = c.name === "AskUserQuestion" || c.name === "ExitPlanMode" ? { name: c.name, input: c.input } : null;
+        }
       }
     } else if (r.type === "user") {
       const c = r.message?.content;
-      if (typeof c === "string") { const t = c.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, "").trim(); if (t) { v.lastUser = t; v.turns++; } }
+      if (typeof c === "string") { const t = c.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, "").trim(); if (t) { v.lastUser = t; v.turns++; lastAsk = null; } }
       else if (Array.isArray(c)) {
         for (const x of c) {
           if (x.type === "tool_result") pending.delete(x.tool_use_id);
-          else if (x.type === "text" && x.text?.trim()) { v.lastUser = x.text; v.turns++; }
+          else if (x.type === "text" && x.text?.trim()) { v.lastUser = x.text; v.turns++; lastAsk = null; }
         }
       }
     }
   }
-  const ask = [...pending.values()].find((p) => p.name === "AskUserQuestion");
-  const plan = [...pending.values()].find((p) => p.name === "ExitPlanMode");
-  if (ask) {
+  const ask = lastAsk || [...pending.values()].find((p) => p.name === "AskUserQuestion" || p.name === "ExitPlanMode");
+  if (ask?.name === "AskUserQuestion") {
     const q = (ask.input?.questions || [])[0] || {};
     v.waiting = { kind: "question", text: String(q.question || q.header || "is asking you a question"), options: (q.options || []).map((o: any) => String(o.label || o)).slice(0, 6) };
-  } else if (plan) v.waiting = { kind: "plan", text: "has a plan waiting for your approval" };
+  } else if (ask?.name === "ExitPlanMode") v.waiting = { kind: "plan", text: "has a plan waiting for your approval" };
   tailCache.set(file, { m: st.mtimeMs, v: { ...v, waiting: v.waiting } });
   return { ...v, waiting: softWaiting(v, idle) };
 }
 function softWaiting(v: TailState, idle: boolean): Waiting {
   if (v.waiting) return v.waiting;
   if (!idle || !v.last) return null;
+  const choices = /```choices\s*\n([\s\S]*?)```/.exec(v.last);
+  if (choices) {
+    const before = v.last.slice(0, choices.index).trim().split("\n").map((l) => l.trim()).filter(Boolean).pop() || "";
+    const options = choices[1].split("\n").map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim()).filter(Boolean).slice(0, 6);
+    return { kind: "question", text: plain(before, 300) || "wants you to pick an option", options };
+  }
   const tail = v.last.trim().split("\n").map((l) => l.trim()).filter(Boolean).pop() || "";
   const clean = tail.replace(/[*_`#>]/g, "").trim();
   if (/\?$/.test(clean) && clean.length > 8 && clean.length < 300) return { kind: "question", text: clean };
+  // a question asked mid-reply and followed by a short sign-off still waits on the person
+  const q = v.last.replace(/```[\s\S]*?```/g, " ").split("\n").map((l) => l.replace(/[*_`#>]/g, "").trim()).filter((l) => /\?$/.test(l) && l.length > 12 && l.length < 300).pop();
+  if (q && v.last.length - v.last.lastIndexOf(q.slice(-20)) < 400) return { kind: "question", text: q };
   return null;
 }
 const plain = (t: string, n = 240) => String(t || "").replace(/```[\s\S]*?```/g, " ").replace(/[═━─]{2,}[^═━─\n]*[═━─]{2,}/g, " ").replace(/<[^>]+>/g, " ").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
 
-type LiveSession = {
-  pid: number; id: string; key: string; cwd: string; name: string; status: string; startedAt: number; updatedAt: number;
-  file: string; title: string; folder: string; last: string; lastTs: number; lastUser: string; waiting: Waiting; turns: number; version?: string;
-};
-/** pids Bridge itself spawned — never mirrored, even if a future CLI registers them */
-const ownPids = new Set<number>();
-/** The desk's `claude` registers as interactive too, and a second Bridge on this machine runs
- *  its own desk whose pid is not in ownPids. Anything the SDK drives says so in its entrypoint
- *  ("sdk-cli"); a person at a terminal is "cli". The desk's session id is the backstop. */
-function isDeskSession(r: any) {
-  if (/^sdk/.test(String(r.entrypoint || ""))) return true;
-  try { return r.sessionId === DA.sessionId || (!!DA.prevSessionId && r.sessionId === DA.prevSessionId); } catch { return false; }
-}
-async function liveSessions(): Promise<LiveSession[]> {
-  const files = await readdir(SESSIONS_DIR).catch(() => [] as string[]);
-  const out: LiveSession[] = [];
-  for (const f of files) {
-    if (!f.endsWith(".json")) continue;
-    let r: any; try { r = JSON.parse(await readFile(join(SESSIONS_DIR, f), "utf8")); } catch { continue; }
-    if (!r.pid || !r.sessionId || !r.cwd) continue;
-    if (r.kind && r.kind !== "interactive") continue;
-    if (ownPids.has(r.pid) || !alive(r.pid)) continue;
-    if (isDeskSession(r)) continue;                 // a desk — ours, or a second Bridge's — is not a terminal
-    const key = projectKey(r.cwd);
-    const file = join(PROJECTS_DIR, key, r.sessionId + ".jsonl");
-    const has = existsSync(file);
-    const meta = has ? await sessionMeta(key, file) : null;
-    const tail = has ? await tailState(file, r.status === "idle") : { last: "", lastTs: 0, lastUser: "", waiting: null, turns: 0, cwd: "" };
-    const work = tail.cwd || r.cwd;
-    out.push({
-      pid: r.pid, id: r.sessionId, key, cwd: r.cwd, name: r.name || ("claude " + r.pid), status: r.status || "idle",
-      startedAt: r.startedAt || 0, updatedAt: r.updatedAt || r.startedAt || 0, file, version: r.version,
-      title: meta?.title || tail.lastUser.slice(0, 60) || basename(work), folder: work === HOME ? "home" : basename(work) || work,
-      last: plain(tail.last, 400), lastTs: tail.lastTs, lastUser: plain(tail.lastUser, 200), waiting: tail.waiting, turns: tail.turns,
-    });
+/** a tool call in words a person would use, present tense: what is happening right now */
+const fileName = (p: any) => String(p || "").split("/").pop() || "a file";
+function stepFor(name: string, i: any): string {
+  i = i || {};
+  switch (name) {
+    case "Read": return "Reading " + fileName(i.file_path);
+    case "Write": return "Writing " + fileName(i.file_path);
+    case "Edit": case "MultiEdit": return "Editing " + fileName(i.file_path);
+    case "NotebookEdit": return "Editing " + fileName(i.notebook_path);
+    case "Bash": return i.description ? String(i.description).replace(/\.$/, "") : "Running a command";
+    case "Grep": return "Searching the code for “" + String(i.pattern || "").slice(0, 40) + "”";
+    case "Glob": return "Looking for files";
+    case "WebSearch": return "Searching the web for “" + String(i.query || "").slice(0, 50) + "”";
+    case "WebFetch": try { return "Reading " + new URL(i.url).host; } catch { return "Reading a web page"; }
+    case "Task": case "Agent": return (i.subagent_type ? i.subagent_type + ": " : "Helper: ") + (i.description || "working");
+    case "TodoWrite": return "Updating the checklist";
+    case "Skill": return "Using the " + (i.skill || "") + " skill";
+    case "Workflow": return "Running a workflow" + (i.name ? " · " + i.name : "");
+    case "AskUserQuestion": return "Asking you a question";
+    case "ExitPlanMode": return "Presenting a plan";
+    default: return "Using " + name.replace(/^mcp__[^_]+__/, "").replace(/_/g, " ");
   }
-  return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/** Watch the registry for the moments worth telling the principal about: a turn finishing
- *  (busy → idle), a session stopping on a question, a terminal opening or closing. */
-type LiveEvent = { kind: "started" | "ended" | "done" | "waiting"; at: number; pid: number; id: string; key: string; name: string; folder: string; cwd: string; title: string; text: string; options?: string[] };
-const EVENTS: LiveEvent[] = [];
-let lastLive: LiveSession[] = [];
-const seenLive = new Map<number, { status: string; waiting: string; first: boolean }>();
-let watchBooted = false;
-async function watchLive() {
-  let cur: LiveSession[];
-  try { cur = await liveSessions(); } catch { return; }
-  lastLive = cur;
-  const now = Date.now();
-  const emit = (kind: LiveEvent["kind"], s: LiveSession, text: string, options?: string[]) => {
-    const ev: LiveEvent = { kind, at: now, pid: s.pid, id: s.id, key: s.key, name: s.name, folder: s.folder, cwd: s.cwd, title: s.title, text, options };
-    EVENTS.push(ev); if (EVENTS.length > 200) EVENTS.shift();
-    logRow({ ts: now, kind: "live." + kind, msg: (kind === "waiting" ? "needs you: " : "") + (text || s.title), session: s.id, cwd: s.cwd, outcome: s.name });
-    daBroadcast({ t: "event", d: ev });
-    if (kind === "waiting") notifyDesktop(s.folder + " needs you", s.title, text);
-    else if (kind === "done") notifyDesktop(s.folder + " finished a turn", s.title, text);
-  };
-  const present = new Set<number>();
-  for (const s of cur) {
-    present.add(s.pid);
-    const w = s.waiting ? s.waiting.kind + ":" + s.waiting.text : "";
-    const prev = seenLive.get(s.pid);
-    if (!prev) {
-      seenLive.set(s.pid, { status: s.status, waiting: w, first: true });
-      if (watchBooted) emit("started", s, s.title);
-      else if (w && s.waiting) emit("waiting", s, s.waiting.text, s.waiting.options);   // already waiting when Bridge came up
-      continue;
+type Job = { kind: "subagent" | "background" | "workflow" | "tool"; title: string; since: number; agent?: string };
+type TurnTail = { step: string; jobs: Job[]; last: number };
+const turnCache = new Map<string, { m: number; s: number; at: number; v: TurnTail }>();
+/** The turn in flight, from the transcript tail: the latest action as a sentence, and every piece
+ *  of work still out — subagents and workflows with no result yet, anything sent to the
+ *  background, and any call that has been pending for more than 30 seconds. */
+async function turnTail(file: string): Promise<TurnTail> {
+  const st = await stat(file).catch(() => null);
+  if (!st) return { step: "Starting", jobs: [], last: 0 };
+  const hit = turnCache.get(file);
+  // "pending > 30s" depends on the clock, so even an unchanged file is re-read now and then
+  if (hit && hit.m === st.mtimeMs && hit.s === st.size && Date.now() - hit.at < 10_000) return hit.v;
+  const rows: any[] = [];
+  for (const line of await lastLines(file, 600_000)) { try { rows.push(JSON.parse(line)); } catch {} }
+  // the turn began at the last thing the person typed (a task notification is not that)
+  let start = 0;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r.type !== "user" || r.isSidechain || r.isMeta) continue;
+    const c = r.message?.content;
+    const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((x: any) => x.type === "text").map((x: any) => x.text).join("") : "";
+    if (text.trim() && !/^\s*<(task-notification|system-reminder|local-command|command-)/.test(text)) { start = i; break; }
+  }
+  const uses = new Map<string, { name: string; input: any; ts: number; result?: string; err?: boolean }>();
+  const order: string[] = [];
+  let laterText = "", lastKind = "", last = 0;
+  for (const r of rows.slice(start)) {
+    if (r.isSidechain) continue;
+    const ts = r.timestamp ? Date.parse(r.timestamp) : 0;
+    if (ts) last = ts;
+    if (r.type === "assistant") {
+      for (const c of r.message?.content || []) {
+        if (c.type === "tool_use") { uses.set(c.id, { name: c.name, input: c.input, ts }); order.push(c.id); lastKind = "tool"; }
+        else if (c.type === "text" && c.text?.trim()) lastKind = "text";
+      }
+    } else if (r.type === "user") {
+      const c = r.message?.content;
+      if (typeof c === "string") laterText += c;
+      else if (Array.isArray(c)) for (const x of c) {
+        if (x.type === "tool_result") { const u = uses.get(x.tool_use_id); if (u) { u.result = flattenResult(x.content); u.err = !!x.is_error; } }
+        else if (x.type === "text") laterText += x.text || "";
+      }
     }
-    if (prev.status === "busy" && s.status === "idle" && !w) emit("done", s, s.last);
-    if (w && w !== prev.waiting && s.waiting) emit("waiting", s, s.waiting.text, s.waiting.options);
-    prev.status = s.status; prev.waiting = w;
   }
-  for (const [pid] of seenLive) if (!present.has(pid)) {
-    seenLive.delete(pid);
-    const gone = lastLiveByPid.get(pid);
-    if (gone && watchBooted && !takenOver.delete(pid)) emit("ended", gone, gone.title);   // a takeover is not news
+  const now = Date.now();
+  const jobs: Job[] = [];
+  for (const id of order) {
+    const u = uses.get(id)!;
+    const inp = u.input || {};
+    // a background launch answers at once ("Async agent launched … agentId: X", "running in background with ID: X")
+    const bg = !!inp.run_in_background || /async agent launched|running in (the )?background/i.test(u.result || "");
+    const pending = u.result === undefined;
+    // a background launch answers at once with an id; it is still running until a notification names that id
+    if (!pending && bg && !u.err) {
+      const bid = /(?:agentId|ID)[:\s]+([A-Za-z0-9_-]{4,})/.exec(u.result || "")?.[1];
+      if (bid && laterText.includes(bid) && /task-notification|completed|finished/i.test(laterText)) continue;
+    } else if (!pending) continue;
+    const since = u.ts || now;
+    if (u.name === "Task" || u.name === "Agent") jobs.push({ kind: "subagent", title: String(inp.description || inp.prompt || "Helper").slice(0, 120), since, agent: inp.subagent_type || "general-purpose" });
+    else if (u.name === "Workflow") jobs.push({ kind: "workflow", title: String(inp.name || inp.description || "Workflow").slice(0, 120), since });
+    else if (bg) jobs.push({ kind: "background", title: String(inp.description || inp.command || stepFor(u.name, inp)).slice(0, 120), since });
+    else if (now - since > 30_000) jobs.push({ kind: "tool", title: stepFor(u.name, inp).slice(0, 120), since });
   }
-  lastLiveByPid.clear(); for (const s of cur) lastLiveByPid.set(s.pid, s);
-  watchBooted = true;
+  const lastUse = order.length ? uses.get(order[order.length - 1])! : null;
+  const helpers = jobs.filter((j) => j.kind === "subagent").length;
+  const step = helpers >= 2 ? "Asked " + helpers + " helpers to work in parallel"
+    : lastKind === "text" && jobs.length ? "Waiting for " + (jobs.length === 1 ? "a background job" : jobs.length + " background jobs") + " to finish"
+    : lastKind === "text" ? "Writing the answer"
+    : lastUse ? stepFor(lastUse.name, lastUse.input)
+    : "Thinking";
+  const v = { step, jobs, last };
+  turnCache.set(file, { m: st.mtimeMs, s: st.size, at: now, v });
+  return v;
 }
-const lastLiveByPid = new Map<number, LiveSession>();
-setInterval(watchLive, 1500);
-watchLive();
 
-/** Hand a live terminal session to Bridge. Two writers on one transcript fork it, so the
- *  terminal has to let go first: only when it is idle (no turn in flight), and only the exact
- *  process the registry names for that session. SIGTERM is the CLI's clean exit; the transcript
- *  is already on disk line by line, so the tab then resumes the same session id with --resume. */
-const takenOver = new Set<number>();
-async function takeover(pid: number, id: string) {
-  const s = (await liveSessions()).find((x) => x.pid === pid && x.id === id);
-  if (!s) return { ok: false, error: "That terminal session is no longer live." };
-  if (s.status === "busy") return { ok: false, error: "It is mid-turn in the terminal. Take it over once it goes idle." };
-  takenOver.add(pid);
-  try { process.kill(pid, "SIGTERM"); } catch (e) { return { ok: false, error: "Could not signal the terminal: " + String(e) }; }
-  for (let i = 0; i < 40 && alive(pid); i++) await Bun.sleep(150);
-  if (alive(pid)) { try { process.kill(pid, "SIGHUP"); } catch {} for (let i = 0; i < 20 && alive(pid); i++) await Bun.sleep(150); }
-  if (alive(pid)) return { ok: false, error: "The terminal did not exit. Close it there (/exit) and the tab becomes yours." };
-  logRow({ ts: Date.now(), kind: "live.takeover", msg: "took over " + s.title, session: s.id, cwd: s.cwd, outcome: s.name });
-  watchLive();
-  return { ok: true, id: s.id, key: s.key, cwd: s.cwd };
+/** files a chat wrote, read incrementally: a transcript only grows, so each call reads the new bytes */
+const madeCache = new Map<string, { size: number; files: Map<string, number> }>();
+async function writtenFiles(file: string): Promise<Map<string, number>> {
+  const st = await stat(file).catch(() => null);
+  if (!st) return new Map();
+  const hit = madeCache.get(file);
+  if (hit && hit.size === st.size) return hit.files;
+  const from = hit && st.size > hit.size ? hit.size : 0;
+  const files = from && hit ? hit.files : new Map<string, number>();
+  const buf = Buffer.from(await Bun.file(file).slice(from, st.size).arrayBuffer());
+  const end = buf.lastIndexOf(10);
+  if (end < 0) return files;
+  for (const line of buf.subarray(0, end + 1).toString("utf8").split("\n")) {
+    if (!line.includes('"tool_use"') || !/"name":"(Write|Edit|NotebookEdit)"/.test(line)) continue;
+    let r: any; try { r = JSON.parse(line); } catch { continue; }
+    const ts = r.timestamp ? Date.parse(r.timestamp) : st.mtimeMs;
+    for (const c of r.message?.content || []) {
+      if (c.type !== "tool_use") continue;
+      const p = c.input?.file_path || c.input?.notebook_path;
+      if (!p) continue;
+      if (c.name === "Write" || (c.name === "Edit" && c.input?.old_string === "") || (c.name === "NotebookEdit" && c.input?.edit_mode === "insert" && !existsSync(p))) files.set(p, ts);
+    }
+  }
+  madeCache.set(file, { size: from + end + 1, files });
+  return files;
+}
+const NOT_MADE = [/\/\.[^/]+(\/|$)/, /\/node_modules\//, /(^|\/)(package-lock\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|Podfile\.lock|pubspec\.lock)$/, /\.lock$/, /\.jsonl$/, /^\/(private\/)?tmp\//, /^\/var\/folders\//];
+
+/** sessions touched since `since`, newest first; one listing shared by every poller for a few seconds */
+let recentCache: { at: number; v: any[] } | null = null;
+async function recentSessions(since: number) {
+  if (!recentCache || Date.now() - recentCache.at > 8_000) {
+    const all: any[] = [];
+    for (const proj of await listProjects()) {
+      if (proj.lastActivity < Date.now() - 8 * 86400_000) continue;
+      for (const s of await listSessions(proj.key, 80)) all.push({ ...s, project: proj.key, projectName: proj.name, projectPath: proj.path });
+    }
+    recentCache = { at: Date.now(), v: all.sort((a, b) => b.mtime - a.mtime) };
+  }
+  return recentCache.v.filter((s) => s.mtime >= since);
+}
+let projectsCache: { at: number; v: any[] } | null = null;
+async function projectsCached() {
+  if (!projectsCache || Date.now() - projectsCache.at > 15_000) projectsCache = { at: Date.now(), v: await listProjects() };
+  return projectsCache.v;
+}
+
+/** the id a run is known by, or the one the CLI handed back if it forked the session */
+function runFor(id: string): Run | undefined {
+  const r = running.get(id);
+  if (r) return r;
+  for (const x of running.values()) if (x.sid === id) return x;
+  return undefined;
+}
+async function runView(r: Run) {
+  const file = sessionFile(r.sid || r.id, r.key);
+  const meta = file && existsSync(file) ? await sessionMeta(r.key, file) : null;
+  const t = file ? await turnTail(file) : { step: "Starting", jobs: [], last: 0 };
+  return {
+    id: r.sid || r.id, key: r.key, title: meta?.title || r.prompt.slice(0, 60) || "New chat",
+    projectName: folderName(r.cwd), cwd: r.cwd, started: r.started, elapsed: Date.now() - r.started,
+    prompt: r.prompt, model: r.model || meta?.model || "", step: t.step, jobs: t.jobs, agent: r.agent || "",
+  };
+}
+
+const NEEDS_WINDOW = 72 * 3600_000;
+async function needsList(runningIds: Set<string>) {
+  const out: any[] = [];
+  for (const s of await recentSessions(Date.now() - NEEDS_WINDOW)) {
+    if (runningIds.has(s.id) || isDeskId(s.id, s)) continue;
+    const file = join(PROJECTS_DIR, s.project, s.id + ".jsonl");
+    const t = await tailState(file, true);
+    if (!t.waiting) continue;
+    out.push({ id: s.id, key: s.project, title: s.title, projectName: folderName(s.projectPath), ask: plain(t.waiting.text, 200), since: t.lastTs || s.mtime, options: t.waiting.options || [] });
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+async function madeList() {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const s of await recentSessions(Date.now() - 7 * 86400_000)) {
+    if (isDeskId(s.id, s)) continue;
+    const files = await writtenFiles(join(PROJECTS_DIR, s.project, s.id + ".jsonl"));
+    for (const [path, ts] of files) {
+      if (seen.has(path) || NOT_MADE.some((re) => re.test(path)) || !existsSync(path)) continue;
+      seen.add(path);
+      const st = await stat(path).catch(() => null);
+      if (!st || !st.isFile()) continue;
+      out.push({ path, name: basename(path), ext: extname(path).slice(1).toLowerCase(), sessionId: s.id, key: s.project, sessionTitle: s.title, mtime: Math.max(ts, 0) || st.mtimeMs });
+    }
+  }
+  return out.sort((a, b) => b.mtime - a.mtime).slice(0, 24);
+}
+let homeCache: { at: number; v: any } | null = null;
+let homeBusy: Promise<any> | null = null;
+async function homeData() {
+  if (homeCache && Date.now() - homeCache.at < 3_000) return homeCache.v;
+  if (homeBusy) return homeBusy;
+  homeBusy = (async () => {
+    const id = await daIdentity();
+    const runs = await Promise.all([...running.values()].map(runView));
+    const ids = new Set<string>(); for (const r of running.values()) { ids.add(r.id); if (r.sid) ids.add(r.sid); }
+    const [needs, made, projects] = await Promise.all([needsList(ids), madeList(), projectsCached()]);
+    const v = {
+      user: id.user, assistant: id.name, running: runs, needs, made,
+      projects: projects.filter((p) => p.path !== HOME && !p.path.startsWith(CLAUDE_DIR)).map((p) => ({ key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity })),
+    };
+    homeCache = { at: Date.now(), v };
+    return v;
+  })().finally(() => { homeBusy = null; });
+  return homeBusy;
+}
+/** the desk's own transcripts are the Copilot's, not chats */
+/** a chat started in the home folder belongs to no project: call it Home, not by the account name */
+const folderName = (cwd: string) => (!cwd || cwd === HOME ? "Home" : basename(cwd) || cwd);
+const isDeskId = (id: string, meta?: { desk?: boolean }) => {
+  if (meta?.desk) return true;
+  try { return id === DA.sessionId || (!!DA.prevSessionId && id === DA.prevSessionId); } catch { return false; }
+};
+
+/** Moments worth telling the principal about, for the Copilot and the open pages: a chat
+ *  started, finished, failed, or stopped on a question. */
+type LiveEvent = { kind: "started" | "done" | "error" | "waiting"; at: number; id: string; key: string; folder: string; cwd: string; title: string; text: string; options?: string[] };
+const EVENTS: LiveEvent[] = [];
+function emitEvent(ev: LiveEvent) {
+  EVENTS.push(ev); if (EVENTS.length > 200) EVENTS.shift();
+  try { daBroadcast({ t: "event", d: ev }); } catch {}
 }
 
 /** a macOS notification — the one signal that reaches the principal when Bridge is not in front */
@@ -1087,9 +1263,9 @@ function notifyDesktop(title: string, subtitle: string, body: string) {
 }
 
 /* ────────────────────── following a transcript as it grows ──────────────────────
- * A mirrored tab is the terminal's transcript, read from the byte the tab already has. The
- * file is polled for growth; whole lines are normalised and streamed, a partial last line
- * waits for its newline. Nothing is written — the terminal owns the session. */
+ * A chat reopened while its turn is still running (the page was closed, or another device
+ * started it) re-attaches here: the transcript is read from the byte the page already has, polled
+ * for growth, and whole lines are normalised and streamed; a partial last line waits for its newline. */
 function followTranscript(file: string, from: number, send: (o: any) => void, signal: { closed: boolean }) {
   let offset = Math.max(0, from | 0);
   let rest = "";
@@ -1124,20 +1300,19 @@ function followTranscript(file: string, from: number, send: (o: any) => void, si
 const DA_FILE = join(DATA_DIR, "da.json");
 const DA_PROTOCOL = (assistant: string, user: string) => [
   "You are " + assistant + ", running as the Copilot in Bridge — a voice-first view above the session tabs, with no sessions of its own, where " + user +
-  " asks for summaries and talks through the whole picture without opening a session. Bridge speaks your reply aloud.",
+  " asks for summaries and talks through the whole picture without opening a chat. Bridge speaks your reply aloud.",
   "",
-  "State: every message from Bridge begins with a <bridge> block listing the live Claude Code terminal sessions on this machine — name,",
-  "folder, busy or idle, what each last said, whether one is waiting on " + user + ", and the recent events. Treat it as the current truth;",
-  "never read it back verbatim and never invent session state that is not in it.",
+  "State: every message from Bridge begins with a <bridge> block listing the chats running in Bridge right now — title, folder, how long,",
+  "what each is doing — the finished chats waiting on " + user + " to answer, and the recent events. Treat it as the current truth;",
+  "never read it back verbatim and never invent chat state that is not in it.",
   "",
-  "Digging deeper: each session's full transcript is the JSONL file named in the block. When asked what a session did, why, or what it changed,",
-  "Read the end of that file (it is large — use offset/limit or Bash tail) and answer from it. To send a running session a message, use ListAgents",
-  "to find it by its name from the block and SendMessage to send it; then say what you sent. Relay requests (\"tell X to …\") mean exactly that.",
+  "Digging deeper: each chat's full transcript is the JSONL file named in the block. When asked what a chat did, why, or what it changed,",
+  "Read the end of that file (it is large — use offset/limit or Bash tail) and answer from it. You cannot type into another chat; when",
+  user + " wants one to do something, say so and name the chat so it can be opened.",
   "",
   "Answering: always include one line that starts with 🗣️ — one to three plain spoken sentences that answer the question directly. That line is",
   "read aloud, so no markdown, lists, paths or code in it. Anything else you show stays short; " + user + " can ask for more. When there is",
-  "nothing new, say so in a sentence. When you refer to a session, call it by its name or folder from the block (never by pid or",
-  "file) — Bridge turns those into links that open the session.",
+  "nothing new, say so in a sentence. When you refer to a chat, call it by its title or folder from the block (never by id or file).",
 ].join("\n");
 
 type DaClient = (o: any) => void;
@@ -1152,11 +1327,13 @@ function daBroadcast(o: any) {
   DA.ring.push(o); if (DA.ring.length > 600) DA.ring.shift();
   for (const c of DA.clients) { try { c(o); } catch {} }
 }
+/** what to call the principal: LifeOS's principal.name (first name), else the account name */
+const principalName = (settings: any) => (settings?.daidentity?.userName || String(settings?.principal?.name || "").trim().split(/\s+/)[0] || basename(HOME));
 async function daIdentity() {
   const settings = JSON.parse(await readFile(join(CLAUDE_DIR, "settings.json"), "utf8").catch(() => "{}"));
   const id = settings.daidentity || {};
   DA.name = id.name || id.displayName || "Claude";
-  DA.user = id.userName || basename(HOME);
+  DA.user = principalName(settings);
   return { name: DA.name, user: DA.user, color: id.color || "", voice: id.voices?.main || null };
 }
 async function daLoadState() {
@@ -1201,7 +1378,6 @@ async function daBoot(fresh: boolean) {
     // Pulse; Bridge speaks the desk itself, so that hook is told this is not a desktop terminal.
     const child = spawn(CLAUDE_BIN, args, { cwd: HOME, stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...settingsEnv, FORCE_COLOR: "0", BRIDGE_DESK: "1", LIFEOS_NOTIFICATION_CHANNEL: "bridge" } });
-    if (child.pid) ownPids.add(child.pid);
     DA.child = child; DA.started = Date.now(); DA.busy = false; DA.lastError = ""; DA.ready = false;
     logRow({ ts: Date.now(), kind: "desk.start", msg: (fresh ? "new" : "resumed") + " desk session", session: DA.sessionId, cwd: HOME });
     let buf = "";
@@ -1229,7 +1405,6 @@ async function daBoot(fresh: boolean) {
     });
     child.stderr!.on("data", (c) => { const s = c.toString().trim(); if (s && !/hook|deprecat|warning/i.test(s)) daBroadcast({ t: "stderr", d: s }); });
     child.on("close", (code) => {
-      if (child.pid) ownPids.delete(child.pid);
       if (DA.child === child) { DA.child = null; DA.busy = false; DA.ready = false; }
       DA.exits++;
       logRow({ ts: Date.now(), kind: "desk.exit", msg: "desk process exited", outcome: "exit " + code, session: DA.sessionId, cwd: HOME });
@@ -1257,23 +1432,27 @@ function daDrain() {
   daWrite(next.text, next.ctx);
 }
 /** the situation report that rides in front of every message */
-function bridgeBlock(): string {
+async function bridgeBlock(): Promise<string> {
   const lines: string[] = ["<bridge>", "now: " + new Date().toISOString()];
-  if (!lastLive.length) lines.push("live sessions: none — no Claude Code terminal is open right now");
+  let h: any = null; try { h = await homeData(); } catch {}
+  const runs = h?.running || [], needs = h?.needs || [];
+  if (!runs.length) lines.push("running chats: none");
   else {
-    lines.push("live sessions (" + lastLive.length + "):");
-    for (const s of lastLive) {
-      lines.push("- " + s.name + " · " + s.folder + " (" + s.cwd + ") · " + s.status + (s.waiting ? " · WAITING ON " + DA.user.toUpperCase() + ": " + s.waiting.text : "") +
-        " · started " + new Date(s.startedAt).toISOString().slice(11, 16) + " · " + s.turns + " turns");
-      lines.push("  transcript: " + s.file);
-      if (s.lastUser) lines.push("  last asked: " + s.lastUser.slice(0, 200));
-      if (s.last) lines.push("  last said: " + s.last.slice(0, 300));
+    lines.push("running chats (" + runs.length + "):");
+    for (const r of runs) {
+      lines.push("- " + r.title + " · " + r.projectName + " (" + r.cwd + ") · running " + Math.round(r.elapsed / 60000) + "m · now: " + r.step +
+        (r.jobs.length ? " · background: " + r.jobs.map((j: any) => j.title).join("; ").slice(0, 200) : ""));
+      lines.push("  transcript: " + sessionFile(r.id, r.key));
     }
   }
-  const recent = EVENTS.slice(-8);
+  if (needs.length) {
+    lines.push("waiting on " + DA.user + " (" + needs.length + "):");
+    for (const n of needs.slice(0, 8)) lines.push("- " + n.title + " · " + n.projectName + " · asks: " + n.ask + "\n  transcript: " + sessionFile(n.id, n.key));
+  }
+  const recent = EVENTS.filter((e) => e.kind !== "started").slice(-8);
   if (recent.length) {
     lines.push("recent events:");
-    for (const e of recent) lines.push("- " + new Date(e.at).toISOString().slice(11, 16) + " " + e.kind + " · " + e.name + " · " + e.folder + (e.text ? " · " + e.text.slice(0, 160) : ""));
+    for (const e of recent) lines.push("- " + new Date(e.at).toISOString().slice(11, 16) + " " + e.kind + " · " + e.title + " · " + e.folder + (e.text ? " · " + e.text.slice(0, 160) : ""));
   }
   lines.push("</bridge>");
   return lines.join("\n");
@@ -1281,7 +1460,7 @@ function bridgeBlock(): string {
 async function daSend(text: string) {
   if (!DA.child) await daStart();
   if (!DA.child) return { error: DA.lastError || "the desk could not start" };
-  const ctx = bridgeBlock();
+  const ctx = await bridgeBlock();
   if (DA.busy) { DA.queue.push({ text, ctx }); daBroadcast({ t: "state", d: daState() }); return { queued: true }; }
   return { ok: daWrite(text, ctx) };
 }
@@ -1530,7 +1709,7 @@ async function route(req: Request): Promise<Response> {
         const settings = JSON.parse(await readFile(join(CLAUDE_DIR, "settings.json"), "utf8").catch(() => "{}"));
         const id = settings.daidentity || {};
         return json({
-          user: id.userName || basename(HOME),
+          user: principalName(settings),
           assistant: id.name || id.displayName || "Claude",
           color: id.color || "", home: HOME, claudeDir: CLAUDE_DIR,
           version: (await new Response(Bun.spawn([CLAUDE_BIN, "--version"]).stdout).text()).trim(),
@@ -1558,9 +1737,12 @@ async function route(req: Request): Promise<Response> {
         const all: any[] = [];
         for (const proj of await listProjects()) {
           for (const s of await listSessions(proj.key, 30))
-            all.push({ ...s, project: proj.key, projectName: proj.name, projectPath: proj.path });
+            if (!isDeskId(s.id, s)) all.push({ ...s, project: proj.key, projectName: proj.name, projectPath: proj.path });
         }
-        return json(all.sort((a, b) => b.mtime - a.mtime).slice(0, lim));
+        const h = await homeData();
+        const runIds = new Set(h.running.map((r: any) => r.id)), needIds = new Set(h.needs.map((n: any) => n.id));
+        for (const r of running.values()) runIds.add(r.id);
+        return json(all.sort((a, b) => b.mtime - a.mtime).slice(0, lim).map((s) => ({ ...s, running: runIds.has(s.id), needs: needIds.has(s.id) })));
       }
       if (p === "/api/session") {
         const file = join(PROJECTS_DIR, q.get("key") || "", (q.get("id") || "") + ".jsonl");
@@ -1584,10 +1766,13 @@ async function route(req: Request): Promise<Response> {
         const dims = state?.dimensions ? Object.entries(state.dimensions).map(([k, v]: any) => ({ name: k, pct: Number(v.pct) || 0, tbd: v.tbd_count || 0, updated: v.last_updated })) : [];
         return json({ versions, dims, generated: state?.generated_at || null, mtime: st?.mtimeMs || 0, installed: existsSync(join(CLAUDE_DIR, "LIFEOS")) });
       }
-      if (p === "/api/live") return json({ now: Date.now(), sessions: lastLive, events: EVENTS.slice(-40) });
-      if (p === "/api/live/takeover" && req.method === "POST") {
-        const { pid, id } = await req.json().catch(() => ({}) as any);
-        return json(await takeover(Number(pid), String(id || "")));
+      if (p === "/api/home") return json(await homeData());
+      if (p === "/api/jobs") {
+        const id = q.get("id") || "";
+        const r = runFor(id);
+        if (!r) return json({ running: false, started: 0, elapsed: 0, step: "", jobs: [] });
+        const v = await runView(r);
+        return json({ running: true, started: v.started, elapsed: v.elapsed, step: v.step, jobs: v.jobs });
       }
       if (p === "/api/notify" && req.method === "POST") {
         const { title, subtitle, body } = await req.json().catch(() => ({}) as any);
@@ -1825,26 +2010,28 @@ async function route(req: Request): Promise<Response> {
         return json({ ok: true, id, title: t, named: !!t });
       }
       if (p === "/api/abort" && req.method === "POST") {
-        const { sessionId } = await req.json();
+        const { sessionId: asked } = await req.json();
+        const sessionId = runFor(String(asked || ""))?.id || asked;   // a forked id finds its run
         const c = live.get(sessionId);
         // same gesture as Ctrl+C in the terminal: interrupt first, only then insist
         if (c) {
           c.kill("SIGINT");
-          const pid = c.pid;
-          setTimeout(() => { try { if (live.get(sessionId) === c) c.kill("SIGTERM"); } catch {} }, 1500);
-          setTimeout(() => { try { if (pid && live.get(sessionId) === c) process.kill(pid, "SIGKILL"); } catch {} }, 4000);
-          live.delete(sessionId); running.delete(sessionId);
-          logRow({ ts: Date.now(), kind: "turn.stop", msg: running.get(sessionId)?.prompt || "turn interrupted", outcome: "interrupted", session: sessionId, cwd: running.get(sessionId)?.cwd });
+          const pid = c.pid, gone = () => c.exitCode !== null || c.signalCode !== null;
+          setTimeout(() => { try { if (!gone()) c.kill("SIGTERM"); } catch {} }, 1500);
+          setTimeout(() => { try { if (pid && !gone()) process.kill(pid, "SIGKILL"); } catch {} }, 4000);
+          const r = running.get(sessionId);
+          logRow({ ts: Date.now(), kind: "turn.stop", msg: r?.prompt || "turn interrupted", outcome: "interrupted", session: sessionId, cwd: r?.cwd });
+          stopped.add(sessionId); live.delete(sessionId); running.delete(sessionId); homeCache = null;
         }
         return json({ ok: !!c });
       }
 
       if (p === "/api/chat" && req.method === "POST") {
         const body = await req.json();
+        let closed = false;
         const stream = new ReadableStream({
           start(ctrl) {
             const enc = new TextEncoder();
-            let closed = false;
             const send = (o: any) => {
               if (closed) return;
               try { ctrl.enqueue(enc.encode("data: " + JSON.stringify(o) + "\n\n")); } catch { closed = true; }
@@ -1853,11 +2040,13 @@ async function route(req: Request): Promise<Response> {
             // drops an idle connection at 255s. A tick every 20s is what lets a long fan-out
             // finish and report back into the same turn instead of dying half-way.
             const beat = setInterval(() => send({ t: "ping", ts: Date.now() }), 20_000);
+            // the page going away does not stop the turn: it keeps running and can be re-attached with /api/follow
             runClaude(body, send, () => {
               clearInterval(beat);
               if (!closed) { closed = true; try { ctrl.close(); } catch {} }
-            });
+            }, () => !closed);
           },
+          cancel() { closed = true; },
         });
         return new Response(stream, {
           headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" },
