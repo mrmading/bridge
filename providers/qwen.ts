@@ -124,7 +124,9 @@ function convertMessages(body: Json): OllamaMessage[] {
         .filter((t: string) => t && !t.startsWith("x-anthropic-billing-header"))
         .join("\n\n")
     : body.system || "";
-  if (system) out.push({ role: "system", content: system });
+  // Qwen's chat template renders a system message only in first position, so Claude Code's
+  // mid-conversation system turns (the environment block) are folded into the leading one.
+  const systemParts: string[] = system ? [system] : [];
 
   const toolNames = new Map<string, string>();
   for (const m of body.messages || []) {
@@ -142,7 +144,8 @@ function convertMessages(body: Json): OllamaMessage[] {
       if (calls.length) msg.tool_calls = calls;
       out.push(msg);
     } else if (m.role === "system") {
-      out.push({ role: "system", content: blockText(content) });
+      const text = blockText(content);
+      if (text) systemParts.push(text);
     } else {
       const blocks: Json[] = typeof content === "string" ? [{ type: "text", text: content }] : content || [];
       for (const r of blocks.filter((b) => b.type === "tool_result")) {
@@ -158,6 +161,7 @@ function convertMessages(body: Json): OllamaMessage[] {
       if (text) out.push({ role: "user", content: text });
     }
   }
+  if (systemParts.length) out.unshift({ role: "system", content: systemParts.join("\n\n") });
   return out;
 }
 
@@ -352,6 +356,12 @@ export function sseEvents(msg: AnthropicMessage): string[] {
 
 type Cfg = ReturnType<typeof config>;
 
+/** RUNPOD_QWEN_DEBUG_DIR=<dir> keeps the last wire payload and job result for inspection. */
+function debugDump(name: string, data: unknown) {
+  const dir = process.env.RUNPOD_QWEN_DEBUG_DIR;
+  if (dir) Bun.write(join(dir, name), JSON.stringify(data, null, 2)).catch(() => {});
+}
+
 async function runpod(cfg: Cfg, path: string, body?: unknown, signal?: AbortSignal): Promise<Json> {
   const res = await fetch(`${API_ROOT}/${cfg.endpoint}/${path}`, {
     method: body === undefined ? "GET" : "POST",
@@ -366,6 +376,7 @@ async function runpod(cfg: Cfg, path: string, body?: unknown, signal?: AbortSign
 
 /** Submits with /run and polls /status: one-shot answers take 60–130s, past any runsync wait. */
 async function runJob(cfg: Cfg, input: OllamaPayload, signal: AbortSignal): Promise<Json> {
+  debugDump("last-payload.json", input);
   let res = await runpod(cfg, "run", { input }, signal);
   const id = res.id;
   const deadline = Date.now() + cfg.timeoutMs;
@@ -388,6 +399,7 @@ async function runJob(cfg: Cfg, input: OllamaPayload, signal: AbortSignal): Prom
       if (signal.aborted || ++misses > 5) throw e;
     }
   }
+  debugDump("last-result.json", res);
   if (res.status !== "COMPLETED") throw new Error(`RunPod job ${id} ${res.status}: ${JSON.stringify(res.error ?? res).slice(0, 400)}`);
   return res;
 }

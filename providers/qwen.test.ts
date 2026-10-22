@@ -23,7 +23,7 @@ const toolResultTurn = {
 };
 
 describe("anthropicToOllama", () => {
-  test("system blocks, string system and mid-conversation system messages become system turns", () => {
+  test("system blocks, string system and mid-conversation system messages merge into ONE leading system turn", () => {
     const { payload } = anthropicToOllama({
       system: [
         { type: "text", text: "x-anthropic-billing-header: cc_version=1;" },
@@ -34,9 +34,13 @@ describe("anthropicToOllama", () => {
         { role: "system", content: [{ type: "text", text: "# Environment" }] },
       ],
     });
-    expect(payload.messages[0]).toEqual({ role: "system", content: "You are a helper." });
-    expect(payload.messages[1]).toEqual({ role: "user", content: "hi" });
-    expect(payload.messages[2]).toEqual({ role: "system", content: "# Environment" });
+    // Qwen's chat template only renders a system message in first position; a later one garbles the prompt.
+    expect(payload.messages).toEqual([
+      { role: "system", content: "You are a helper.\n\n# Environment" },
+      { role: "user", content: "hi" },
+    ]);
+    const noTop = anthropicToOllama({ messages: [{ role: "user", content: "hi" }, { role: "system", content: "env" }] });
+    expect(noTop.payload.messages).toEqual([{ role: "system", content: "env" }, { role: "user", content: "hi" }]);
 
     const plain = anthropicToOllama({ system: "Be brief.", messages: [{ role: "user", content: "x" }] });
     expect(plain.payload.messages[0]).toEqual({ role: "system", content: "Be brief." });
