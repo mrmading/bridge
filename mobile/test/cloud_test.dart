@@ -4,7 +4,6 @@ import 'package:bridge_mobile/core/store.dart';
 import 'package:bridge_mobile/core/theme.dart';
 import 'package:bridge_mobile/main.dart';
 import 'package:bridge_mobile/widgets/bridge.dart';
-import 'package:bridge_mobile/widgets/composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -54,27 +53,6 @@ void main() {
     expect(m.online, isTrue);
   });
 
-  test('new chats run on the last computer used, falling back to the Mac without a cloud', () async {
-    final s = await fresh();
-    expect(s.computers.single.id, 'mac');
-    await s.setComputer('cloud');
-    expect(s.computer, 'mac', reason: 'no cloud computer on this server');
-    s.debugSetComputers([mac, Computer.fromJson({'id': 'cloud', 'online': false, 'configured': false})]);
-    expect(s.hasCloud, isFalse, reason: 'listed but not set up');
-    expect(s.computer, 'mac');
-    s.debugSetComputers([mac, cloud()]);
-    expect(s.computer, 'cloud');
-    expect(s.cloudOffline, isFalse);
-    s.debugSetComputers([mac, cloud(online: false)]);
-    expect(s.cloudOffline, isTrue);
-    expect(s.computer, 'mac', reason: 'new chats go to the Mac while the cloud is offline');
-    s.debugSetComputers([mac, cloud()]);
-    expect(s.computer, 'cloud', reason: 'and back to the cloud once it is online');
-    s.home = HomeData(cloudOffline: true);
-    expect(s.cloudOffline, isTrue);
-    expect(s.computerLabel('mac'), "Nestor's Mac");
-  });
-
   Widget app() => MaterialApp(navigatorKey: Nav.instance.navigatorKey, theme: buildTheme(Brightness.dark), home: const Shell());
 
   testWidgets('cloud chats carry a badge in the drawer and Home warns when the cloud is offline', (tester) async {
@@ -96,33 +74,6 @@ void main() {
     }
     final drawer = find.byType(Drawer);
     expect(find.descendant(of: drawer, matching: find.byType(CloudBadge)), findsOneWidget);
-    await tester.binding.setSurfaceSize(null);
-  });
-
-  testWidgets('the computer picker lists the offline cloud greyed with its reason and keeps the Mac', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(402, 874));
-    final s = await fresh();
-    s.debugSetComputers([mac, cloud(online: false)]);
-    await tester.pumpWidget(MaterialApp(theme: buildTheme(Brightness.dark), home: const Scaffold(body: Center(child: RunsOn()))));
-    expect(find.text("Runs on Nestor's Mac"), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('runs-on')));
-    for (var i = 0; i < 8; i++) {
-      await tester.pump(const Duration(milliseconds: 60));
-    }
-    expect(find.text('Run new chats on'), findsOneWidget);
-    expect(find.textContaining('Offline · Sprite is asleep'), findsOneWidget);
-    await tester.tap(find.text('Cloud computer'));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(s.computer, 'mac', reason: 'an offline computer cannot be picked');
-
-    s.debugSetComputers([mac, cloud()]);
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.tap(find.text('Cloud computer'));
-    for (var i = 0; i < 8; i++) {
-      await tester.pump(const Duration(milliseconds: 60));
-    }
-    expect(s.computer, 'cloud');
-    expect(find.text('Runs on Cloud computer'), findsOneWidget);
     await tester.binding.setSurfaceSize(null);
   });
 }

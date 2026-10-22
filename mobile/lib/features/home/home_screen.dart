@@ -40,7 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  void _send(String text) => Nav.instance.startChat(cwd: _cwd.isEmpty ? defaultCwd() : _cwd, message: text, computer: _store.computer);
+  void _send(String text) => Nav.instance.startChat(cwd: _cwd.isEmpty ? defaultCwd() : _cwd, message: text);
 
   String _greeting() {
     final h = DateTime.now().hour;

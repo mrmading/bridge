@@ -25,7 +25,7 @@ void openSession({required String key, required String id, required String cwd, 
     Nav.instance.openChat(ChatRef(key: key, id: id, cwd: cwd, title: title, focus: focus, computer: computer));
 
 /// Starts a brand-new chat in [cwd]. When [message] is set it is sent right away.
-void startNewSession({required String cwd, String message = ''}) => Nav.instance.startChat(cwd: cwd, message: message, computer: AppStore.instance.computer);
+void startNewSession({required String cwd, String message = ''}) => Nav.instance.startChat(cwd: cwd, message: message);
 
 /// The folder a new chat runs in when the user picked "Any project": the server's home.
 String defaultCwd() => AppStore.instance.boot?.home ?? '';

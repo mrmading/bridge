@@ -113,16 +113,15 @@ class AppStore extends ChangeNotifier {
     return computerName;
   }
 
-  /// Where new chats run; the last one used, kept across launches. Falls back to the Mac while the
-  /// cloud computer is not set up or offline (the choice is kept for when it is back).
-  String get computer => _computer == 'cloud' && hasCloud && !cloudOffline ? 'cloud' : 'mac';
-  String _computer = 'mac';
-
-  Future<void> setComputer(String id) async {
-    _computer = id == 'cloud' ? 'cloud' : 'mac';
-    await _prefs.setString('computer', _computer);
-    notifyListeners();
+  /// The one backend's host, for "Runs on …": the sprite, a Worker domain, or the Mac.
+  String get serverHost {
+    final u = Uri.tryParse(serverUrl.contains('://') ? serverUrl : 'https://$serverUrl');
+    final h = u?.host ?? '';
+    if (h.isEmpty || h == 'localhost' || h == '127.0.0.1') return computerName;
+    return h;
   }
+
+  bool get isLocalHost => serverHost == computerName && !isCloud;
 
   Future<void> refreshComputers() async {
     if (!hasServer || conn != ConnState.ready) return;
@@ -145,7 +144,6 @@ class AppStore extends ChangeNotifier {
     speakReplies = _prefs.getBool('speak') ?? true;
     handsFree = _prefs.getBool('handsFree') ?? false;
     showTech = _prefs.getBool('showTech') ?? false;
-    _computer = _prefs.getString('computer') ?? 'mac';
     themeMode = ThemeMode.values[_prefs.getInt('theme') ?? 0];
     try {
       turn = TurnOptions.fromJson(jsonDecode(_prefs.getString('turn') ?? '{}') as Map<String, dynamic>);

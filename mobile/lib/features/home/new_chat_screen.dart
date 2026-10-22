@@ -47,7 +47,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
     super.dispose();
   }
 
-  void _send(String text) => Nav.instance.startChat(cwd: _cwd.isEmpty ? defaultCwd() : _cwd, message: text, computer: _store.computer);
+  void _send(String text) => Nav.instance.startChat(cwd: _cwd.isEmpty ? defaultCwd() : _cwd, message: text);
 
   @override
   Widget build(BuildContext context) {
