@@ -79,7 +79,7 @@ const LANGS: Record<string, string> = {
 
 type SessionMeta = {
   id: string; key: string; title: string; preview: string; mtime: number;
-  size: number; turns: number; model?: string; cwd?: string; branch?: string; named?: boolean; desk?: boolean; v?: number;
+  size: number; turns: number; model?: string; cwd?: string; branch?: string; named?: boolean; desk?: boolean; oneshot?: boolean; v?: number;
 };
 
 async function firstLines(file: string, bytes = 65536): Promise<string[]> {
@@ -172,12 +172,18 @@ async function computeMeta(key: string, file: string): Promise<SessionMeta | nul
   const st = await stat(file).catch(() => null);
   if (!st || st.size === 0) return null;
   const cached = metaCache.get(file);
-  if (cached && cached.m === st.mtimeMs && cached.v.v === 3) return cached.v;
+  if (cached && cached.m === st.mtimeMs && cached.v.v === 5) return cached.v;
   const id = basename(file, ".jsonl");
-  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0, v: 3 };
+  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0, v: 5 };
   for (const line of await firstLines(file, 300_000)) {
     let r: any; try { r = JSON.parse(line); } catch { continue; }
     if (r.cwd && !meta.cwd) { meta.cwd = r.cwd; meta.branch = r.gitBranch; }
+    // a request without Claude Code's own tools (no Read, Bash, Edit, Write) is a one-shot inference call — a prompt hook's
+    // `claude --print --tools ''`, which still carries connector tools — never a chat
+    if (r.type === "api-request-shape" && meta.oneshot === undefined && Array.isArray(r.shape?.tools)) {
+      const names = new Set(r.shape.tools.map((t: any) => t?.name));
+      meta.oneshot = !["Read", "Bash", "Edit", "Write"].some((n) => names.has(n));
+    }
     if (r.type === "ai-title" && r.aiTitle) meta.title = r.aiTitle;
     if (r.type === "user" && !r.isSidechain && typeof r.message?.content === "string") { meta.turns++; if (meta.turns === 1 && r.message.content.startsWith("<bridge>")) meta.desk = true; }
     if (!meta.preview && r.type === "user" && !r.isSidechain && typeof r.message?.content === "string")
@@ -194,13 +200,15 @@ async function computeMeta(key: string, file: string): Promise<SessionMeta | nul
     if (r.type === "assistant" && r.message?.model) meta.model = r.message.model;
   }
   // a prompt hook that re-runs the desk's message in its own `claude -p` leaves the <bridge> block with its tags stripped
-  if (/^now: \d{4}-\d\d-\d\dT[\d:.]+Z\s+running chats:/.test(meta.preview)) meta.desk = true;
+  if (/^now: \d{4}-\d\d-\d\dT[\d:.]+Z\s+(running chats|live sessions):/.test(meta.preview)) meta.desk = true;
   meta.title ||= meta.preview.slice(0, 60) || "Untitled session";
   metaCache.set(file, { m: st.mtimeMs, v: meta });
   persistCache();
   return meta;
 }
 
+/** BRIDGE_SCOPE limits a server to the projects under one folder (a second Bridge on the same machine, say) */
+const SCOPE = process.env.BRIDGE_SCOPE ? resolve(process.env.BRIDGE_SCOPE) : "";
 async function listProjects() {
   const dirs = await readdir(PROJECTS_DIR, { withFileTypes: true }).catch(() => []);
   const out: any[] = [];
@@ -223,6 +231,7 @@ async function listProjects() {
       }
     }
     if (!cwd) cwd = "/" + d.name.replace(/^-/, "").split("-").join("/");
+    if (SCOPE && cwd !== SCOPE && !cwd.startsWith(SCOPE + sep)) continue;
     out.push({ key: d.name, path: cwd, name: basename(cwd) || cwd, sessions: files.length, lastActivity: latest, exists: existsSync(cwd) });
   }
   return out.sort((a, b) => b.lastActivity - a.lastActivity);
@@ -1233,7 +1242,7 @@ async function homeData() {
     const v = {
       user: id.user, assistant: id.name, running: runs, needs, made,
       // a project is a folder you work in: not your home, not Claude's own tree, not a worktree or a temp dir that is gone
-      projects: projects.filter((p) => p.exists && p.path !== HOME && !p.path.startsWith(CLAUDE_DIR) && !/\/\.claude\/worktrees\/|^\/(private\/)?tmp\/|^\/var\/folders\//.test(p.path)).map((p) => ({ key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity })),
+      projects: projects.filter((p) => p.exists && p.path !== HOME && !p.path.startsWith(CLAUDE_DIR) && !/\/\.claude\/worktrees\/|^\/(private\/)?tmp(\/|$)|^\/var\/folders\//.test(p.path)).map((p) => ({ key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity })),
     };
     homeCache = { at: Date.now(), v };
     return v;
@@ -1243,16 +1252,17 @@ async function homeData() {
 /** the desk's own transcripts are the Copilot's, not chats */
 /** a chat started in the home folder belongs to no project: call it Home, not by the account name */
 const folderName = (cwd: string) => (!cwd || cwd === HOME ? "Home" : basename(cwd) || cwd);
-const isDeskId = (id: string, meta?: { desk?: boolean }) => {
-  if (meta?.desk) return true;
+const isDeskId = (id: string, meta?: { desk?: boolean; oneshot?: boolean }) => {
+  if (meta?.desk || meta?.oneshot) return true;
   try { return id === DA.sessionId || (!!DA.prevSessionId && id === DA.prevSessionId); } catch { return false; }
 };
 
 /** Moments worth telling the principal about, for the Copilot and the open pages: a chat
  *  started, finished, failed, or stopped on a question. */
-type LiveEvent = { kind: "started" | "done" | "error" | "waiting"; at: number; id: string; key: string; folder: string; cwd: string; title: string; text: string; options?: string[] };
+type LiveEvent = { kind: "started" | "done" | "error" | "waiting"; at: number; id: string; key: string; folder: string; cwd: string; title: string; text: string; options?: string[]; computer?: string };
 const EVENTS: LiveEvent[] = [];
 function emitEvent(ev: LiveEvent) {
+  ev.computer ||= "mac";
   EVENTS.push(ev); if (EVENTS.length > 200) EVENTS.shift();
   try { daBroadcast({ t: "event", d: ev }); } catch {}
 }
@@ -1263,6 +1273,296 @@ function notifyDesktop(title: string, subtitle: string, body: string) {
   if (process.platform !== "darwin") return;
   const script = "display notification " + osaStr(body || subtitle) + " with title " + osaStr("Bridge · " + title) + (subtitle && body ? " subtitle " + osaStr(subtitle) : "");
   try { Bun.spawn(["osascript", "-e", script], { stdout: "ignore", stderr: "ignore" }); } catch {}
+}
+
+/* ─────────────── computers: this Mac and the cloud computer ───────────────
+ * A chat runs on this Mac or on the cloud computer: another Bridge server (a Fly sprite) that keeps
+ * working when the Mac sleeps. This server is the hub: it lists the cloud's chats next to its own and
+ * proxies everything about a cloud chat, so the pages talk to one origin. The cloud is reached through
+ * the sprite CLI's own tunnel (`sprite proxy`, authenticated by the CLI's login — Bridge never touches a
+ * credential), kept alive as a child process, or through a plain URL. Every read of the cloud is
+ * bounded (~1.2s) and cached, so a sleeping sprite never slows the Mac's pages. */
+type CloudCfg = { url?: string; sprite?: { org: string; name: string; port: number } };
+const COMPUTERS_FILE = join(DATA_DIR, "computers.json");
+const MOVED_FILE = join(DATA_DIR, "moved.json");
+const SPRITE_BIN = process.env.BRIDGE_SPRITE_BIN || join(HOME, ".local", "bin", "sprite");
+const TUNNEL_PORT = Number(process.env.BRIDGE_TUNNEL_PORT || PORT + 121);
+let cloudCfg: CloudCfg = {};
+try { cloudCfg = JSON.parse(await Bun.file(COMPUTERS_FILE).text()) || {}; } catch {}
+/** chats moved to the cloud: the Mac stops listing its copy */
+const moved = new Map<string, number>();
+try { for (const [k, v] of Object.entries(JSON.parse(await Bun.file(MOVED_FILE).text()))) moved.set(k, Number(v)); } catch {}
+const cloudConfigured = () => !!(cloudCfg.url || cloudCfg.sprite);
+
+let tunnel: { child: ChildProcess; key: string; started: number } | null = null;
+let tunnelRetryAt = 0;
+function ensureTunnel() {
+  const s = cloudCfg.sprite;
+  if (!s) return;
+  const key = s.org + "/" + s.name + ":" + s.port;
+  if (tunnel && tunnel.key === key && tunnel.child.exitCode === null && tunnel.child.signalCode === null) return;
+  if (tunnel) stopTunnel();
+  if (Date.now() < tunnelRetryAt || !existsSync(SPRITE_BIN)) return;
+  const child = spawn(SPRITE_BIN, ["proxy", "-o", s.org, "-s", s.name, TUNNEL_PORT + ":" + s.port], { stdio: ["ignore", "pipe", "pipe"] });
+  const t = { child, key, started: Date.now() };
+  tunnel = t;
+  child.on("close", (code) => {
+    if (tunnel !== t) return;
+    tunnel = null;
+    // a tunnel that dies at once (offline, signed out) is retried gently, not in a loop
+    if (Date.now() - t.started < 10_000) tunnelRetryAt = Date.now() + 15_000;
+    logRow({ ts: Date.now(), kind: "cloud.tunnel", msg: "sprite proxy exited", outcome: "exit " + code });
+  });
+  child.on("error", () => { if (tunnel === t) tunnel = null; tunnelRetryAt = Date.now() + 30_000; });
+  logRow({ ts: Date.now(), kind: "cloud.tunnel", msg: "sprite proxy " + key + " → localhost:" + TUNNEL_PORT });
+}
+function stopTunnel() { try { tunnel?.child.kill("SIGTERM"); } catch {} tunnel = null; }
+function cloudBase(): string {
+  if (cloudCfg.url) return cloudCfg.url.replace(/\/+$/, "");
+  if (cloudCfg.sprite) { ensureTunnel(); return "http://127.0.0.1:" + TUNNEL_PORT; }
+  return "";
+}
+
+/** one bounded request to the cloud: undefined when it cannot be reached, null when it answered with no JSON (an older Bridge) */
+async function remoteJSON(path: string, timeoutMs = 1200, init?: RequestInit): Promise<any> {
+  const base = cloudBase();
+  if (!base) return undefined;
+  try {
+    const r = await fetch(base + path, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    if (!r.ok) return r.status === 404 ? null : undefined;
+    return await r.json().catch(() => null);
+  } catch { return undefined; }
+}
+type CloudHealth = { at: number; online: boolean; home: string; version: string; error: string };
+let health: CloudHealth = { at: 0, online: false, home: "", version: "", error: "" };
+let healthBusy: Promise<CloudHealth> | null = null;
+/** is the cloud there? Cached; a stale answer is served while a fresh one is fetched behind it */
+async function cloudHealth(fresh = false): Promise<CloudHealth> {
+  if (!cloudConfigured()) return { at: Date.now(), online: false, home: "", version: "", error: "not connected" };
+  const age = Date.now() - health.at, ttl = health.online ? 10_000 : 5_000;
+  if (!fresh && age < ttl) return health;
+  if (!healthBusy) healthBusy = (async () => {
+    // the tunnel needs a moment after it starts before the port answers
+    let roots = await remoteJSON("/api/roots", 1500);
+    if (roots === undefined && tunnel && Date.now() - tunnel.started < 6000) { await Bun.sleep(1500); roots = await remoteJSON("/api/roots", 1500); }
+    const online = Array.isArray(roots);
+    let { home, version } = health;
+    if (online && (!home || !health.online)) {
+      const b = await remoteJSON("/api/bootstrap", 6000);
+      if (b) { home = b.home || home; version = b.version || version; }
+    }
+    health = { at: Date.now(), online, home, version, error: online ? "" : cloudCfg.sprite && !existsSync(SPRITE_BIN) ? "sprite CLI not installed" : "unreachable" };
+    return health;
+  })().finally(() => { healthBusy = null; });
+  if (health.at && !fresh) return health;        // never wait when there is an answer to give
+  return healthBusy;
+}
+const rcache = new Map<string, { at: number; v: any }>();
+/** a cached read of the cloud; when it is offline the last good answer is not served as current */
+async function remoteCached(path: string, maxAge: number): Promise<any> {
+  const hit = rcache.get(path);
+  if (hit && Date.now() - hit.at < maxAge) return hit.v;
+  const h = await cloudHealth();
+  if (!h.online) return undefined;
+  const v = await remoteJSON(path, 1200);
+  if (v !== undefined) rcache.set(path, { at: Date.now(), v });
+  else if (hit && Date.now() - hit.at < 30_000) return hit.v;
+  return v;
+}
+const remoteFolder = (cwd: string) => (!cwd || cwd === health.home ? "Home" : basename(cwd) || cwd);
+/** the cloud's own desk transcripts and one-shot inference calls are not chats; an older Bridge there does not filter them */
+const notAChatRemote = (s: any) => s?.desk || s?.oneshot || /^now: \d{4}-\d\d-\d\dT[\d:.]+Z\s+(running chats|live sessions):/.test(String(s?.preview || s?.title || ""));
+
+/** the cloud's Home data; an older Bridge there (no /api/home) still yields its running turns and projects */
+async function cloudHomeData(): Promise<any> {
+  const v = await remoteCached("/api/home", 4000);
+  if (v === undefined) return undefined;
+  if (v && Array.isArray(v.running)) return v;
+  const [act, projs] = await Promise.all([remoteCached("/api/activity", 4000), remoteCached("/api/projects", 30_000)]);
+  if (!act) return undefined;
+  return {
+    legacy: true, needs: [], made: [],
+    running: (act.live || []).map((r: any) => ({ id: r.id, key: projectKey(r.cwd), title: r.title || String(r.prompt || "").slice(0, 60), projectName: remoteFolder(r.cwd), cwd: r.cwd,
+      started: r.started, elapsed: Date.now() - r.started, prompt: r.prompt, model: r.model || "", step: "Working", jobs: [] })),
+    projects: (projs || []).filter((p: any) => p.exists !== false).map((p: any) => ({ key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity })),
+  };
+}
+const tag = (computer: string) => (x: any) => ({ ...x, computer });
+/** this Mac's Home, plus the cloud's when there is one; a cloud id wins over a Mac copy of the same chat */
+async function mergedHome() {
+  const mac = await homeData();
+  const out: any = { ...mac, running: mac.running.map(tag("mac")), needs: mac.needs.map(tag("mac")), made: mac.made.map(tag("mac")), projects: mac.projects.map(tag("mac")) };
+  if (!cloudConfigured()) return out;
+  const c = await cloudHomeData();
+  if (!c) { out.cloudOffline = true; return out; }
+  const notMoved = (x: any) => !moved.has(x.id || x.sessionId);
+  const cloudIds = new Set<string>([...c.running, ...c.needs].map((x: any) => x.id));
+  out.running = out.running.filter((x: any) => !cloudIds.has(x.id)).concat(c.running.map(tag("cloud")));
+  out.needs = out.needs.filter((x: any) => !cloudIds.has(x.id) && notMoved(x)).concat(c.needs.map(tag("cloud"))).sort((a: any, b: any) => b.since - a.since);
+  out.made = out.made.concat((c.made || []).map(tag("cloud"))).sort((a: any, b: any) => b.mtime - a.mtime).slice(0, 24);
+  out.projects = out.projects.concat((c.projects || []).filter((p: any) => p.path !== health.home && !/\/\.claude(\/|$)/.test(p.path)).map(tag("cloud")));
+  out.cloudOffline = false;
+  return out;
+}
+async function mergedRecent(mac: any[], lim: number) {
+  let items = mac.filter((s) => !moved.has(s.id)).map(tag("mac"));
+  let offline = false;
+  if (cloudConfigured()) {
+    const [r, h] = await Promise.all([remoteCached("/api/recent?limit=" + lim, 4000), cloudHomeData()]);
+    if (!Array.isArray(r)) offline = true;
+    else {
+      const runIds = new Set((h?.running || []).map((x: any) => x.id)), needIds = new Set((h?.needs || []).map((x: any) => x.id));
+      const cloud = r.filter((s: any) => !notAChatRemote(s)).map((s: any) => ({ ...s, running: !!s.running || runIds.has(s.id), needs: !!s.needs || needIds.has(s.id), computer: "cloud" }));
+      const ids = new Set(cloud.map((s: any) => s.id));
+      items = items.filter((s) => !ids.has(s.id)).concat(cloud).sort((a, b) => b.mtime - a.mtime).slice(0, lim);
+    }
+  }
+  return { items, offline };
+}
+async function computersList() {
+  const id = await daIdentity();
+  const h = await cloudHealth();
+  return [
+    { id: "mac", name: id.user + "'s Mac", kind: "local", online: true, home: HOME },
+    { id: "cloud", name: "Cloud computer", kind: "remote", online: h.online, url: cloudCfg.url || (cloudCfg.sprite ? "sprite://" + cloudCfg.sprite.org + "/" + cloudCfg.sprite.name : ""),
+      configured: cloudConfigured(), via: cloudCfg.url ? "url" : cloudCfg.sprite ? "sprite-proxy" : "", home: h.home, version: h.version, error: h.error,
+      sprite: cloudCfg.sprite || null, spriteCli: existsSync(SPRITE_BIN) },
+  ];
+}
+async function setComputers(body: any) {
+  const next: CloudCfg = {};
+  if (body?.clear) { /* disconnect */ }
+  else if (typeof body?.url === "string" && body.url.trim()) {
+    const u = body.url.trim();
+    if (!/^https?:\/\/[^\s]+$/.test(u)) return { error: "a cloud URL starts with http:// or https://" };
+    next.url = u;
+  } else if (body?.sprite) {
+    const s = typeof body.sprite === "string" ? body.sprite : (body.sprite.org || "") + "/" + (body.sprite.name || "") + (body.sprite.port ? ":" + body.sprite.port : "");
+    const m = /^([\w.-]+)\/([\w.-]+)(?::(\d{2,5}))?$/.exec(s.trim());
+    if (!m) return { error: "name the sprite as org/sprite, optionally :port (the remote Bridge port, 8080 by default)" };
+    next.sprite = { org: m[1], name: m[2], port: Number(m[3] || 8080) };
+  } else return { error: "send { url }, { sprite: \"org/name\" } or { clear: true }" };
+  stopTunnel(); tunnelRetryAt = 0;
+  cloudCfg = next; rcache.clear(); health = { at: 0, online: false, home: "", version: "", error: "" };
+  await Bun.write(COMPUTERS_FILE, JSON.stringify(cloudCfg, null, 2));
+  logRow({ ts: Date.now(), kind: "cloud.config", msg: cloudConfigured() ? "cloud computer: " + (next.url || next.sprite!.org + "/" + next.sprite!.name) : "cloud computer disconnected" });
+  await cloudHealth(true);
+  return { ok: true, computers: await computersList() };
+}
+
+/* the cloud's chats, proxied: same requests, sent on to the cloud's Bridge */
+const PROXY_GET = new Set(["/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw"]);
+const PROXY_POST = new Set(["/api/chat", "/api/abort", "/api/rename", "/api/save"]);
+/** which cloud chats have a page attached right now: those announce their own end */
+const cloudWatched = new Map<string, number>();
+function passThrough(src: ReadableStream<Uint8Array>, onText: (s: string) => void, onEnd: () => void) {
+  const reader = src.getReader(), dec = new TextDecoder();
+  let ended = false;
+  const end = () => { if (!ended) { ended = true; onEnd(); } };
+  return new ReadableStream<Uint8Array>({
+    async pull(ctrl) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) { ctrl.close(); end(); return; }
+        onText(dec.decode(value, { stream: true }));
+        ctrl.enqueue(value);
+      } catch (e) { try { ctrl.error(e); } catch {} end(); }
+    },
+    cancel() { end(); reader.cancel().catch(() => {}); },
+  });
+}
+async function proxyCloud(path: string, method: string, body?: any): Promise<Response> {
+  const base = cloudBase();
+  if (!base) return json({ error: "No cloud computer is connected. Connect one in Settings › Computers." }, 503);
+  const p = path.split("?")[0];
+  const long = p === "/api/chat" || p === "/api/follow";
+  let r: Response;
+  try {
+    r = await fetch(base + path, { method, headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined,
+      signal: long ? undefined : AbortSignal.timeout(20_000) });
+  } catch (e) {
+    health = { ...health, at: Date.now(), online: false, error: "unreachable" };
+    return json({ error: "The cloud computer is offline: " + String((e as any)?.message || e) }, 502);
+  }
+  // an older Bridge on the cloud has no /api/jobs: its activity feed still says whether the turn runs
+  if (p === "/api/jobs" && r.status === 404) {
+    const id = new URL(base + path).searchParams.get("id") || "";
+    const act = await remoteJSON("/api/activity", 3000);
+    const run = (act?.live || []).find((x: any) => x.id === id);
+    return json(run ? { running: true, started: run.started, elapsed: Date.now() - run.started, step: "Working", jobs: [] } : { running: false, started: 0, elapsed: 0, step: "", jobs: [] });
+  }
+  const headers: Record<string, string> = { "cache-control": "no-store" };
+  const ct = r.headers.get("content-type"); if (ct) headers["content-type"] = ct;
+  if (p === "/api/chat" && r.body) {
+    rcache.delete("/api/home"); rcache.delete("/api/activity");
+    let id = "", buf = "";
+    const stream = passThrough(r.body, (s) => {
+      if (id) return;
+      buf = (buf + s).slice(-4000);
+      const m = /"t":"start","sessionId":"([\w-]+)"/.exec(buf);
+      if (m) { id = m[1]; cloudWatched.set(id, (cloudWatched.get(id) || 0) + 1); }
+    }, () => { if (id) { const n = (cloudWatched.get(id) || 1) - 1; if (n > 0) cloudWatched.set(id, n); else cloudWatched.delete(id); } });
+    return new Response(stream, { status: r.status, headers });
+  }
+  return new Response(r.body, { status: r.status, headers });
+}
+
+/** a cloud turn that ends is news too: the running set is watched and its departures announced */
+let cloudRuns = new Map<string, any>();
+let cloudWatchBooted = false;
+async function watchCloud() {
+  if (!cloudConfigured()) { cloudRuns.clear(); cloudWatchBooted = false; return; }
+  const c = await cloudHomeData();
+  if (!c) return;
+  const now = new Map<string, any>(c.running.map((r: any) => [r.id, r]));
+  for (const [id, r] of now) if (!cloudRuns.has(id) && cloudWatchBooted)
+    emitEvent({ kind: "started", at: Date.now(), id, key: r.key, folder: r.projectName, cwd: r.cwd, title: r.title, text: r.prompt || "", computer: "cloud" });
+  for (const [id, r] of cloudRuns) if (!now.has(id)) {
+    rcache.delete("/api/recent?limit=120");
+    const need = (c.needs || []).find((n: any) => n.id === id);
+    const text = need ? need.ask : "";
+    emitEvent({ kind: need ? "waiting" : "done", at: Date.now(), id, key: r.key, folder: r.projectName, cwd: r.cwd, title: r.title, text, options: need?.options, computer: "cloud" });
+    if (!cloudWatched.has(id)) notifyDesktop(r.projectName + " (cloud)" + (need ? " needs you" : " finished"), r.title, text);
+  }
+  cloudRuns = now; cloudWatchBooted = true;
+}
+setInterval(() => { watchCloud().catch(() => {}); }, 5000);
+
+/** Move a chat to the cloud: its transcript (and the folder of subagent and tool-result files beside it)
+ *  is packed here and unpacked on the sprite under the project key its folder has there, through the
+ *  sprite CLI's exec — then the chat simply resumes on the cloud. Paths under this Mac's home are
+ *  rewritten to the cloud's home so the session finds its folder. */
+async function moveToCloud(key: string, id: string) {
+  const s = cloudCfg.sprite;
+  if (!s) return { error: "Moving a chat needs the cloud computer connected through the sprite CLI (Settings › Computers)." };
+  if (runFor(id)) return { error: "This chat is running here. Move it once the turn is done." };
+  const h = await cloudHealth(true);
+  if (!h.online || !h.home) return { error: "The cloud computer is offline." };
+  const file = sessionFile(id, key);
+  if (!file || !existsSync(file)) return { error: "No transcript for this chat." };
+  const meta = await sessionMeta(key, file);
+  const cwd = meta?.cwd || HOME;
+  const remoteCwd = cwd === HOME ? h.home : cwd.startsWith(HOME + "/") ? h.home + cwd.slice(HOME.length) : h.home;
+  const remoteKey = projectKey(remoteCwd);
+  const stage = join(DATA_DIR, "tmp", "move-" + id);
+  await mkdir(stage, { recursive: true });
+  const text = (await readFile(file, "utf8")).split(HOME + "/").join(h.home + "/").split('"cwd":"' + HOME + '"').join('"cwd":"' + h.home + '"');
+  await Bun.write(join(stage, id + ".jsonl"), text);
+  const side = join(dirname(file), id);
+  const parts = [id + ".jsonl"];
+  if (existsSync(side)) { await Bun.spawn(["cp", "-R", side, join(stage, id)]).exited; parts.push(id); }
+  const dest = h.home + "/.claude/projects/" + remoteKey;
+  const sh = "set -e; mkdir -p " + JSON.stringify(dest) + " " + JSON.stringify(remoteCwd) + "; tar -xzf - -C " + JSON.stringify(dest) + "; test -s " + JSON.stringify(dest + "/" + id + ".jsonl") + " && echo moved";
+  const tar = Bun.spawn(["tar", "-czf", "-", "-C", stage, ...parts], { stdout: "pipe", stderr: "pipe" });
+  const ex = Bun.spawn([SPRITE_BIN, "exec", "-o", s.org, "-s", s.name, "--", "sh", "-c", sh], { stdin: tar.stdout, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([new Response(ex.stdout).text(), new Response(ex.stderr).text(), ex.exited]);
+  Bun.spawn(["rm", "-rf", stage]);
+  if (code !== 0 || !/moved/.test(out)) return { error: "The copy did not land on the cloud computer: " + (err || out).trim().slice(-300) };
+  moved.set(id, Date.now());
+  await Bun.write(MOVED_FILE, JSON.stringify(Object.fromEntries(moved), null, 2));
+  rcache.clear(); homeCache = null;
+  logRow({ ts: Date.now(), kind: "cloud.move", msg: "moved " + (meta?.title || id) + " to the cloud", session: id, cwd });
+  return { ok: true, computer: "cloud", id, key: remoteKey, cwd: remoteCwd };
 }
 
 /* ────────────────────── following a transcript as it grows ──────────────────────
@@ -1484,6 +1784,7 @@ await daLoadState();
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => {
   try { DA.child?.stdin?.end(); DA.child?.kill("SIGTERM"); } catch {}
   try { voice?.proc.kill(); } catch {}
+  stopTunnel();
   setTimeout(() => process.exit(0), 300);
 });
 
@@ -1708,6 +2009,19 @@ async function route(req: Request): Promise<Response> {
 
     try {
       if (!rootsReady) { ROOTS = await readRoots(); await ensureRoots(); }
+      if (q.get("computer") === "cloud" && req.method === "GET" && PROXY_GET.has(p)) {
+        const fwd = new URLSearchParams(q); fwd.delete("computer");
+        return proxyCloud(p + "?" + fwd.toString(), "GET");
+      }
+      if (req.method === "POST" && PROXY_POST.has(p)) {
+        const body = await req.clone().json().catch(() => null);
+        if (body?.computer === "cloud") { delete body.computer; return proxyCloud(p, "POST", body); }
+      }
+      if (p === "/api/computers") return json(req.method === "POST" ? await setComputers(await req.json().catch(() => ({}))) : await computersList());
+      if (p === "/api/move" && req.method === "POST") {
+        const { key, id } = await req.json().catch(() => ({}) as any);
+        return json(await moveToCloud(String(key || ""), String(id || "")));
+      }
       if (p === "/api/bootstrap") {
         const settings = JSON.parse(await readFile(join(CLAUDE_DIR, "settings.json"), "utf8").catch(() => "{}"));
         const id = settings.daidentity || {};
@@ -1745,7 +2059,11 @@ async function route(req: Request): Promise<Response> {
         const h = await homeData();
         const runIds = new Set(h.running.map((r: any) => r.id)), needIds = new Set(h.needs.map((n: any) => n.id));
         for (const r of running.values()) runIds.add(r.id);
-        return json(all.sort((a, b) => b.mtime - a.mtime).slice(0, lim).map((s) => ({ ...s, running: runIds.has(s.id), needs: needIds.has(s.id) })));
+        const { items, offline } = await mergedRecent(all.sort((a, b) => b.mtime - a.mtime).slice(0, lim).map((s) => ({ ...s, running: runIds.has(s.id), needs: needIds.has(s.id) })), lim);
+        // an array has no room for a flag: a cloud that could not be reached is said in a header
+        const res = json(items);
+        if (offline) res.headers.set("x-cloud-offline", "1");
+        return res;
       }
       if (p === "/api/session") {
         const file = join(PROJECTS_DIR, q.get("key") || "", (q.get("id") || "") + ".jsonl");
@@ -1769,7 +2087,7 @@ async function route(req: Request): Promise<Response> {
         const dims = state?.dimensions ? Object.entries(state.dimensions).map(([k, v]: any) => ({ name: k, pct: Number(v.pct) || 0, tbd: v.tbd_count || 0, updated: v.last_updated })) : [];
         return json({ versions, dims, generated: state?.generated_at || null, mtime: st?.mtimeMs || 0, installed: existsSync(join(CLAUDE_DIR, "LIFEOS")) });
       }
-      if (p === "/api/home") return json(await homeData());
+      if (p === "/api/home") return json(await mergedHome());
       if (p === "/api/jobs") {
         const id = q.get("id") || "";
         const r = runFor(id);
