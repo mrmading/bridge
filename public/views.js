@@ -13,7 +13,7 @@ function needCard(n) {
     '<div class="row mt12"><button class="btn pri" data-open="' + openRef(n.key, n.id, n.computer) + '">Answer</button><span class="tag">' + esc(n.projectName) + "</span>" + cloudMark(n.computer) + "</div></div>";
 }
 function runCard(r) {
-  return '<button class="card live" data-open="' + openRef(r.key, r.id, r.computer) + '"><div class="ch">' + (r.agent ? ava(r.agent) : projIco(r.projectName, 22)) + '<span class="ct">' + esc(r.title) + "</span>" + cloudMark(r.computer) +
+  return '<button class="card live" data-open="' + openRef(r.key, r.id, r.computer) + '"><div class="ch">' + (r.agent ? ava(r.agent) : projIco(r.projectName, 22)) + '<span class="ct">' + esc(r.title) + "</span>" + qwenTag(r.provider) + cloudMark(r.computer) +
     '<span class="mono" style="font-size:12px;color:var(--fg-muted)" data-since="' + r.started + '">' + fmtEl(Date.now() - r.started) + "</span></div>" +
     "<p>" + esc([r.agent, r.projectName, String(r.model || "").replace("claude-", "")].filter(Boolean).join(" · ")) + (r.jobs && r.jobs.length ? ' · <span style="color:var(--accent)">' + r.jobs.length + " in the background</span>" : "") + "</p>" +
     '<div class="bar indet mt8" style="margin-left:0"><i></i></div><div class="ticker"><span class="typing"><i></i><i></i><i></i></span><span class="tx">' + esc(r.step || "Working") + "</span></div></button>";
@@ -471,7 +471,10 @@ $("#finderBody").addEventListener("click", (e) => { if (e.target.closest(".fres"
 
 /* ── Settings ────────────────────────────────────────────────────── */
 async function openSettings() {
-  const tabs = [["general", "General"], ["voice", "Voice"], ["defaults", "Defaults"], ["computers", "Computers"], ["advanced", "Advanced"]];
+  // a Bridge that is itself the cloud box has no second computer to connect
+  const solo = S.boot && S.boot.host && S.boot.host.kind === "cloud" && !cloudInfo().configured;
+  const tabs = [["general", "General"], ["voice", "Voice"], ["defaults", "Defaults"]].concat(solo ? [] : [["computers", "Computers"]], [["advanced", "Advanced"]]);
+  if (solo && S.setTab === "computers") S.setTab = "general";
   const row = (b, s, ctl) => '<div class="setting"><div class="l"><b>' + b + "</b><span>" + s + "</span></div>" + ctl + "</div>";
   const tog = (on, attr) => '<button class="toggle ' + (on ? "on" : "") + '" ' + attr + "></button>";
   const theme = document.documentElement.dataset.theme;

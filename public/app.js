@@ -85,7 +85,7 @@ const S = {
   panel: innerWidth > 900, ptab: "files", pfile: null,
   tech: ls("bridgeTech") === "1",
   perm: ls("bridgePerm") || "acceptEdits", model: ls("bridgeModel") || "", effort: ls("bridgeEffort") || "", ultra: ls("bridgeUltra") === "1",
-  agent: ls("bridgeAgent") === undefined ? "auto" : ls("bridgeAgent"), newPath: (ls("bridgeComputer") === "cloud" ? ls("bridgeCwdCloud") : ls("bridgeCwd")) || "", computer: ls("bridgeComputer") === "cloud" ? "cloud" : "mac", computers: [],
+  agent: ls("bridgeAgent") === undefined ? "auto" : ls("bridgeAgent"), newPath: (ls("bridgeComputer") === "cloud" ? ls("bridgeCwdCloud") : ls("bridgeCwd")) || "", computer: ls("bridgeComputer") === "cloud" ? "cloud" : "mac", computers: [], provider: ls("bridgeProvider") === "qwen" ? "qwen" : "claude",
   inboxF: "all", filesF: "made", filesKind: "All", filesQ: "", dir: null, agentCat: "All", agentQ: "", projQ: "",
   setTab: "general", attachments: [], drafts: {}, readAt: +(ls("bridgeReadAt") || 0), announced: new Set(),
 };
@@ -114,6 +114,11 @@ const cloudOn = () => !!cloudInfo().online && !S.home.cloudOffline;
 /** a small cloud mark for anything that lives on the cloud computer */
 const cloudMark = (computer) => (computer === "cloud" ? '<span class="cmark" title="Cloud computer">' + ic("cloud", 2) + "</span>" : "");
 const openRef = (key, id, computer) => esc(key + "|" + id + "|" + (computer || "mac"));
+/** Qwen chats get a small tag wherever they are listed */
+const qwenTag = (provider) => (provider === "qwen" ? '<span class="tag think qtag-p" title="Runs on Qwen (RunPod)">Qwen</span>' : "");
+const providerOn = (id) => ((S.boot && S.boot.providers) || []).some((p) => p.id === id && p.available);
+/** where a chat runs, for the label: a configured cloud is named as such, otherwise the host this server is */
+const hostLabel = (computer) => (computer === "cloud" ? ic("cloud") + "Cloud computer" : (S.boot && S.boot.host && S.boot.host.kind === "cloud" ? ic("cloud") : ic("laptop")) + esc((S.boot && S.boot.host && S.boot.host.name) || "This Mac"));
 const homeFor = (computer) => (computer === "cloud" ? cloudInfo().home || "" : homeDir());
 
 /* deterministic colours for projects and agents that do not declare one */
@@ -324,7 +329,7 @@ function renderSide() {
     const g = groupOf(s.mtime);
     (groups[g] = groups[g] || []).push(s);
   }
-  const item = (id, key, title, extra, dot, computer) => '<button class="chat-i ' + (on(id) ? "on" : "") + '" data-open="' + openRef(key, id, computer) + '" title="' + esc(title) + '">' + (dot ? '<span class="dot ' + dot + '"></span>' : "") + '<span class="t">' + esc(title) + "</span>" + cloudMark(computer) + extra + "</button>";
+  const item = (id, key, title, extra, dot, computer, provider) => '<button class="chat-i ' + (on(id) ? "on" : "") + '" data-open="' + openRef(key, id, computer) + '" title="' + esc(title) + '">' + (dot ? '<span class="dot ' + dot + '"></span>' : "") + '<span class="t">' + esc(title) + "</span>" + qwenTag(provider) + cloudMark(computer) + extra + "</button>";
   const u = userName();
   $("#side").innerHTML =
     '<div class="brand"><div class="logo"><span>B</span></div><span class="name">BRIDGE</span><span class="spacer"></span>' +
@@ -336,11 +341,11 @@ function renderSide() {
       (id === "inbox" && needs.length ? '<span class="badge warn">' + needs.length + "</span>" : "") + "</button>").join("") + "</div>" +
     '<div class="side-scroll">' +
     (runs.length || needs.length ? '<div class="side-h"><span class="dot run" style="width:6px;height:6px"></span>Working now</div>' +
-      runs.map((r) => item(r.id, r.key, r.title, '<span class="m el" data-since="' + r.started + '">' + fmtEl(Date.now() - r.started) + "</span>", "run", r.computer)).join("") +
-      needs.slice(0, 6).map((n) => item(n.id, n.key, n.title, '<span class="m" style="color:var(--warn)">needs you</span>', "wait", n.computer)).join("") : "") +
+      runs.map((r) => item(r.id, r.key, r.title, '<span class="m el" data-since="' + r.started + '">' + fmtEl(Date.now() - r.started) + "</span>", "run", r.computer, r.provider)).join("") +
+      needs.slice(0, 6).map((n) => item(n.id, n.key, n.title, '<span class="m" style="color:var(--warn)">needs you</span>', "wait", n.computer, n.provider)).join("") : "") +
     (S.home.cloudOffline ? '<div class="side-empty" title="Bridge cannot reach the cloud computer right now">' + ic("cloud") + " Cloud computer offline</div>" : "") +
     ["Today", "Yesterday", "This week", "Earlier"].filter((g) => groups[g]).map((g) => '<div class="side-h">' + g + "</div>" +
-      groups[g].slice(0, g === "Earlier" ? 15 : 40).map((s) => item(s.id, s.project, s.title, "", "", s.computer)).join("")).join("") +
+      groups[g].slice(0, g === "Earlier" ? 15 : 40).map((s) => item(s.id, s.project, s.title, "", "", s.computer, s.provider)).join("")).join("") +
     (!S.recent.length && !runs.length ? '<div class="side-empty">Your chats show up here.</div>' : "") +
     "</div>" +
     '<div class="me"><div class="avatar" data-menu="me" title="Account">' + esc(u.slice(0, 2).toUpperCase()) + '</div><div class="who"><b>' + esc(u) + "</b><span>" +
@@ -355,7 +360,7 @@ function renderTop() {
   const c = S.chat;
   if (S.view === "chat" && c && (c.id || c.msgs.length)) {
     title = projIco(projectName(c.path), 22) + '<span class="t" data-act="rename" title="Double-click to rename">' + esc(chatTitle(c)) + "</span>";
-    right = '<span class="pill hide-sm" title="' + esc(c.path) + '">' + (c.computer === "cloud" ? ic("cloud") + "Cloud computer" : ic("laptop") + "This Mac") + "</span>" +
+    right = '<span class="pill hide-sm" title="' + esc(c.path) + '">' + hostLabel(c.computer) + "</span>" +
       '<button class="pill ' + (S.panel ? "on" : "") + '" data-act="panel" title="Files & progress (⌘I)">' + ic("panel") + '<span class="hide-sm">Files &amp; progress</span></button>' +
       '<button class="icon-btn" data-menu="chatmenu" title="More">' + ic("more") + "</button>";
   } else if (S.view === "chat") title = '<span class="t">New chat</span>';
@@ -379,7 +384,8 @@ function composer(ph, opts) {
     '<button class="cbtn" data-menu="agent" title="' + esc(ag.role || "") + '">' + '<span class="ava" style="width:18px;height:18px;border-radius:6px;font-size:8px;background:' + ag.color + '">' + esc(ag.init) + '</span><span class="hide-sm">' + esc(ag.name) + "</span>" + ic("chev") + "</button>" +
     '<span class="spacer"></span>' +
     '<button class="cbtn ' + (S.perm === "bypassPermissions" ? "danger" : "") + '" data-menu="mode" title="' + esc(m.help) + '"><span class="mode-dot" style="background:' + m.c + '"></span><span class="hide-sm">' + m.label + "</span>" + ic("chev") + "</button>" +
-    '<button class="cbtn ' + (S.ultra ? "god" : "") + '" data-menu="model">' + esc(S.ultra ? "God mode" : MODELS[S.model] ? MODELS[S.model][0] : S.model) + '<span class="hide-sm" style="color:var(--fg-faint)">· ' + esc(S.ultra ? "team" : EFFORTS[S.effort] || S.effort) + "</span>" + ic("chev") + "</button>" +
+    (curProvider() === "qwen" ? '<button class="cbtn" data-menu="model">Qwen<span class="hide-sm" style="color:var(--fg-faint)">· RunPod</span>' + ic("chev") + "</button>"
+      : '<button class="cbtn ' + (S.ultra ? "god" : "") + '" data-menu="model">' + esc(S.ultra ? "God mode" : MODELS[S.model] ? MODELS[S.model][0] : S.model) + '<span class="hide-sm" style="color:var(--fg-faint)">· ' + esc(S.ultra ? "team" : EFFORTS[S.effort] || S.effort) + "</span>" + ic("chev") + "</button>") +
     (busy ? '<button class="stop" data-act="stop" title="Stop the running work">' + ic("stop", 2.4) + "</button>" : "") +
     '<button class="mic" data-act="dictate" title="Dictate">' + ic("mic") + "</button>" +
     '<button class="send" data-act="send" title="' + (busy ? "Queue: it goes the moment the current step ends (↵)" : "Send (↵)") + '">' + ic("up", 2.2) + "</button>" +
@@ -462,7 +468,11 @@ function openMenu(kind, anchor) {
     m.innerHTML = '<div class="menu-h">How much freedom?</div>' + modes.map((k) => mi('data-set="perm:' + k + '"', '<span class="mode-dot" style="background:' + MODES[k].c + ';margin-top:6px"></span>' + lb(MODES[k].label, MODES[k].help), S.perm === k)).join("");
   } else if (kind === "model") {
     const models = [""].concat((S.boot && S.boot.models) || ["opus", "sonnet", "haiku"]);
-    m.innerHTML = '<div class="menu-h">Model</div>' + models.map((k) => mi('data-set="model:' + k + '"', lb((MODELS[k] || [k])[0], (MODELS[k] || ["", ""])[1]), !S.ultra && S.model === k)).join("") +
+    const prov = curProvider(), qwenOk = providerOn("qwen");
+    const top = ((S.boot && S.boot.providers) || []).length > 1 ? '<div class="menu-h">Provider</div><div class="seg"><button class="' + (prov === "claude" ? "on" : "") + '" data-set="provider:claude">Claude</button>' +
+      '<button class="' + (prov === "qwen" ? "on" : "") + '" data-set="provider:qwen"' + (qwenOk ? "" : ' disabled title="Qwen is not set up on this server"') + ">Qwen" + (qwenOk ? "" : " · off") + "</button></div><hr>" : "";
+    if (prov === "qwen") m.innerHTML = top + '<div class="menu-h" style="text-transform:none;letter-spacing:0;font-weight:400;padding-bottom:8px">Qwen on your RunPod endpoint. Private and flat-cost, slower: a turn takes about a minute, longer when the GPU is cold.</div>';
+    else m.innerHTML = top + '<div class="menu-h">Model</div>' + models.map((k) => mi('data-set="model:' + k + '"', lb((MODELS[k] || [k])[0], (MODELS[k] || ["", ""])[1]), !S.ultra && S.model === k)).join("") +
       '<hr><div class="menu-h">Thinking effort</div><div class="seg">' + ((S.boot && S.boot.efforts) || Object.keys(EFFORTS)).map((e) => '<button class="' + (!S.ultra && S.effort === e ? "on" : "") + '" data-set="effort:' + e + '">' + esc(EFFORTS[e] || e) + "</button>").join("") + "</div>" +
       "<hr>" + mi('data-set="ultra:' + (S.ultra ? "" : "1") + '"', '<span style="color:var(--think)">' + ic("spark") + "</span>" + lb("God mode", "Max effort plus a team of agents. Slowest, most thorough, most expensive"), S.ultra);
   } else if (kind === "agent") {
@@ -482,9 +492,9 @@ function openMenu(kind, anchor) {
       projs.map((p) => mi('data-set="proj:' + esc(p.path) + '"', projIco(p.name, 20) + lb(p.name, short(p.path, 44)), S.newPath === p.path)).join("") +
       roots.map((r) => mi('data-set="proj:' + esc(r) + '"', ic("folder") + lb(base(r), short(r, 44)), S.newPath === r)).join("") + "</div>" +
       (cloud ? "" : '<hr><button class="mi" data-act="choosefolder">' + ic("plus") + lb("Choose another folder…", document.documentElement.dataset.native ? "Opens a Finder picker" : "Type a path") + "</button>") +
-      '<hr><div class="menu-h">Run on</div><div class="seg"><button class="' + (cloud ? "" : "on") + '" data-set="computer:mac">' + esc(userName()) + "'s Mac</button>" +
-      '<button class="' + (cloud ? "on" : "") + '" data-set="computer:cloud"' + (ci.configured && cloudOn() ? "" : ' title="' + (ci.configured ? "The cloud computer is offline" : "Connect one in Settings › Computers") + '"') + ">Cloud computer" + (ci.configured ? (cloudOn() ? "" : " · offline") : "") + "</button></div>" +
-      '<div class="menu-h" style="text-transform:none;letter-spacing:0;font-weight:400">' + (cloud ? "Keeps running when your Mac sleeps or is closed." : "Uses your local tools and simulators.") + "</div>";
+      (ci.configured ? '<hr><div class="menu-h">Run on</div><div class="seg"><button class="' + (cloud ? "" : "on") + '" data-set="computer:mac">' + esc(userName()) + "'s Mac</button>" +
+      '<button class="' + (cloud ? "on" : "") + '" data-set="computer:cloud"' + (cloudOn() ? "" : ' title="The cloud computer is offline"') + ">Cloud computer" + (cloudOn() ? "" : " · offline") + "</button></div>" +
+      '<div class="menu-h" style="text-transform:none;letter-spacing:0;font-weight:400">' + (cloud ? "Keeps running when your Mac sleeps or is closed." : "Uses your local tools and simulators.") + "</div>" : "");
   } else if (kind === "plus") {
     m.innerHTML = mi('data-act="attach"', ic("clip") + lb("Add photos & files", "Drop, paste or pick") + "<kbd>⌘U</kbd>") +
       mi('data-act="mention"', ic("at") + lb("Mention a file", "Point at something in the project") + "<kbd>@</kbd>") +
@@ -516,6 +526,12 @@ function setChoice(k, v) {
   else if (k === "effort") { S.effort = v; S.ultra = false; ls("bridgeEffort", v); ls("bridgeUltra", ""); }
   else if (k === "ultra") { S.ultra = !!v; ls("bridgeUltra", v ? "1" : ""); if (v) toast("God mode on: every message runs as a team of agents"); }
   else if (k === "agent") { S.agent = v; ls("bridgeAgent", v); }
+  else if (k === "provider") {
+    if (v === "qwen" && !providerOn("qwen")) return toast("Qwen is not set up on this server");
+    S.provider = v; ls("bridgeProvider", v);
+    // a chat keeps its own provider; switching in it moves its next turn
+    if (S.view === "chat" && S.chat && !chatBusy(S.chat)) S.chat.provider = v;
+  }
   else if (k === "proj") { S.newPath = v; ls(S.computer === "cloud" ? "bridgeCwdCloud" : "bridgeCwd", v); acDir = null; }
   else if (k === "computer") {
     if (v === "cloud" && !cloudInfo().configured) { closeMenu(); S.setTab = "computers"; openSettings(); return; }
@@ -529,9 +545,10 @@ function setChoice(k, v) {
 /* ─────────────────────────── chats ─────────────────────────── */
 function newChat(path, computer) {
   computer = computer || S.computer;
-  return { id: null, tmp: "n" + Date.now(), computer, key: path ? projKey(path) : "", path: path || homeFor(computer) || homeDir(), title: "", named: false, msgs: [], usage: null, model: "", branch: "",
+  return { id: null, tmp: "n" + Date.now(), computer, provider: S.provider, key: path ? projKey(path) : "", path: path || homeFor(computer) || homeDir(), title: "", named: false, msgs: [], usage: null, model: "", branch: "",
     streaming: false, running: false, follow: null, offset: 0, queue: [], jobs: null, step: "", agent: "", lastResult: null, turnStart: 0, workOpen: {}, detOpen: {} };
 }
+const curProvider = () => (S.view === "chat" && S.chat && (S.chat.id || S.chat.msgs.length) ? S.chat.provider || "claude" : S.provider);
 const chatBusy = (c) => !!(c && (c.streaming || c.running));
 function chatTitle(c) {
   if (c.title) return c.title;
@@ -552,6 +569,7 @@ async function openChat(key, id, opts) {
   if (!c) {
     const hit = S.recent.find((s) => s.id === id) || S.home.needs.find((n) => n.id === id) || S.home.running.find((r) => r.id === id) || {};
     c = newChat(hit.projectPath || hit.cwd || "", opts.computer || hit.computer || "mac");
+    c.provider = hit.provider || "claude";
     Object.assign(c, { id, key, live: id, title: hit.title || "", tmp: null });
     S.chats.set(id, c);
   }
@@ -570,6 +588,7 @@ async function loadChat(c) {
   c.msgs = r.events || []; c.usage = r.meta.usage; c.model = r.meta.model; c.branch = r.meta.branch; c.hookCount = r.meta.hookCount || 0;
   if (r.meta.cwd && (!c.path || c.path === homeFor(c.computer))) c.path = r.meta.cwd;
   if (r.meta.title) { c.title = r.meta.title; c.named = !!r.meta.named; }
+  if (r.meta.provider) c.provider = r.meta.provider;
   c.offset = r.offset || 0; c.loaded = true;
   const run = S.home.running.find((x) => x.id === c.id) || (S.recent.find((s) => s.id === c.id) || {}).running;
   if (run) attach(c);
@@ -666,7 +685,7 @@ function renderTurn(c, t, ti, isLast) {
   const sideTail = items.slice(lastTool + 1).filter((m) => m.kind === "tool" && m.side);
   const tools = items.filter((m) => m.kind === "tool" && !m.side);
   h += '<div class="a-msg">' + '<span class="ava" style="background:' + look.color + '">' + esc(look.init) + '</span><div class="a-body">' +
-    '<div class="a-name">' + esc(look.name) + (agentName && t.user && t.user.routedTo ? '<span class="tag acc" title="Auto picked this teammate">auto</span>' : "") + '<span class="faint" style="font-weight:400">' + fmtTime(t.user ? t.user.ts : items[0] && items[0].ts) + "</span></div>";
+    '<div class="a-name">' + esc(look.name) + qwenTag(t.user && t.user.provider === "qwen" || items.some((m) => /qwen/i.test(m.model || "")) ? "qwen" : "") + (agentName && t.user && t.user.routedTo ? '<span class="tag acc" title="Auto picked this teammate">auto</span>' : "") + '<span class="faint" style="font-weight:400">' + fmtTime(t.user ? t.user.ts : items[0] && items[0].ts) + "</span></div>";
   // the work block: one line per step, collapsed once the turn is done
   const steps = work.concat(sideTail);
   if (steps.length || (live && !answer.length)) {
@@ -933,8 +952,11 @@ async function runTurn(c, msg) {
   const body = {
     prompt: (msg.ultra ? "ultracode " : "") + msg.text, cwd: c.path, resume: c.live || c.id || null,
     model: S.model || null, permissionMode: S.perm, effort: msg.ultra ? "max" : S.effort || null,
-    agent: S.agent === "auto" ? "auto" : S.agent || null, attachments: msg.attachments || [], computer: c.computer || "mac",
+    agent: S.agent === "auto" ? "auto" : S.agent || null, attachments: msg.attachments || [], computer: c.computer || "mac", provider: c.provider || S.provider,
   };
+  msg.provider = body.provider;
+  // Qwen runs plain Claude Code on the Qwen model: no Claude agent routing, no Claude model or effort
+  if (body.provider === "qwen") { body.agent = null; body.model = null; body.effort = null; }
   // a cloud Bridge routes Auto itself; the hub only routes for this Mac's agents
   if (c.computer === "cloud" && body.agent === "auto") body.agent = null;
   flush(c, c.msgs.length - 1);
