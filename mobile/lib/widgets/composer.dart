@@ -213,42 +213,56 @@ class _ComposerState extends State<Composer> {
             Padding(
               padding: const EdgeInsets.fromLTRB(6, 2, 6, 6),
               child: Row(children: [
-                if (widget.showProject)
-                  // The only chip that gives way when the bar is tight: its name ellipsizes.
-                  Flexible(
-                    flex: 6,
-                    child: _Chip(
-                      key: const ValueKey('chip-project'),
-                      onTap: _pickProject,
-                      tip: 'Project',
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.folder_outlined, size: 16, color: t.muted),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 110),
-                            child: Text(projectLabel(widget.cwd), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 13, fontWeight: FontWeight.w500)),
-                          ),
+                // Left: project · teammate · freedom, sharing what the fixed right side leaves.
+                Expanded(
+                  child: Row(children: [
+                    if (widget.showProject)
+                      // The only chip that gives way when the bar is tight: its name ellipsizes.
+                      Flexible(
+                        flex: 6,
+                        child: _Chip(
+                          key: const ValueKey('chip-project'),
+                          onTap: _pickProject,
+                          tip: 'Project',
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.folder_outlined, size: 16, color: t.muted),
+                            // "Any project" is the default: the icon says enough (as in the prototype's phone
+                            // layout) and leaves room for the freedom label. A picked project shows its name.
+                            if (projectLabel(widget.cwd) != 'Any project') ...[
+                            const SizedBox(width: 5),
+                            Flexible(
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 110),
+                                child: Text(projectLabel(widget.cwd), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 13, fontWeight: FontWeight.w500)),
+                              ),
+                            ),
+                            ],
+                          ]),
                         ),
-                      ]),
+                      ),
+                    _Chip(
+                      key: const ValueKey('chip-agent'),
+                      onTap: () => showAgentSheet(context),
+                      tip: 'Teammate: ${agentLabel(turn.agent)}',
+                      child: Ava(name: agentLabel(turn.agent), size: 20, gradient: turn.agent.isEmpty),
                     ),
-                  ),
-                _Chip(
-                  key: const ValueKey('chip-agent'),
-                  onTap: () => showAgentSheet(context),
-                  tip: 'Teammate: ${agentLabel(turn.agent)}',
-                  child: Ava(name: agentLabel(turn.agent), size: 20, gradient: turn.agent.isEmpty),
-                ),
-                _Chip(
-                  key: const ValueKey('chip-mode'),
-                  onTap: () => showModeSheet(context),
-                  tip: mode.help,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Container(width: 8, height: 8, decoration: BoxDecoration(color: modeColor(context, turn.permissionMode), shape: BoxShape.circle)),
-                    if (!widget.showProject) ...[const SizedBox(width: 6), Text(mode.label, style: TextStyle(color: t.muted, fontSize: 13, fontWeight: FontWeight.w500))],
+                    // Flex shares: the freedom label wins over the project name and the spacer.
+                    Flexible(
+                      flex: 20,
+                      child: _Chip(
+                      key: const ValueKey('chip-mode'),
+                      onTap: () => showModeSheet(context),
+                      tip: mode.help,
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Container(width: 8, height: 8, decoration: BoxDecoration(color: modeColor(context, turn.permissionMode), shape: BoxShape.circle)),
+                        const SizedBox(width: 6),
+                        // Next to the project chip the bar is tight: the longest label gets its short form.
+                        Flexible(child: Text(widget.showProject && turn.permissionMode == 'manual' ? 'Ask first' : mode.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 13, fontWeight: FontWeight.w500))),
+                      ]),
+                    )
+                    ),
                   ]),
                 ),
-                const Spacer(),
                 _Chip(
                   key: const ValueKey('chip-model'),
                   onTap: () => showModelSheet(context),
@@ -299,8 +313,8 @@ class _Chip extends StatelessWidget {
         child: Container(
           constraints: const BoxConstraints(minHeight: 40, minWidth: 36),
           padding: const EdgeInsets.symmetric(horizontal: 7),
-          alignment: Alignment.center,
-          child: child,
+          // Shrink-wrap: `alignment` would make a Flexible chip grab its whole share of the bar.
+          child: Center(widthFactor: 1, child: child),
         ),
       ),
     );
