@@ -172,9 +172,9 @@ async function computeMeta(key: string, file: string): Promise<SessionMeta | nul
   const st = await stat(file).catch(() => null);
   if (!st || st.size === 0) return null;
   const cached = metaCache.get(file);
-  if (cached && cached.m === st.mtimeMs && cached.v.v === 2) return cached.v;
+  if (cached && cached.m === st.mtimeMs && cached.v.v === 3) return cached.v;
   const id = basename(file, ".jsonl");
-  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0, v: 2 };
+  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0, v: 3 };
   for (const line of await firstLines(file, 300_000)) {
     let r: any; try { r = JSON.parse(line); } catch { continue; }
     if (r.cwd && !meta.cwd) { meta.cwd = r.cwd; meta.branch = r.gitBranch; }
@@ -193,6 +193,8 @@ async function computeMeta(key: string, file: string): Promise<SessionMeta | nul
     if (r.type === "ai-title" && r.aiTitle) meta.title = r.aiTitle;
     if (r.type === "assistant" && r.message?.model) meta.model = r.message.model;
   }
+  // a prompt hook that re-runs the desk's message in its own `claude -p` leaves the <bridge> block with its tags stripped
+  if (/^now: \d{4}-\d\d-\d\dT[\d:.]+Z\s+running chats:/.test(meta.preview)) meta.desk = true;
   meta.title ||= meta.preview.slice(0, 60) || "Untitled session";
   metaCache.set(file, { m: st.mtimeMs, v: meta });
   persistCache();
@@ -1230,7 +1232,8 @@ async function homeData() {
     const [needs, made, projects] = await Promise.all([needsList(ids), madeList(), projectsCached()]);
     const v = {
       user: id.user, assistant: id.name, running: runs, needs, made,
-      projects: projects.filter((p) => p.path !== HOME && !p.path.startsWith(CLAUDE_DIR)).map((p) => ({ key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity })),
+      // a project is a folder you work in: not your home, not Claude's own tree, not a worktree or a temp dir that is gone
+      projects: projects.filter((p) => p.exists && p.path !== HOME && !p.path.startsWith(CLAUDE_DIR) && !/\/\.claude\/worktrees\/|^\/(private\/)?tmp\/|^\/var\/folders\//.test(p.path)).map((p) => ({ key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity })),
     };
     homeCache = { at: Date.now(), v };
     return v;
