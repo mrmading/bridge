@@ -107,7 +107,8 @@ class AppStore extends ChangeNotifier {
     if (dev.isNotEmpty) return dev;
     if (kIsWeb) {
       final u = Uri.base;
-      if (u.host.isNotEmpty && u.host != 'localhost' || u.port == 4270 || u.port == 4271) return '${u.scheme}://${u.host}${u.hasPort ? ':${u.port}' : ''}';
+      // Served by Bridge itself at /m/ (any port), or from a real host: the origin is the server.
+      if (u.path.startsWith('/m/') || (u.host.isNotEmpty && u.host != 'localhost') || u.port == 4270 || u.port == 4271) return '${u.scheme}://${u.host}${u.hasPort ? ':${u.port}' : ''}';
     }
     return '';
   }
