@@ -107,6 +107,9 @@ class _SessionScreenState extends State<SessionScreen> {
   void _onFocusAsk() => _focus.requestFocus();
 
   Future<void> _start() async {
+    // A chat keeps the provider it ran on: reopening a Qwen chat switches the composer to Qwen.
+    final p = _isNew ? _store.turn.provider : _store.providerOf(_id);
+    if (p != _store.turn.provider) unawaited(_store.setTurn(_store.turn.copy(provider: p)));
     if (_isNew) {
       setState(() => _loading = false);
     } else {
@@ -338,7 +341,7 @@ class _SessionScreenState extends State<SessionScreen> {
     _jumpToBottomSoon(force: true);
 
     final base = _store.turn;
-    final opts = TurnOptions(model: base.model, permissionMode: base.permissionMode, effort: base.effort, agent: base.agent);
+    final opts = base.copy();
     if (opts.agent == 'auto') {
       try {
         opts.agent = await _api.route(text, previous: _lastAgent);
@@ -411,6 +414,7 @@ class _SessionScreenState extends State<SessionScreen> {
       case 'start':
         _turnStarted = true;
         _abortKey = (f.json['sessionId'] ?? '').toString();
+        unawaited(_store.rememberProvider(_id, _store.turn.provider));
         final c = (f.json['cwd'] ?? '').toString();
         if (c.isNotEmpty && c != _cwd) {
           // Outside the roots the server silently falls back to $HOME (gotcha 8).
@@ -698,6 +702,7 @@ class _SessionScreenState extends State<SessionScreen> {
                   if (_busy) ...[PulseDot(color: t.accent, size: 6), const SizedBox(width: 2)],
                   Flexible(child: Text(_busy ? 'Working · $folder' : folder, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 12, fontWeight: FontWeight.w500))),
                   if (_computer == 'cloud') ...[const SizedBox(width: 5), const CloudBadge(size: 13)],
+                  if (_store.providerOf(_id) == 'qwen') ...[const SizedBox(width: 6), const Tag('Qwen', kind: 'think')],
                 ]),
             ]),
           ),

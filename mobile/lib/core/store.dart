@@ -10,9 +10,12 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'auth.dart';
 import 'models.dart';
+import 'url_clean_io.dart' if (dart.library.js_interop) 'url_clean_web.dart';
 
-enum ConnState { idle, connecting, ready, failed }
+/// login: the server requires Bridge sign-in and there is no session.
+enum ConnState { idle, connecting, ready, failed, login }
 
 class AppStore extends ChangeNotifier {
   AppStore._();
@@ -28,7 +31,13 @@ class AppStore extends ChangeNotifier {
   ConnState conn = ConnState.idle;
   String connError = '';
   Bootstrap? boot;
+  /// Claude Code's own sign-in on the server (not the Bridge sign-in below).
   AuthStatus auth = AuthStatus.signedOut;
+  /// Bridge sign-in: what the server asks for, and our Supabase session.
+  AuthConfig authCfg = AuthConfig.open;
+  AuthSession? session;
+  /// Why the last sign-in attempt failed (e.g. an expired link), shown on the login screen.
+  String authError = '';
   VoiceHealth voice = VoiceHealth.unknown;
   /// Needs you · working now · made for you · projects. Polled every 5 s in the foreground.
   HomeData home = HomeData.empty;
@@ -144,11 +153,112 @@ class AppStore extends ChangeNotifier {
     speakReplies = _prefs.getBool('speak') ?? true;
     handsFree = _prefs.getBool('handsFree') ?? false;
     showTech = _prefs.getBool('showTech') ?? false;
+    try {
+      _chatProviders = Map<String, String>.from(jsonDecode(_prefs.getString('chatProviders') ?? '{}') as Map);
+    } catch (_) {}
     themeMode = ThemeMode.values[_prefs.getInt('theme') ?? 0];
     try {
       turn = TurnOptions.fromJson(jsonDecode(_prefs.getString('turn') ?? '{}') as Map<String, dynamic>);
     } catch (_) {}
+    try {
+      final raw = _prefs.getString('bridgeSession');
+      if (raw != null) session = AuthSession.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+    } catch (_) {}
+    if (kIsWeb) _takeRedirect(Uri.base);
     if (serverUrl.isNotEmpty) await connect(serverUrl);
+  }
+
+  /// A magic link lands back on /m/ with the session (or an error) in the URL fragment.
+  void _takeRedirect(Uri uri) {
+    final r = parseRedirect(uri);
+    if (r.session == null && r.error.isEmpty) return;
+    if (r.session != null) {
+      session = r.session;
+      _prefs.setString('bridgeSession', jsonEncode(session!.toJson()));
+    } else {
+      authError = r.error;
+    }
+    replaceUrl(uri.replace(fragment: '', query: '').toString().replaceAll(RegExp(r'[#?]+$'), ''));
+  }
+
+  Future<String?>? _refreshing;
+
+  /// The access token for the next request, refreshed first when it is about to expire.
+  Future<String?> validToken() async {
+    final s = session;
+    if (s == null) return null;
+    if (!s.expiringSoon || s.refreshToken.isEmpty || !authCfg.required) return s.accessToken;
+    return _refreshing ??= () async {
+      try {
+        final next = await SupaAuth(authCfg).refresh(s.refreshToken);
+        await _saveSession(next);
+        return next.accessToken;
+      } catch (_) {
+        // A network blip should not sign anyone out: keep the old token; a 401 decides.
+        return s.accessToken;
+      } finally {
+        _refreshing = null;
+      }
+    }();
+  }
+
+  Future<void> _saveSession(AuthSession? s) async {
+    session = s;
+    if (s == null) {
+      await _prefs.remove('bridgeSession');
+    } else {
+      await _prefs.setString('bridgeSession', jsonEncode(s.toJson()));
+    }
+  }
+
+  bool _signingOut = false;
+
+  /// Any 401 {error:"auth"}: the session is gone; back to the login screen.
+  void _onUnauthorized() {
+    if (!authCfg.required || _signingOut || conn == ConnState.login) return;
+    _signingOut = true;
+    _homeTimer?.cancel();
+    _saveSession(null).whenComplete(() {
+      _signingOut = false;
+      authError = 'Your session ended. Sign in again.';
+      conn = ConnState.login;
+      notifyListeners();
+    });
+  }
+
+  /// Where the magic link comes back to: the web app on this origin, or the server's /m/.
+  String get redirectUrl {
+    if (kIsWeb && Uri.base.host.isNotEmpty) return '${Uri.base.origin}/m/';
+    return '${api.base}/m/';
+  }
+
+  Future<void> sendSignInLink(String email) async {
+    authError = '';
+    await SupaAuth(authCfg).sendLink(email, redirectTo: redirectUrl);
+  }
+
+  /// Native: the link or 6-digit code pasted from the email.
+  Future<void> signInWithPasted(String text, {required String email}) async {
+    final hash = tokenHashFromLink(text);
+    final code = text.replaceAll(RegExp(r'\s'), '');
+    if (hash.isEmpty && !RegExp(r'^\d{6,10}$').hasMatch(code)) throw AuthException('Paste the whole link from the email, or its code');
+    final s = await SupaAuth(authCfg).verify(tokenHash: hash, email: email, code: hash.isEmpty ? code : '');
+    await completeSignIn(s);
+  }
+
+  Future<void> completeSignIn(AuthSession s) async {
+    await _saveSession(s);
+    authError = '';
+    await connect(serverUrl);
+  }
+
+  Future<void> signOut() async {
+    final s = session;
+    if (s != null && authCfg.required) await SupaAuth(authCfg).signOut(s.accessToken);
+    _homeTimer?.cancel();
+    await _saveSession(null);
+    conn = authCfg.required ? ConnState.login : conn;
+    notifyListeners();
   }
 
   /// On the web the app is served by the Bridge server itself, so the page origin is the server.
@@ -168,11 +278,18 @@ class AppStore extends ChangeNotifier {
     serverUrl = url.trim();
     _homeMissing = false;
     _api?.close();
-    _api = BridgeApi(serverUrl);
+    _api = BridgeApi(serverUrl, token: validToken, cachedToken: () => session?.accessToken, onUnauthorized: _onUnauthorized);
     conn = ConnState.connecting;
     connError = '';
     notifyListeners();
     try {
+      authCfg = await api.authConfig();
+      if (authCfg.required && session == null) {
+        conn = ConnState.login;
+        await _prefs.setString('server', serverUrl);
+        notifyListeners();
+        return true;
+      }
       boot = await api.bootstrap();
       auth = boot!.auth;
       conn = ConnState.ready;
@@ -256,6 +373,32 @@ class AppStore extends ChangeNotifier {
   void setForeground(bool fg) {
     _foreground = fg;
     if (fg) pollHome();
+  }
+
+  /// Which provider each chat ran on (chat id → qwen), so reopening a chat keeps it.
+  Map<String, String> _chatProviders = {};
+
+  /// '' for Claude, or e.g. qwen: what this device remembers, else what the server says.
+  String providerOf(String id) {
+    final p = _chatProviders[id];
+    if (p != null) return p;
+    for (final s in recent) {
+      if (s.id == id) return s.provider == 'claude' ? '' : s.provider;
+    }
+    return '';
+  }
+
+  Future<void> rememberProvider(String id, String provider) async {
+    if (id.isEmpty || (_chatProviders[id] ?? '') == provider) return;
+    if (provider.isEmpty) {
+      _chatProviders.remove(id);
+    } else {
+      _chatProviders[id] = provider;
+    }
+    // Keep the newest few hundred; this is a convenience, not a record.
+    if (_chatProviders.length > 400) _chatProviders = Map.fromEntries(_chatProviders.entries.skip(_chatProviders.length - 400));
+    await _prefs.setString('chatProviders', jsonEncode(_chatProviders));
+    notifyListeners();
   }
 
   Future<void> setTurn(TurnOptions t) async {

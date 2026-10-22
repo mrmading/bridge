@@ -267,7 +267,7 @@ class _ComposerState extends State<Composer> {
                   key: const ValueKey('chip-model'),
                   onTap: () => showModelSheet(context),
                   tip: 'Model and effort',
-                  child: Text(turn.model.isEmpty ? (turn.effort.isEmpty ? 'Model' : effortLabel(turn.effort)) : '${cap(turn.model)}${turn.effort.isEmpty ? '' : ' · ${effortLabel(turn.effort)}'}',
+                  child: Text(turn.isQwen ? 'Qwen' : (turn.model.isEmpty ? (turn.effort.isEmpty ? 'Model' : effortLabel(turn.effort)) : '${cap(turn.model)}${turn.effort.isEmpty ? '' : ' · ${effortLabel(turn.effort)}'}'),
                       style: TextStyle(color: t.muted, fontSize: 13, fontWeight: FontWeight.w500)),
                 ),
                 const SizedBox(width: 2),
@@ -364,10 +364,9 @@ Future<T?> _sheet<T>(BuildContext context, Widget Function(BuildContext) builder
       ),
     );
 
-void _setTurn({String? model, String? mode, String? effort, String? agent}) {
+void _setTurn({String? model, String? mode, String? effort, String? agent, String? provider}) {
   final s = AppStore.instance;
-  final turn = s.turn;
-  s.setTurn(TurnOptions(model: model ?? turn.model, permissionMode: mode ?? turn.permissionMode, effort: effort ?? turn.effort, agent: agent ?? turn.agent));
+  s.setTurn(s.turn.copy(model: model, permissionMode: mode, effort: effort, agent: agent, provider: provider));
 }
 
 Future<void> showModeSheet(BuildContext context) => _sheet(context, (c) {
@@ -402,8 +401,31 @@ Future<void> showModelSheet(BuildContext context) => _sheet(context, (c) {
             '' => 'Whatever Claude Code is set to',
             _ => '',
           };
+      final providers = store.boot?.providers ?? const <Provider>[];
+      final qwen = providers.where((p) => p.id == 'qwen').firstOrNull;
+      final onQwen = store.turn.isQwen && qwen != null;
       return ListView(shrinkWrap: true, padding: const EdgeInsets.only(bottom: 20), children: [
         const SheetTitle('Model'),
+        if (qwen != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: SegmentedButton<String>(
+              key: const ValueKey('provider-switch'),
+              segments: [
+                const ButtonSegment(value: '', label: Text('Claude')),
+                ButtonSegment(value: 'qwen', enabled: qwen.available, label: Text(qwen.available ? 'Qwen' : 'Qwen · offline')),
+              ],
+              selected: {onQwen ? 'qwen' : ''},
+              showSelectedIcon: false,
+              onSelectionChanged: (s) => _setTurn(provider: s.first),
+            ),
+          ),
+        if (onQwen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+            child: Text('${qwen.name}: an open model on your own GPU. Claude models and effort apply when you switch back.', style: TextStyle(color: t.muted, fontSize: 13.5, height: 1.4)),
+          )
+        else ...[
         for (final m in models) PickRow(title: modelLabel(m), sub: help(m), selected: store.turn.model == m, onTap: () => _setTurn(model: m)),
         Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 8), child: Text('THINKING EFFORT', style: TextStyle(color: t.faint, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 1.1))),
         Padding(
@@ -415,6 +437,7 @@ Future<void> showModelSheet(BuildContext context) => _sheet(context, (c) {
             onSelectionChanged: (s) => _setTurn(effort: s.first),
           ),
         ),
+        ],
       ]);
     });
 

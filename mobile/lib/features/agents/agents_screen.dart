@@ -42,7 +42,7 @@ class _AgentsScreenState extends State<AgentsScreen> {
 
   void _giveTask(AgentInfo a) {
     final turn = _store.turn;
-    _store.setTurn(TurnOptions(model: turn.model, permissionMode: turn.permissionMode, effort: turn.effort, agent: a.name));
+    _store.setTurn(turn.copy(agent: a.name));
     Nav.instance.newChat();
   }
 

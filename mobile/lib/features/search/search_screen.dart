@@ -113,7 +113,7 @@ class _SearchScreenState extends State<SearchScreen> {
         if (agents.isNotEmpty) header('Agents'),
         for (final a in agents.take(10)) row(Icons.smart_toy_outlined, a.name, a.description, () {
           final turn = _store.turn;
-          _store.setTurn(TurnOptions(model: turn.model, permissionMode: turn.permissionMode, effort: turn.effort, agent: a.name));
+          _store.setTurn(turn.copy(agent: a.name));
           Nav.instance.newChat();
         }, lead: Ava(name: a.name, size: 26, color: parseHex(a.color))),
         if (files.isNotEmpty) header('Files'),

@@ -3,6 +3,7 @@
 /// global instructions) · About.
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -239,6 +240,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.only(bottom: 32),
         children: [
+          ..._bridgeAccount(context),
           ..._appearance(context),
           ..._account(context),
           ..._voice(context),
@@ -274,6 +276,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ]),
       ),
+      // On the web the app is served by its server (same origin): nothing to point at.
+      if (!kIsWeb)
       Card2(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           TextField(
@@ -464,6 +468,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onSelectionChanged: (s) => store.setTheme(s.first),
           ),
         ),
+      ),
+    ];
+  }
+
+  /// Bridge sign-in (Supabase), when the server requires it. Not Claude's own account below.
+  List<Widget> _bridgeAccount(BuildContext context) {
+    final t = context.t;
+    if (!store.authCfg.required) return const [];
+    final email = store.session?.email ?? '';
+    return [
+      const SectionHeader('Signed in to Bridge'),
+      Card2(
+        child: Row(children: [
+          Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [t.accent, t.think])),
+            child: Text(email.isEmpty ? '?' : email[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(email.isEmpty ? 'Signed in' : email, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 16, fontWeight: FontWeight.w600)),
+              Text(store.serverHost, style: TextStyle(color: t.muted, fontSize: 13)),
+            ]),
+          ),
+          TextButton(
+            onPressed: () async {
+              final yes = await _confirm('Sign out of Bridge?', 'You will need a new email link to come back on this device.', 'Sign out');
+              if (yes) await store.signOut();
+            },
+            style: TextButton.styleFrom(foregroundColor: t.err, minimumSize: const Size(44, 44)),
+            child: const Text('Sign out'),
+          ),
+        ]),
       ),
     ];
   }

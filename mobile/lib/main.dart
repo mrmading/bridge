@@ -5,6 +5,7 @@ import 'core/nav.dart';
 import 'core/store.dart';
 import 'core/theme.dart';
 import 'features/agents/agents_screen.dart';
+import 'features/auth/login_screen.dart';
 import 'features/files/files_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/home/new_chat_screen.dart';
@@ -35,7 +36,9 @@ class BridgeApp extends StatelessWidget {
         theme: buildTheme(Brightness.light),
         darkTheme: buildTheme(Brightness.dark),
         themeMode: store.themeMode,
-        home: store.hasServer && store.conn != ConnState.failed ? const Shell() : const OnboardingScreen(),
+        home: store.conn == ConnState.login
+            ? const LoginScreen()
+            : (store.hasServer && store.conn != ConnState.failed ? const Shell() : const OnboardingScreen()),
       ),
     );
   }

@@ -25,8 +25,18 @@ class AuthStatus {
   static final signedOut = AuthStatus(loggedIn: false);
 }
 
+/// A model provider the server can run chats on: claude (default) · qwen (RunPod).
+class Provider {
+  Provider({required this.id, required this.name, this.available = true});
+  final String id, name;
+  final bool available;
+  factory Provider.fromJson(Map<String, dynamic> j) => Provider(id: _s(j['id']), name: _s(j['name']).isEmpty ? _s(j['id']) : _s(j['name']), available: j['available'] != false);
+}
+
 class Bootstrap {
-  Bootstrap({required this.user, required this.assistant, required this.color, required this.home, required this.version, required this.models, required this.permissionModes, required this.efforts, required this.auth});
+  Bootstrap({required this.user, required this.assistant, required this.color, required this.home, required this.version, required this.models, required this.permissionModes, required this.efforts, required this.auth, this.providers = const []});
+  /// Empty on a server with Claude only.
+  final List<Provider> providers;
   final String user, assistant, color, home, version;
   final List<String> models, permissionModes, efforts;
   final AuthStatus auth;
@@ -40,6 +50,7 @@ class Bootstrap {
         permissionModes: List<String>.from(j['permissionModes'] ?? const ['acceptEdits', 'plan', 'bypassPermissions']),
         efforts: List<String>.from(j['efforts'] ?? const ['', 'low', 'medium', 'high']),
         auth: AuthStatus.fromJson(j['auth'] as Map<String, dynamic>?),
+        providers: [for (final p in (j['providers'] is List ? j['providers'] as List : const [])) if (p is Map && _s(p['id']).isNotEmpty) Provider.fromJson(Map<String, dynamic>.from(p))],
       );
 }
 
@@ -52,8 +63,10 @@ class Project {
 }
 
 class SessionMeta {
-  SessionMeta({required this.id, required this.key, required this.title, required this.preview, required this.mtime, required this.turns, this.model = '', this.cwd = '', this.branch = '', this.named = false, this.projectKey = '', this.projectName = '', this.projectPath = '', this.running = false, this.needs = false, this.computer = 'mac'});
+  SessionMeta({required this.id, required this.key, required this.title, required this.preview, required this.mtime, required this.turns, this.model = '', this.cwd = '', this.branch = '', this.named = false, this.projectKey = '', this.projectName = '', this.projectPath = '', this.running = false, this.needs = false, this.computer = 'mac', this.provider = ''});
   final String id, key, title, preview, model, cwd, branch, projectKey, projectName, projectPath;
+  /// '' / claude · qwen
+  final String provider;
   /// mac · cloud
   final String computer;
   final int mtime, turns;
@@ -78,6 +91,7 @@ class SessionMeta {
         running: _b(j['running']),
         needs: _b(j['needs']),
         computer: _computer(j['computer']),
+        provider: _s(j['provider']),
       );
   String get folder {
     final p = projectPath.isNotEmpty ? projectPath : cwd;
@@ -373,10 +387,25 @@ class JobsState {
 
 /// Settings chosen for a turn; persisted per app, applied per session.
 class TurnOptions {
-  TurnOptions({this.model = '', this.permissionMode = 'acceptEdits', this.effort = '', this.agent = ''});
-  String model, permissionMode, effort, agent;
-  Map<String, dynamic> toJson() => {'model': model, 'permissionMode': permissionMode, 'effort': effort, 'agent': agent};
-  factory TurnOptions.fromJson(Map<String, dynamic>? j) => TurnOptions(model: _s(j?['model']), permissionMode: _s(j?['permissionMode']).isEmpty ? 'acceptEdits' : _s(j?['permissionMode']), effort: _s(j?['effort']), agent: _s(j?['agent']));
+  TurnOptions({this.model = '', this.permissionMode = 'acceptEdits', this.effort = '', this.agent = '', this.provider = ''});
+  /// provider: '' (Claude) or a /api/bootstrap provider id such as qwen.
+  String model, permissionMode, effort, agent, provider;
+  bool get isQwen => provider == 'qwen';
+  Map<String, dynamic> toJson() => {'model': model, 'permissionMode': permissionMode, 'effort': effort, 'agent': agent, 'provider': provider};
+  factory TurnOptions.fromJson(Map<String, dynamic>? j) => TurnOptions(
+        model: _s(j?['model']),
+        permissionMode: _s(j?['permissionMode']).isEmpty ? 'acceptEdits' : _s(j?['permissionMode']),
+        effort: _s(j?['effort']),
+        agent: _s(j?['agent']),
+        provider: _s(j?['provider']) == 'claude' ? '' : _s(j?['provider']),
+      );
+  TurnOptions copy({String? model, String? permissionMode, String? effort, String? agent, String? provider}) => TurnOptions(
+        model: model ?? this.model,
+        permissionMode: permissionMode ?? this.permissionMode,
+        effort: effort ?? this.effort,
+        agent: agent ?? this.agent,
+        provider: provider ?? this.provider,
+      );
 }
 
 /// GET /api/computers: where chats can run. id ∈ mac · cloud.
