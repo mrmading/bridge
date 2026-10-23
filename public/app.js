@@ -115,7 +115,9 @@ const cloudOn = () => !!cloudInfo().online && !S.home.cloudOffline;
 const cloudMark = (computer) => (computer === "cloud" ? '<span class="cmark" title="Cloud computer">' + ic("cloud", 2) + "</span>" : "");
 const openRef = (key, id, computer) => esc(key + "|" + id + "|" + (computer || "mac"));
 /** Qwen chats get a small tag wherever they are listed */
-const qwenTag = (provider) => (provider === "qwen" ? '<span class="tag think qtag-p" title="Runs on Qwen (RunPod)">Qwen</span>' : "");
+const providerInfo = (id) => ((S.boot && S.boot.providers) || []).find((p) => p.id === id) || { id, name: id, short: id, group: id === "claude" ? "claude" : "open" };
+/** a chat on an open model carries that model's short name wherever it is listed */
+const qwenTag = (provider) => { if (!provider || provider === "claude") return ""; const p = providerInfo(provider); return '<span class="tag think qtag-p" title="' + esc(p.name + (p.note ? " · " + p.note : "")) + '">' + esc(p.short || p.name) + "</span>"; };
 const providerOn = (id) => ((S.boot && S.boot.providers) || []).some((p) => p.id === id && p.available);
 /** where a chat runs, for the label: a configured cloud is named as such, otherwise the host this server is */
 const hostLabel = (computer) => (computer === "cloud" ? ic("cloud") + "Cloud computer" : (S.boot && S.boot.host && S.boot.host.kind === "cloud" ? ic("cloud") : ic("laptop")) + esc((S.boot && S.boot.host && S.boot.host.name) || "This Mac"));
@@ -384,7 +386,7 @@ function composer(ph, opts) {
     '<button class="cbtn" data-menu="agent" title="' + esc(ag.role || "") + '">' + '<span class="ava" style="width:18px;height:18px;border-radius:6px;font-size:8px;background:' + ag.color + '">' + esc(ag.init) + '</span><span class="hide-sm">' + esc(ag.name) + "</span>" + ic("chev") + "</button>" +
     '<span class="spacer"></span>' +
     '<button class="cbtn ' + (S.perm === "bypassPermissions" ? "danger" : "") + '" data-menu="mode" title="' + esc(m.help) + '"><span class="mode-dot" style="background:' + m.c + '"></span><span class="hide-sm">' + m.label + "</span>" + ic("chev") + "</button>" +
-    (curProvider() === "qwen" ? '<button class="cbtn" data-menu="model">Qwen<span class="hide-sm" style="color:var(--fg-faint)">· RunPod</span>' + ic("chev") + "</button>"
+    (curProvider() !== "claude" ? '<button class="cbtn" data-menu="model">' + esc(providerInfo(curProvider()).short || providerInfo(curProvider()).name) + '<span class="hide-sm" style="color:var(--fg-faint)">· ' + esc(String(providerInfo(curProvider()).note || "").split(" · ")[0] || "open model") + "</span>" + ic("chev") + "</button>"
       : '<button class="cbtn ' + (S.ultra ? "god" : "") + '" data-menu="model">' + esc(S.ultra ? "God mode" : MODELS[S.model] ? MODELS[S.model][0] : S.model) + '<span class="hide-sm" style="color:var(--fg-faint)">· ' + esc(S.ultra ? "team" : EFFORTS[S.effort] || S.effort) + "</span>" + ic("chev") + "</button>") +
     (busy ? '<button class="stop" data-act="stop" title="Stop the running work">' + ic("stop", 2.4) + "</button>" : "") +
     '<button class="mic" data-act="dictate" title="Dictate">' + ic("mic") + "</button>" +
@@ -456,6 +458,14 @@ async function updateAc() {
 /* ─────────────────────────── menus ─────────────────────────── */
 let menuEl = null;
 function closeMenu() { if (menuEl) menuEl.remove(); menuEl = null; }
+// switching tabs inside the model menu redraws it where it is, without choosing anything yet
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-mtab]");
+  if (!t || !menuEl) return;
+  e.stopPropagation();
+  S.modelTab = t.dataset.mtab;
+  openMenu("model", menuEl._anchor);
+}, true);
 const chk = '<span class="chk">' + ic("check", 2.4) + "</span>";
 function openMenu(kind, anchor) {
   closeMenu();
@@ -468,11 +478,16 @@ function openMenu(kind, anchor) {
     m.innerHTML = '<div class="menu-h">How much freedom?</div>' + modes.map((k) => mi('data-set="perm:' + k + '"', '<span class="mode-dot" style="background:' + MODES[k].c + ';margin-top:6px"></span>' + lb(MODES[k].label, MODES[k].help), S.perm === k)).join("");
   } else if (kind === "model") {
     const models = [""].concat((S.boot && S.boot.models) || ["opus", "sonnet", "haiku"]);
-    const prov = curProvider(), qwenOk = providerOn("qwen");
-    const top = ((S.boot && S.boot.providers) || []).length > 1 ? '<div class="menu-h">Provider</div><div class="seg"><button class="' + (prov === "claude" ? "on" : "") + '" data-set="provider:claude">Claude</button>' +
-      '<button class="' + (prov === "qwen" ? "on" : "") + '" data-set="provider:qwen"' + (qwenOk ? "" : ' disabled title="Qwen is not set up on this server"') + ">Qwen" + (qwenOk ? "" : " · off") + "</button></div><hr>" : "";
-    if (prov === "qwen") m.innerHTML = top + '<div class="menu-h" style="text-transform:none;letter-spacing:0;font-weight:400;padding-bottom:8px">Qwen on your RunPod endpoint. Private and flat-cost, slower: a turn takes about a minute, longer when the GPU is cold.</div>';
-    else m.innerHTML = top + '<div class="menu-h">Model</div>' + models.map((k) => mi('data-set="model:' + k + '"', lb((MODELS[k] || [k])[0], (MODELS[k] || ["", ""])[1]), !S.ultra && S.model === k)).join("") +
+    const prov = curProvider();
+    const open = ((S.boot && S.boot.providers) || []).filter((p) => p.group === "open");
+    // two tabs: Claude, and open models; the tab follows the chat's provider until you pick the other one
+    const tab = S.modelTab || (providerInfo(prov).group === "open" ? "open" : "claude");
+    const top = open.length ? '<div class="seg mtabs"><button class="' + (tab === "claude" ? "on" : "") + '" data-mtab="claude">Claude</button><button class="' + (tab === "open" ? "on" : "") + '" data-mtab="open">Open models</button></div>' : "";
+    if (open.length && tab === "open") m.innerHTML = top + '<div class="menu-h">Open models</div>' + open.map((p) => p.available
+      ? mi('data-set="provider:' + esc(p.id) + '"', '<span style="color:var(--think)">' + ic("spark") + "</span>" + lb(p.name, p.note || ""), prov === p.id)
+      : '<div class="mi off" title="Not set up on this server">' + '<span style="color:var(--fg-faint)">' + ic("spark") + "</span>" + lb(p.name, (p.note ? p.note + " · " : "") + "not set up on this server") + "</div>").join("") +
+      '<div class="menu-h" style="text-transform:none;letter-spacing:0;font-weight:400;padding:6px 10px 8px">Runs plain Claude Code on the model you pick, with the core tools only. A turn takes about a minute, longer when the GPU is cold.</div>';
+    else m.innerHTML = top + (open.length ? "" : "") + '<div class="menu-h">Model</div>' + models.map((k) => mi('data-set="model:' + k + '"', lb((MODELS[k] || [k])[0], (MODELS[k] || ["", ""])[1]), !S.ultra && S.model === k)).join("") +
       '<hr><div class="menu-h">Thinking effort</div><div class="seg">' + ((S.boot && S.boot.efforts) || Object.keys(EFFORTS)).map((e) => '<button class="' + (!S.ultra && S.effort === e ? "on" : "") + '" data-set="effort:' + e + '">' + esc(EFFORTS[e] || e) + "</button>").join("") + "</div>" +
       "<hr>" + mi('data-set="ultra:' + (S.ultra ? "" : "1") + '"', '<span style="color:var(--think)">' + ic("spark") + "</span>" + lb("God mode", "Max effort plus a team of agents. Slowest, most thorough, most expensive"), S.ultra);
   } else if (kind === "agent") {
@@ -514,6 +529,7 @@ function openMenu(kind, anchor) {
       mi('data-act="tech"', ic("term") + lb(S.tech ? "Hide technical details" : "Show technical details", "Raw tool calls next to each step")) +
       (busy ? "<hr>" + mi('data-act="stop"', '<span style="color:var(--err)">' + ic("stop") + "</span>" + lb("Stop all running work")) : "");
   }
+  m._anchor = anchor;
   document.body.appendChild(m); menuEl = m;
   const r = anchor.getBoundingClientRect(), mw = m.offsetWidth, mh = m.offsetHeight;
   let x = Math.min(r.left, innerWidth - mw - 10), y = r.bottom + 6;
@@ -522,12 +538,14 @@ function openMenu(kind, anchor) {
 }
 function setChoice(k, v) {
   if (k === "perm") { S.perm = v; ls("bridgePerm", v); }
+  else if ((k === "model" || k === "effort" || k === "ultra") && curProvider() !== "claude") { setChoice("provider", "claude"); return setChoice(k, v); }
   else if (k === "model") { S.model = v; S.ultra = false; ls("bridgeModel", v); ls("bridgeUltra", ""); }
   else if (k === "effort") { S.effort = v; S.ultra = false; ls("bridgeEffort", v); ls("bridgeUltra", ""); }
   else if (k === "ultra") { S.ultra = !!v; ls("bridgeUltra", v ? "1" : ""); if (v) toast("God mode on: every message runs as a team of agents"); }
   else if (k === "agent") { S.agent = v; ls("bridgeAgent", v); }
   else if (k === "provider") {
-    if (v === "qwen" && !providerOn("qwen")) return toast("Qwen is not set up on this server");
+    if (v !== "claude" && !providerOn(v)) return toast(providerInfo(v).name + " is not set up on this server");
+    S.modelTab = null;
     S.provider = v; ls("bridgeProvider", v);
     // a chat keeps its own provider; switching in it moves its next turn
     if (S.view === "chat" && S.chat && !chatBusy(S.chat)) S.chat.provider = v;
@@ -1233,7 +1251,7 @@ document.addEventListener("click", (e) => {
   if (d.go) { closeOverlays(); go(d.go); }
   else if (d.open) { closeOverlays(); const [key, id, computer] = d.open.split("|"); openChat(key, id, { computer }); }
   else if (d.proj) go("project", d.proj);
-  else if (d.menu) { if (menuEl && menuEl._k === d.menu) closeMenu(); else openMenu(d.menu, t); }
+  else if (d.menu) { if (menuEl && menuEl._k === d.menu) closeMenu(); else { S.modelTab = null; openMenu(d.menu, t); } }
   else if (d.set) { const k = d.set.slice(0, d.set.indexOf(":")), v = d.set.slice(d.set.indexOf(":") + 1); setChoice(k, v); closeMenu(); if (S.view === "chat" && S.chat && (S.chat.id || S.chat.msgs.length)) refreshComposerBar(); else render(); const ta = $("#ta"); if (ta) ta.focus(); }
   else if (d.suggest) { const ta = $("#ta"); if (ta) { ta.value = d.suggest; ta.focus(); ta.dispatchEvent(new Event("input")); } }
   else if (d.ask) { if (window.Voice) Voice.ask(d.ask); }

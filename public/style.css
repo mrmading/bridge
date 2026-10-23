@@ -617,3 +617,5 @@ body.tech .tdet.open{display:block}
 @media (max-width:900px){.modal-nav{flex-wrap:wrap;overflow:visible}.modal-nav .nav-i{width:auto;flex:1 1 auto;justify-content:center}}
 .login-code{text-align:center;letter-spacing:.5em;font-family:var(--mono)!important;font-size:22px!important;height:52px!important}
 .login-alt{margin-top:12px;border:0;background:transparent;color:var(--fg-muted)}
+.menu .mtabs{margin:4px 6px 8px}
+.menu .mi.off{opacity:.5;cursor:not-allowed}
