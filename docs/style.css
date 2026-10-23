@@ -101,3 +101,21 @@ pre .c{color:var(--faint)}
 footer{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;color:var(--faint);font-size:13px;
   padding-top:40px;border-top:1px solid var(--line)}
 @media (max-width:640px){.mock-chat{font-size:12px}.nav nav a:not(.gh){display:none}}
+
+/* screenshots of the app (demo data) */
+.shot-wrap{padding:8px 0 30px}
+.shot{border:1px solid var(--line2);border-radius:14px;overflow:hidden;background:var(--raise);
+  box-shadow:0 30px 90px rgba(0,0,0,.55),0 0 0 1px rgba(74,168,255,.10)}
+.shot img{display:block;width:100%;height:auto}
+.caption{text-align:center;color:var(--faint);font-size:13px;margin-top:12px}
+.split{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:28px;align-items:start;margin-top:8px}
+.points{list-style:none;display:flex;flex-direction:column;gap:14px;color:var(--muted);font-size:14.5px}
+.points li{border-left:2px solid rgba(74,168,255,.45);padding-left:14px}
+.points b{color:var(--fg);font-weight:620}
+.split.phones{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr)}
+.phone-pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.shot.phone{border-radius:26px}
+.cards.stack{grid-template-columns:1fr;margin-top:0}
+.inline-shot{display:block;width:100%;max-width:341px;height:auto;margin-top:14px;border-radius:10px;border:1px solid var(--line2)}
+.sub-h{font-size:18px;margin:34px 0 8px;font-weight:640}
+@media (max-width:860px){.split,.split.phones{grid-template-columns:1fr}}

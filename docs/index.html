@@ -2,11 +2,12 @@
 <html lang="en" data-theme="dark">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bridge — a desktop client for Claude Code</title>
-<meta name="description" content="A dark/light desktop client for Claude Code. Reads ~/.claude directly, drives the real CLI, and gives you tabs, full-text search over every transcript, and an editor for your config.">
-<meta property="og:title" content="Bridge — a desktop client for Claude Code">
-<meta property="og:description" content="Keeps the engine, changes the surface. Tabs, search over every transcript, an editor for your config, a live activity log. MIT.">
+<title>Bridge — Claude Code without the terminal</title>
+<meta name="description" content="A friendly app for Claude Code that replaces the terminal. Long work stays visible and keeps running when you close it. Home, a phone app, an optional cloud computer, and open models next to Claude.">
+<meta property="og:title" content="Bridge — Claude Code without the terminal">
+<meta property="og:description" content="Chats instead of a terminal. Long work stays visible and survives closing the app. Phone app, optional cloud computer, open models next to Claude. MIT.">
 <meta property="og:type" content="website">
+<meta property="og:image" content="https://mrmading.github.io/bridge/img/home-desktop.webp">
 <link rel="icon" href="img/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,6 +20,7 @@
   <a class="brand" href="#top"><img src="img/icon.png" alt=""><span>Bridge</span></a>
   <nav>
     <a href="#what">What it is</a>
+    <a href="#long">Long work</a>
     <a href="#how">How it works</a>
     <a href="#safety">Safety</a>
     <a class="gh" href="https://github.com/mrmading/bridge">GitHub</a>
@@ -28,78 +30,97 @@
 <main>
   <section class="hero" id="top">
     <div class="wordmark">BRIDGE</div>
-    <h1>A desktop client for Claude&nbsp;Code.</h1>
+    <h1>Claude&nbsp;Code, without the terminal.</h1>
     <p class="sub">
-      It reads <code>~/.claude</code> directly and drives the real <code>claude</code> CLI, so your
-      hooks, skills, agents and sessions stay exactly where they are. Not a reimplementation:
-      a session started in Bridge is an ordinary Claude Code session you can pick up in the terminal.
+      A friendly app for the real <code>claude</code> CLI. Every chat starts here, long work stays in view
+      and keeps running when you close the window, and your hooks, skills, agents and
+      <code>~/.claude</code> stay exactly where they are. A chat in Bridge is an ordinary Claude Code session.
     </p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/mrmading/bridge/releases/latest">Download for macOS</a>
+      <a class="btn primary" href="#get">Get the new Bridge</a>
       <a class="btn" href="https://github.com/mrmading/bridge">View the source</a>
     </div>
-    <p class="meta">Free and MIT licensed · a real Mac app, no Electron · nothing leaves your machine</p>
-    <p class="meta small-note">Drag it into Applications and open it. Bridge checks for the two free tools it needs
-      and offers to install whatever is missing. First launch: macOS blocks it once, then System Settings → Privacy &amp; Security → Open Anyway. Notarised builds are coming.</p>
+    <p class="meta">Free and MIT licensed · a real Mac app, no Electron · runs on your machine, or on your own cloud box</p>
   </section>
 
-  <section class="mock-wrap">
-    <div class="mock">
-      <div class="mock-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-        <span class="mock-title">Bridge</span></div>
-      <div class="mock-body">
-        <div class="mock-rail"><i class="on"></i><i></i><i></i><i></i><i></i></div>
-        <div class="mock-main">
-          <div class="mock-tabs"><span class="t on"><b class="live"></b>Refactor the booking flow</span><span class="t">Weekly report</span><span class="t plus">+</span></div>
-          <div class="mock-chat">
-            <div class="bubble you">check why the deploy is failing and fix it</div>
-            <div class="tool"><span class="k">$</span> Bash <span class="arg">npm run build 2>&amp;1 | tail -40</span><span class="ok">done</span></div>
-            <div class="tool"><span class="k">✎</span> Edit <span class="arg">vite.config.ts</span><span class="ok">done</span></div>
-            <div class="say"><b>Claude</b> The build broke on a missing <code>base</code> path. Fixed and verified.</div>
-          </div>
-          <div class="mock-composer">Message Claude Code…  /skill  @file<span class="send">→</span></div>
-        </div>
-      </div>
-    </div>
+  <section class="shot-wrap">
+    <figure class="shot"><img src="img/home-desktop.webp" width="1600" height="1000" alt="Bridge Home: a greeting, the composer, what needs you and what is working now"></figure>
+    <p class="caption">Home: what needs you, what is working now, and what your team made. Demo data.</p>
   </section>
 
   <section id="what">
     <h2>What you get</h2>
     <div class="cards">
-      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><h3>Chat, not a terminal log</h3><p>Streaming text, thinking folded behind one line, and every tool call as a card: Bash shows its output, <code>Edit</code> renders a real ± diff, sub-agents get their own gutter.</p></div>
-      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM7 7V5a2 2 0 0 1 2-2h3"/></svg></span><h3>Sessions are tabs</h3><p>Several at once, each with its own transcript, tokens, cost and working directory. A tab that is working flashes green. Keep typing while it runs and the message queues, like the terminal.</p></div>
-      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4"/></svg></span><h3>⌘F finds anything you ever ran</h3><p>Describe it in your own words. Bridge greps every transcript on the machine, ranks on how many of your terms a session actually covers, and shows what you asked, how it ended, and the matching lines.</p></div>
-      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h9l5 5v15H6zM15 2v5h5M9 13l3 3 5-6"/></svg></span><h3>Your config, editable</h3><p><code>CLAUDE.md</code>, settings, memory files, skills and agents in one place. <code>⌘S</code> writes to disk. Markdown gets a split editor with a live preview.</p></div>
-      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></span><h3>A live activity log</h3><p>What is running now, turns and spend today, and every start, finish, failure, interrupt and file save, each naming the session that caused it.</p></div>
+      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><h3>Chats, not a terminal log</h3><p>A turn's work folds into one line, “Worked for 6m · read 14 files”, with the answer underneath. Questions become buttons, plans get an Approve card, files it made open as cards. Raw tool calls are one toggle away.</p></div>
+      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></span><h3>A Home that knows what is going on</h3><p>Chats that ended on a question wait under Needs you. Running work shows live timers. Documents, pages and code your chats wrote this week land in Made for you.</p></div>
+      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM7 7V5a2 2 0 0 1 2-2h3"/></svg></span><h3>Projects, files and your team</h3><p>A project is a folder: its chats, its <code>CLAUDE.md</code> and its files in one place. Agents and skills are a team you can hand a task to, or leave it on Auto and Bridge picks who fits each message.</p></div>
+      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4"/></svg></span><h3>⌘K for everything, ⌘F for anything you ever ran</h3><p>The palette finds chats, projects, files, agents and skills. ⌘F reads every transcript on the machine and ranks on how many of your words a session covers.</p></div>
+      <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span><h3>Talk to it</h3><p>Tap the orb and ask what is waiting on you. Your assistant knows every running chat and speaks the answer; local speech-to-text and voice on the Mac when you have them.</p></div>
       <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM8 21h8M12 17v4"/></svg></span><h3>A real macOS app</h3><p><code>./mac/build.sh</code> produces <code>Bridge.app</code>: a Swift shell around a WKWebView that starts the bundled server and shows it in a native window. No Electron, no Chromium.</p></div>
+    </div>
+  </section>
+
+  <section id="long">
+    <h2>Long work stays visible, and survives closing the app</h2>
+    <p class="lead">A turn runs on the server, not in the window. Close Bridge mid-turn, reopen it tomorrow, and the chat picks up where the work is.</p>
+    <div class="split">
+      <figure class="shot"><img src="img/chat-desktop.webp" width="1600" height="1000" loading="lazy" alt="A running chat: the steps so far, job cards with elapsed timers, helper agents, and the background tray"></figure>
+      <ul class="points">
+        <li><b>Job cards</b> for anything slow: a test suite, a render, three helpers in parallel, each with its own timer.</li>
+        <li><b>The background tray</b> above the composer says what is still running. Keep typing; your message goes in when the turn ends.</li>
+        <li><b>Working now</b> in the sidebar ticks for every running chat, so a 20-minute silent step never looks frozen.</li>
+        <li><b>A ping when it is done</b>, or when it stops on a question: a card, a voice line and a Mac notification, even if the window was closed.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="anywhere">
+    <h2>On your phone, on a cloud box, on open models</h2>
+    <div class="split phones">
+      <div class="phone-pair">
+        <figure class="shot phone"><img src="img/home-phone.webp" width="603" height="1311" loading="lazy" alt="Bridge Home on a phone"></figure>
+        <figure class="shot phone"><img src="img/chat-phone.webp" width="603" height="1311" loading="lazy" alt="A running chat on a phone with the background tray"></figure>
+      </div>
+      <div class="cards stack">
+        <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg></span><h3>A phone app</h3><p>The same chats in a Flutter app for iOS and Android, also served by Bridge itself at <code>/m/</code>. The web app works at phone width too.</p></div>
+        <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 9.5 4.3 4.3 0 0 0 7 18z"/></svg></span><h3>An optional cloud computer</h3><p>Point Bridge at a second Bridge on a Fly sprite and pick Mac or Cloud per chat. Cloud chats keep going with the Mac asleep or closed, and show up in the same list. A chat can move to the cloud mid-way.</p></div>
+        <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v12H4zM4 10h16M9 14h6"/></svg></span><h3>Email sign-in for remote hosting</h3><p>Host Bridge on the internet and it asks for a sign-in: a Supabase magic link or the 6-digit code from the same email, limited to an allowlist. Run it locally and there is no gate at all.</p></div>
+        <div class="card"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg></span><h3>Open models next to Claude</h3><p>The model menu has two tabs, Claude and Open models. Qwen runs on your own RunPod endpoint through a local adapter: same app, same tools, private and flat-cost, slower.</p><img class="inline-shot" src="img/open-models-menu.webp" width="341" height="207" alt="The model menu's Open models tab"></div>
+      </div>
     </div>
   </section>
 
   <section id="how">
     <h2>How it works</h2>
-    <p class="lead">One Bun file, zero dependencies, three jobs.</p>
+    <p class="lead">One Bun server, zero dependencies, the real CLI underneath.</p>
     <ol class="steps">
-      <li><b>Reads <code>~/.claude</code>, read-only.</b> Transcripts are normalized into a flat event list, tool results joined back onto their <code>tool_use_id</code>, usage de-duplicated by request. Metadata is cached by mtime, so hundreds of transcripts list in about 20 ms.</li>
-      <li><b>Spawns the real CLI</b> per turn with <code>--output-format stream-json</code> and <code>--session-id</code> / <code>--resume</code>, streaming stdout to the browser over SSE. Your <code>settings.json</code> env is injected so hooks behave identically.</li>
+      <li><b>Reads <code>~/.claude</code></b>. Transcripts become chats, cached by size and modification time; the tail of a running transcript says what it is doing now and what is still out in the background.</li>
+      <li><b>Spawns the real CLI</b> per turn with <code>--output-format stream-json</code> and <code>--session-id</code> / <code>--resume</code>. The turn belongs to the server, so the page can close; reopening a chat follows its transcript from where the page left off.</li>
       <li><b>Searches with ripgrep</b>, one pass per term in parallel, scoring on term coverage rather than raw hit count.</li>
     </ol>
-    <pre><code>git clone https://github.com/mrmading/bridge.git
+    <h3 class="sub-h" id="get">Get it</h3>
+    <p>The new Bridge is on the <a href="https://github.com/mrmading/bridge/tree/friendly-ux"><code>friendly-ux</code></a> branch until it is released. Build it from source:</p>
+    <pre><code>git clone -b friendly-ux https://github.com/mrmading/bridge.git
 cd bridge
 ./bridge            <span class="c"># http://localhost:4270</span>
 ./mac/build.sh      <span class="c"># → dist/Bridge.app</span>
-./mac/dmg.sh        <span class="c"># → dist/Bridge-0.1.6.dmg</span></code></pre>
-    <p class="lead small">Requires <a href="https://bun.sh">Bun</a> and the <a href="https://claude.com/claude-code">claude CLI</a> — or let the app install them for you on first run.</p>
+./mac/dmg.sh        <span class="c"># → dist/Bridge-0.1.6.dmg</span>
+
+cd mobile && flutter build web --base-href /m/ --release   <span class="c"># the phone app at /m/</span></code></pre>
+    <p class="lead small">Requires <a href="https://bun.sh">Bun</a> and the <a href="https://claude.com/claude-code">claude CLI</a>, or let the app install them on first run; Flutter only for the phone app.
+      The <a href="https://github.com/mrmading/bridge/releases/latest">0.1.6 download</a> is the previous Bridge, with terminal tabs instead of chats.
+      Remote hosting (a Cloudflare Worker in front, a sprite behind, Supabase sign-in) is described in <a href="https://github.com/mrmading/bridge/blob/friendly-ux/deploy/README.md"><code>deploy/README.md</code></a>.</p>
   </section>
 
   <section id="safety">
     <h2>Safety</h2>
     <p class="lead">Bridge does not expose your machine.</p>
-    <p>Every file API is confined to the folders you add in the Directory panel, and inside those it
-    still refuses anything matching <code>.ssh</code>, <code>.aws</code>, <code>.gnupg</code>,
-    <code>.credentials</code>, <code>.env*</code>, <code>*.pem</code> or <code>id_rsa</code> — reads
-    and writes alike. Anything outside says so and offers to add the folder. The composer defaults to
-    <code>acceptEdits</code>; <code>bypassPermissions</code> has to be chosen explicitly. The server
-    binds to localhost only.</p>
+    <p>Every file API is confined to the folders you add, and inside those it still refuses anything
+    matching <code>.ssh</code>, <code>.aws</code>, <code>.gnupg</code>, <code>.credentials</code>,
+    <code>.env*</code>, <code>*.pem</code> or <code>id_rsa</code>, reads and writes alike. New chats
+    default to “Edit freely” (edits without asking, asks before commands); Autopilot has to be chosen.
+    Hosted on the internet, every <code>/api</code> call needs a signed-in session from an allowlisted
+    email; the open-model adapter only ever answers Bridge's own turns on the same machine.</p>
   </section>
 
   <footer>
