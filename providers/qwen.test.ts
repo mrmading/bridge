@@ -83,6 +83,21 @@ describe("anthropicToOllama", () => {
     expect(payload.messages[2].content).toBe("Error: boom");
   });
 
+  test("<system-reminder> blocks in user and tool_result content fold into the system message", () => {
+    const { payload } = anthropicToOllama({
+      system: "Base.",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "<system-reminder>\nCLAUDE.md says hi\n</system-reminder>" }, { type: "text", text: "Reply with exactly: qwen is alive" }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "echo QWEN_OK" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "QWEN_OK\n<system-reminder>Attribution for git commits</system-reminder>" }] },
+      ],
+    });
+    expect(payload.messages[0]).toEqual({ role: "system", content: "Base.\n\nCLAUDE.md says hi\n\nAttribution for git commits" });
+    expect(payload.messages[1]).toEqual({ role: "user", content: "Reply with exactly: qwen is alive" });
+    expect(payload.messages[3].content).toBe("QWEN_OK");
+    expect(JSON.stringify(payload.messages.slice(1))).not.toContain("system-reminder");
+  });
+
   test("thinking blocks are dropped", () => {
     const { payload } = anthropicToOllama({
       messages: [
@@ -195,6 +210,13 @@ describe("ollamaToAnthropic", () => {
     expect((msg.content[1] as any).name).toBe("Bash");
     expect((msg.content[1] as any).input).toEqual({ command: "ls" });
     expect(msg.stop_reason).toBe("tool_use");
+  });
+
+  test("parroted <system-reminder> blocks are removed and a <system-output> wrapper is unwrapped", () => {
+    const wrapped = ollamaToAnthropic({ output: { message: { content: "<system-output>\nqwen is alive\n</system-output>" } } }, 1);
+    expect(wrapped.content).toEqual([{ type: "text", text: "qwen is alive" }]);
+    const parrot = ollamaToAnthropic({ output: { message: { content: "<system-reminder>\nAttribution for git commits…\n</system-reminder>\n\nThe output is `QWEN_OK`." } } }, 1);
+    expect(parrot.content).toEqual([{ type: "text", text: "The output is `QWEN_OK`." }]);
   });
 
   test("a bare JSON reply naming a real tool becomes tool_use; one naming no tool is flagged malformed", () => {

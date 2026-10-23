@@ -127,6 +127,15 @@ function convertMessages(body: Json): OllamaMessage[] {
   // Qwen's chat template renders a system message only in first position, so Claude Code's
   // mid-conversation system turns (the environment block) are folded into the leading one.
   const systemParts: string[] = system ? [system] : [];
+  // Claude Code injects <system-reminder> blocks into user turns and tool results; Qwen echoes
+  // them back as its answer, so they move to the system message (once each) instead.
+  const fold = (text: string) =>
+    text
+      .replace(/<system-reminder>\s*([\s\S]*?)\s*<\/system-reminder>/g, (_, inner: string) => {
+        if (inner && !systemParts.includes(inner)) systemParts.push(inner);
+        return "";
+      })
+      .trim();
 
   const toolNames = new Map<string, string>();
   for (const m of body.messages || []) {
@@ -149,7 +158,7 @@ function convertMessages(body: Json): OllamaMessage[] {
     } else {
       const blocks: Json[] = typeof content === "string" ? [{ type: "text", text: content }] : content || [];
       for (const r of blocks.filter((b) => b.type === "tool_result")) {
-        const text = blockText(r.content);
+        const text = fold(blockText(r.content));
         out.push({
           role: "tool",
           content: r.is_error ? `Error: ${text}` : text,
@@ -157,7 +166,7 @@ function convertMessages(body: Json): OllamaMessage[] {
           tool_call_id: r.tool_use_id,
         });
       }
-      const text = blockText(blocks.filter((b) => b.type !== "tool_result"));
+      const text = fold(blockText(blocks.filter((b) => b.type !== "tool_result")));
       if (text) out.push({ role: "user", content: text });
     }
   }
@@ -312,7 +321,10 @@ export function ollamaToAnthropic(res: Json, inputEstimate: number, toolNames?: 
   const { msg, meta } = extractMessage(res);
   let text = String(msg.content ?? "")
     .replace(/<think>[\s\S]*?<\/think>/g, "")
-    .replace(/^[\s\S]*?<\/think>/, "");
+    .replace(/^[\s\S]*?<\/think>/, "")
+    // Echoes of the context it was given: reminders are dropped, a <system-output> wrapper unwrapped.
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .replace(/<\/?(system-output|system-reminder)>/g, "");
   const raw: Json[] = Array.isArray(msg.tool_calls) ? [...msg.tool_calls] : [];
   if (!raw.length) {
     text = text.replace(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g, (whole, inner) => {
