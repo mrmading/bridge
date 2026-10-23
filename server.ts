@@ -732,6 +732,9 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
     });
     delete env.ANTHROPIC_AUTH_TOKEN;
   }
+  const usageId = req.resume || sessionId;
+  const qmod = provider === "qwen" ? await loadQwen().catch(() => null) : null;
+  const usageBefore: QwenUsage | null = qmod?.qwenUsage ? qmod.qwenUsage(usageId) : null;
   const child = spawn(CLAUDE_BIN, args, { cwd, env: env as any, stdio });
   const key = req.resume || sessionId;
   live.set(key, child);
@@ -762,11 +765,19 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
         if (parsed?.type === "system" && parsed.subtype === "init" && parsed.session_id && parsed.session_id !== key) run.sid = parsed.session_id;
         if (parsed?.type === "result") {
           outcome = { error: !!parsed.is_error, text: String(parsed.result || "") };
+          // the CLI prices an unknown model at made-up rates; a Qwen turn reports what its RunPod jobs really used
+          if (provider === "qwen") {
+            const now: QwenUsage | null = qmod?.qwenUsage ? qmod.qwenUsage(usageId) : null;
+            if (now && usageBefore) {
+              const d = { jobs: now.jobs - usageBefore.jobs, gpuMs: now.gpuMs - usageBefore.gpuMs, usd: +(now.usd - usageBefore.usd).toFixed(6), estimated: now.estimated };
+              parsed.total_cost_usd = d.usd; parsed.qwen_usage = d;
+              addQwenSpend(run.sid || usageId, d);
+            } else { delete parsed.total_cost_usd; parsed.qwen_usage = null; }
+          }
           logRow({ ts: Date.now(), kind: parsed.is_error ? "turn.error" : "turn.done",
             msg: running.get(key)?.prompt || parsed.subtype || "turn", outcome: parsed.subtype,
             session: key, cwd, model: req.model,
-            // the CLI prices an open model at made-up rates: not a cost worth recording
-            cost: provider === "qwen" ? undefined : parsed.total_cost_usd, ms: parsed.duration_ms });
+            cost: parsed.total_cost_usd, ms: parsed.duration_ms });
         }
         send({ t: "msg", d: parsed });
       }
@@ -2095,6 +2106,17 @@ const server = Bun.serve({
 /** The Qwen adapter (providers/qwen.ts) speaks the Anthropic Messages API to the claude CLI and RunPod behind
  *  it. Only loopback may call it, and it is loaded on first use so a missing file never stops Bridge booting. */
 let qwenMod: Promise<any> | null = null;
+const loadQwen = () => (qwenMod ||= import("./providers/qwen.ts").catch((e) => { qwenMod = null; throw e; }));
+/** what Qwen chats really cost on RunPod, per session, summed across Bridge restarts (the adapter's counters are in memory) */
+const QWEN_USAGE_FILE = join(DATA_DIR, "qwen-usage.json");
+type QwenUsage = { jobs: number; gpuMs: number; usd: number; estimated: boolean };
+const qwenSpend = new Map<string, QwenUsage>();
+try { for (const [k, v] of Object.entries(JSON.parse(await Bun.file(QWEN_USAGE_FILE).text()))) qwenSpend.set(k, v as QwenUsage); } catch {}
+function addQwenSpend(id: string, d: QwenUsage) {
+  const was = qwenSpend.get(id) || { jobs: 0, gpuMs: 0, usd: 0, estimated: false };
+  qwenSpend.set(id, { jobs: was.jobs + d.jobs, gpuMs: was.gpuMs + d.gpuMs, usd: +(was.usd + d.usd).toFixed(6), estimated: was.estimated || d.estimated });
+  Bun.write(QWEN_USAGE_FILE, JSON.stringify(Object.fromEntries(qwenSpend))).catch(() => {});
+}
 /** the key Bridge's own qwen turns present; new every boot, never leaves this machine */
 const QWEN_KEY = "bridge-qwen-" + randomUUID();
 async function qwenRoute(req: Request, u: URL, ip: string): Promise<Response> {
@@ -2102,9 +2124,8 @@ async function qwenRoute(req: Request, u: URL, ip: string): Promise<Response> {
   // loopback is not proof on a host whose public proxy connects locally: a model call must carry this boot's key
   const key = req.headers.get("x-api-key") || (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
   if (req.method === "POST" && key !== QWEN_KEY) return json({ type: "error", error: { type: "authentication_error", message: "not allowed" } }, 401);
-  qwenMod ||= import("./providers/qwen.ts").catch((e) => { qwenMod = null; throw e; });
   let mod: any;
-  try { mod = await qwenMod; } catch (e) { return json({ type: "error", error: { type: "api_error", message: "Qwen adapter missing: " + String(e) } }, 500); }
+  try { mod = await loadQwen(); } catch (e) { return json({ type: "error", error: { type: "api_error", message: "Qwen adapter missing: " + String(e) } }, 500); }
   return mod.handleQwen(req, u.pathname.replace(/^\/qwen\/?/, "") + u.search);
 }
 async function qwenAvailable() { return !!((process.env.RUNPOD_QWEN_API_KEY || (await dotenvKey("RUNPOD_QWEN_API_KEY"))) && existsSync(join(dirname(Bun.fileURLToPath(import.meta.url)), "providers", "qwen.ts"))); }
@@ -2200,6 +2221,7 @@ async function route(req: Request): Promise<Response> {
         const custom = customTitles.get(q.get("id") || "");
         if (custom) { out.meta.title = custom; (out.meta as any).named = true; }
         (out.meta as any).provider = providerOf(out.meta.model);
+        (out.meta as any).qwenUsage = qwenSpend.get(q.get("id") || "") || null;
         // where a follower should start: the bytes up to the last complete line
         const cut = raw.lastIndexOf("\n");
         return json({ ...out, offset: cut >= 0 ? Buffer.byteLength(raw.slice(0, cut + 1)) : 0 });

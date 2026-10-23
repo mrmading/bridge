@@ -118,6 +118,12 @@ const openRef = (key, id, computer) => esc(key + "|" + id + "|" + (computer || "
 const providerInfo = (id) => ((S.boot && S.boot.providers) || []).find((p) => p.id === id) || { id, name: id, short: id, group: id === "claude" ? "claude" : "open" };
 /** a chat on an open model carries that model's short name wherever it is listed */
 const qwenTag = (provider) => { if (!provider || provider === "claude") return ""; const p = providerInfo(provider); return '<span class="tag think qtag-p" title="' + esc(p.name + (p.note ? " · " + p.note : "")) + '">' + esc(p.short || p.name) + "</span>"; };
+/** RunPod GPU spend as a person reads it: "$0.02 GPU · 41s", with ~ when the price per second is an assumption */
+const gpuCost = (u) => {
+  const usd = u.usd > 0 && u.usd < 0.001 ? "<$0.001" : "$" + (u.usd < 0.01 ? u.usd.toFixed(3) : u.usd.toFixed(2));
+  const t = (u.gpuMs || 0) < 10000 ? ((u.gpuMs || 0) / 1000).toFixed(1).replace(/\.0$/, "") + "s" : fmtEl(u.gpuMs);
+  return (u.estimated ? "~" : "") + usd + " GPU · " + t;
+};
 const providerOn = (id) => ((S.boot && S.boot.providers) || []).some((p) => p.id === id && p.available);
 /** where a chat runs, for the label: a configured cloud is named as such, otherwise the host this server is */
 const hostLabel = (computer) => (computer === "cloud" ? ic("cloud") + "Cloud computer" : (S.boot && S.boot.host && S.boot.host.kind === "cloud" ? ic("cloud") : ic("laptop")) + esc((S.boot && S.boot.host && S.boot.host.name) || "This Mac"));
@@ -607,6 +613,7 @@ async function loadChat(c) {
   if (r.meta.cwd && (!c.path || c.path === homeFor(c.computer))) c.path = r.meta.cwd;
   if (r.meta.title) { c.title = r.meta.title; c.named = !!r.meta.named; }
   if (r.meta.provider) c.provider = r.meta.provider;
+  c.qwenUsage = r.meta.qwenUsage || null;
   c.offset = r.offset || 0; c.loaded = true;
   const run = S.home.running.find((x) => x.id === c.id) || (S.recent.find((s) => s.id === c.id) || {}).running;
   if (run) attach(c);
@@ -740,7 +747,8 @@ function renderTurn(c, t, ti, isLast) {
   if (made.length && !live) h += made.slice(0, 4).map((f) => fileCard(f.p, f.n === "new" ? "Created · " + short(f.p.replace(homeDir(), "~"), 48) : "Edited · " + short(f.p.replace(homeDir(), "~"), 48))).join("") +
     (made.length > 4 ? '<button class="btn" data-act="panelfiles">' + (made.length - 4) + " more files</button>" : "");
   const openTurn = (c.provider && c.provider !== "claude") || /qwen/i.test(c.model || "");
-  if (isLast && !live && c.lastResult) h += '<div class="cost"><span>' + esc(openTurn ? providerInfo(c.provider || "qwen").short || "Qwen" : String(c.model || "").replace("claude-", "")) + "</span>" + (openTurn ? "" : "<span>$" + (c.lastResult.total_cost_usd || 0).toFixed(2) + "</span>") + "<span><span>" + fmtEl(c.lastResult.duration_ms || 0) + "</span></div>";
+  // an open model's turn shows what its GPU jobs really cost (from RunPod); the CLI's own figure would be made up
+  if (isLast && !live && c.lastResult) h += '<div class="cost"><span>' + esc(openTurn ? providerInfo(c.provider || "qwen").short || "Qwen" : String(c.model || "").replace("claude-", "")) + "</span>" + (openTurn ? (c.lastResult.qwen ? "<span>" + esc(gpuCost(c.lastResult.qwen)) + "</span>" : "") : "<span>$" + (c.lastResult.total_cost_usd || 0).toFixed(2) + "</span>") + "<span><span>" + fmtEl(c.lastResult.duration_ms || 0) + "</span></div>";
   h += "</div></div>";
   return h;
 }
@@ -904,8 +912,8 @@ function paintPanel() {
       "<dt>Folder</dt><dd>" + esc(c.path) + "</dd>" + (c.branch ? "<dt>Branch</dt><dd>" + esc(c.branch) + "</dd>" : "") +
       "<dt>Runs on</dt><dd>" + esc(userName()) + "'s Mac</dd>" +
       "<dt>Tokens</dt><dd>" + fmtN(u.input || 0) + " in · " + fmtN(u.output || 0) + " out · " + fmtN(u.cacheRead || 0) + " cached</dd>" +
-      // the CLI's price for an open model is a guess at rates it does not know: show the time only
-      (c.lastResult ? "<dt>Last turn</dt><dd>" + ((c.provider && c.provider !== "claude") || /qwen/i.test(c.model || "") ? "" : "$" + (c.lastResult.total_cost_usd || 0).toFixed(3) + " · ") + fmtEl(c.lastResult.duration_ms || 0) + "</dd>" : "") +
+      (c.lastResult ? "<dt>Last turn</dt><dd>" + ((c.provider && c.provider !== "claude") || /qwen/i.test(c.model || "") ? (c.lastResult.qwen ? esc(gpuCost(c.lastResult.qwen)) + " · " : "") : "$" + (c.lastResult.total_cost_usd || 0).toFixed(3) + " · ") + fmtEl(c.lastResult.duration_ms || 0) + "</dd>" : "") +
+      (c.qwenUsage && c.qwenUsage.jobs ? "<dt>GPU, this chat</dt><dd>" + esc(gpuCost(c.qwenUsage)) + " · " + c.qwenUsage.jobs + (c.qwenUsage.jobs === 1 ? " job" : " jobs") + "</dd>" : "") +
       "<dt>Steps</dt><dd>" + tools + " tool calls" + (c.hookCount ? " · " + c.hookCount + " hooks" : "") + "</dd>" +
       "<dt>Session id</dt><dd>" + esc(c.id || "new") + "</dd></dl>" +
       '<div class="side-h" style="padding-left:0;margin-top:10px">Power tools</div>' +
@@ -1053,7 +1061,8 @@ async function runTurn(c, msg) {
       return;
     }
     if (d.type === "result") {
-      c.lastResult = { total_cost_usd: d.total_cost_usd, duration_ms: d.duration_ms, turns: d.num_turns, error: !!d.is_error };
+      c.lastResult = { total_cost_usd: d.total_cost_usd, duration_ms: d.duration_ms, turns: d.num_turns, error: !!d.is_error, qwen: d.qwen_usage || null };
+      if (d.qwen_usage) { const u = c.qwenUsage || { jobs: 0, gpuMs: 0, usd: 0, estimated: false }; c.qwenUsage = { jobs: u.jobs + d.qwen_usage.jobs, gpuMs: u.gpuMs + d.qwen_usage.gpuMs, usd: u.usd + d.qwen_usage.usd, estimated: u.estimated || d.qwen_usage.estimated }; }
       // `claude -p` stays alive past its result while background work reports back; the turn is over when the process closes
       c.step = "Wrapping up";
     }
