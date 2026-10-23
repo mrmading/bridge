@@ -37,6 +37,9 @@ class Bootstrap {
   Bootstrap({required this.user, required this.assistant, required this.color, required this.home, required this.version, required this.models, required this.permissionModes, required this.efforts, required this.auth, this.providers = const []});
   /// Empty on a server with Claude only.
   final List<Provider> providers;
+  /// The machine the server runs on, for "Runs on …": {name, kind: mac | cloud}. Empty on older servers.
+  String hostName = '';
+  String hostKind = '';
   final String user, assistant, color, home, version;
   final List<String> models, permissionModes, efforts;
   final AuthStatus auth;
@@ -51,7 +54,9 @@ class Bootstrap {
         efforts: List<String>.from(j['efforts'] ?? const ['', 'low', 'medium', 'high']),
         auth: AuthStatus.fromJson(j['auth'] as Map<String, dynamic>?),
         providers: [for (final p in (j['providers'] is List ? j['providers'] as List : const [])) if (p is Map && _s(p['id']).isNotEmpty) Provider.fromJson(Map<String, dynamic>.from(p))],
-      );
+      )
+        ..hostName = j['host'] is Map ? _s((j['host'] as Map)['name']) : ''
+        ..hostKind = j['host'] is Map ? _s((j['host'] as Map)['kind']) : '';
 }
 
 class Project {

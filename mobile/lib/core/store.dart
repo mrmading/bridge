@@ -136,13 +136,14 @@ class AppStore extends ChangeNotifier {
   /// The backend's host, for "Runs on …" when there is no cloud to choose: the sprite or Worker
   /// domain, or the Mac by name.
   String get serverHost {
+    if ((boot?.hostName ?? '').isNotEmpty) return boot!.hostName;
     final u = Uri.tryParse(serverUrl.contains('://') ? serverUrl : 'https://$serverUrl');
     final h = u?.host ?? '';
     if (h.isEmpty || h == 'localhost' || h == '127.0.0.1') return computerName;
     return h;
   }
 
-  bool get isLocalHost => serverHost == computerName && !isCloud;
+  bool get isLocalHost => boot?.hostKind == 'mac' || (boot?.hostKind != 'cloud' && serverHost == computerName && !isCloud);
 
   Future<void> refreshComputers() async {
     if (!hasServer || conn != ConnState.ready) return;
