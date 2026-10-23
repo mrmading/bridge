@@ -5,6 +5,7 @@ import {
   handleQwen,
   isMalformedToolCall,
   ollamaToAnthropic,
+  qwenUsage,
   sseEvents,
 } from "./qwen";
 
@@ -371,6 +372,38 @@ describe("handleQwen", () => {
     const res = await handleQwen(post({ messages: [{ role: "user", content: "hi" }], tools: [{ name: "Bash", input_schema: { type: "object" } }] }), "v1/messages");
     expect((await res.json()).content).toEqual([{ type: "text", text: "qwen is alive" }]);
     expect(runs).toBe(2);
+  });
+
+  test("GPU time is accumulated per Claude Code session from /status executionTime", async () => {
+    globalThis.fetch = (async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/run")) return Response.json({ id: "j", status: "IN_QUEUE" });
+      return Response.json({ status: "COMPLETED", executionTime: 41000, delayTime: 900, output: { message: { content: "ok" } } });
+    }) as typeof fetch;
+    const sid = "aaaaaaaa-0000-0000-0000-000000000001";
+    const req = () => new Request("http://x/qwen/v1/messages", {
+      method: "POST",
+      headers: { "x-claude-code-session-id": sid },
+      body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(qwenUsage(sid)).toEqual({ jobs: 0, gpuMs: 0, usd: 0, estimated: true });
+    await (await handleQwen(req(), "v1/messages")).json();
+    await (await handleQwen(req(), "v1/messages")).json();
+    const u = qwenUsage(sid);
+    expect(u.jobs).toBe(2);
+    expect(u.gpuMs).toBe(82000);
+    expect(u.usd).toBeCloseTo(82 * 0.00031, 6);
+    expect(u.estimated).toBe(true);
+
+    // Falls back to metadata.user_id's session_id; RUNPOD_QWEN_USD_PER_SEC makes it exact.
+    process.env.RUNPOD_QWEN_USD_PER_SEC = "0.001";
+    try {
+      const meta = JSON.stringify({ device_id: "d", session_id: "bbbb" });
+      await (await handleQwen(post({ metadata: { user_id: meta }, messages: [{ role: "user", content: "hi" }] }), "v1/messages")).json();
+      expect(qwenUsage("bbbb")).toEqual({ jobs: 1, gpuMs: 41000, usd: 0.041, estimated: false });
+    } finally {
+      delete process.env.RUNPOD_QWEN_USD_PER_SEC;
+    }
   });
 
   test("count_tokens returns an estimate without calling RunPod", async () => {

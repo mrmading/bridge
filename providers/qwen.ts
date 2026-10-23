@@ -423,6 +423,47 @@ export function sseEvents(msg: AnthropicMessage): string[] {
 
 type Cfg = ReturnType<typeof config>;
 
+/* ─────────────── GPU usage per Claude Code session ─────────────── */
+
+/** RunPod does not expose the endpoint's GPU or price to an endpoint-scoped key, so this is the
+ *  flex rate of a 48 GB card unless RUNPOD_QWEN_USD_PER_SEC says otherwise. */
+const DEFAULT_USD_PER_SEC = 0.00031;
+const MAX_SESSIONS = 500;
+const usage = new Map<string, { jobs: number; gpuMs: number }>();
+
+function recordUsage(sessionId: string | undefined, executionMs: unknown) {
+  if (!sessionId) return;
+  const u = usage.get(sessionId) ?? { jobs: 0, gpuMs: 0 };
+  u.jobs++;
+  u.gpuMs += Number(executionMs) || 0;
+  usage.delete(sessionId); // re-insert so the oldest session is the one evicted
+  usage.set(sessionId, u);
+  if (usage.size > MAX_SESSIONS) usage.delete(usage.keys().next().value!);
+}
+
+/**
+ * Billed GPU time of every RunPod job this session ran (retries and failed jobs included), from
+ * /status executionTime. Queue wait is not billed and not counted; cold-start time RunPod bills
+ * is not reported per job, so the real figure can be a little higher.
+ */
+export function qwenUsage(sessionId: string): { jobs: number; gpuMs: number; usd: number; estimated: boolean } {
+  const u = usage.get(sessionId) ?? { jobs: 0, gpuMs: 0 };
+  const rate = Number(process.env.RUNPOD_QWEN_USD_PER_SEC);
+  const estimated = !(rate > 0);
+  return { ...u, usd: (u.gpuMs / 1000) * (estimated ? DEFAULT_USD_PER_SEC : rate), estimated };
+}
+
+/** The CLI sends x-claude-code-session-id (= --session-id); metadata.user_id carries it too. */
+function sessionOf(req: Request, body: Json): string | undefined {
+  const header = req.headers.get("x-claude-code-session-id");
+  if (header) return header;
+  try {
+    return JSON.parse(body.metadata?.user_id ?? "{}").session_id || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** RUNPOD_QWEN_DEBUG_DIR=<dir> keeps the last wire payload and job result for inspection. */
 function debugDump(name: string, data: unknown) {
   const dir = process.env.RUNPOD_QWEN_DEBUG_DIR;
@@ -442,7 +483,7 @@ async function runpod(cfg: Cfg, path: string, body?: unknown, signal?: AbortSign
 }
 
 /** Submits with /run and polls /status: one-shot answers take 60–130s, past any runsync wait. */
-async function runJob(cfg: Cfg, input: OllamaPayload, signal: AbortSignal): Promise<Json> {
+async function runJob(cfg: Cfg, input: OllamaPayload, signal: AbortSignal, sessionId?: string): Promise<Json> {
   debugDump("last-payload.json", input);
   let res = await runpod(cfg, "run", { input }, signal);
   const id = res.id;
@@ -467,6 +508,7 @@ async function runJob(cfg: Cfg, input: OllamaPayload, signal: AbortSignal): Prom
     }
   }
   debugDump("last-result.json", res);
+  recordUsage(sessionId, res.executionTime);
   if (res.status !== "COMPLETED") throw new Error(`RunPod job ${id} ${res.status}: ${JSON.stringify(res.error ?? res).slice(0, 400)}`);
   return res;
 }
@@ -488,15 +530,16 @@ async function messages(req: Request, cfg: Cfg): Promise<Response> {
   const { payload, trimmed } = anthropicToOllama(body, cfg);
   if (trimmed.length) console.error(`[qwen] trimmed to fit num_ctx ${cfg.numCtx}: ${trimmed.join("; ")}`);
   const inputEstimate = estimateTokens(sizeOf(payload.messages, payload.tools));
+  const sessionId = sessionOf(req, body);
   const abort = new AbortController();
   req.signal?.addEventListener("abort", () => abort.abort());
   const toolNames = new Set((payload.tools || []).map((t) => t.function.name));
   const schemas = new Map((payload.tools || []).map((t) => [t.function.name, t.function.parameters as Json]));
   const complete = async () => {
-    let msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate, toolNames, schemas);
+    let msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal, sessionId), inputEstimate, toolNames, schemas);
     if (isMalformedToolCall(msg, toolNames)) {
       console.error("[qwen] reply was a pseudo tool call to an unknown tool; retrying once");
-      msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate, toolNames, schemas);
+      msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal, sessionId), inputEstimate, toolNames, schemas);
     }
     return msg;
   };
