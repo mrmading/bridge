@@ -739,7 +739,8 @@ function renderTurn(c, t, ti, isLast) {
   }
   if (made.length && !live) h += made.slice(0, 4).map((f) => fileCard(f.p, f.n === "new" ? "Created · " + short(f.p.replace(homeDir(), "~"), 48) : "Edited · " + short(f.p.replace(homeDir(), "~"), 48))).join("") +
     (made.length > 4 ? '<button class="btn" data-act="panelfiles">' + (made.length - 4) + " more files</button>" : "");
-  if (isLast && !live && c.lastResult) h += '<div class="cost"><span>' + esc(String(c.model || "").replace("claude-", "")) + "</span><span>$" + (c.lastResult.total_cost_usd || 0).toFixed(2) + "</span><span>" + fmtEl(c.lastResult.duration_ms || 0) + "</span></div>";
+  const openTurn = (c.provider && c.provider !== "claude") || /qwen/i.test(c.model || "");
+  if (isLast && !live && c.lastResult) h += '<div class="cost"><span>' + esc(openTurn ? providerInfo(c.provider || "qwen").short || "Qwen" : String(c.model || "").replace("claude-", "")) + "</span>" + (openTurn ? "" : "<span>$" + (c.lastResult.total_cost_usd || 0).toFixed(2) + "</span>") + "<span><span>" + fmtEl(c.lastResult.duration_ms || 0) + "</span></div>";
   h += "</div></div>";
   return h;
 }
@@ -903,7 +904,8 @@ function paintPanel() {
       "<dt>Folder</dt><dd>" + esc(c.path) + "</dd>" + (c.branch ? "<dt>Branch</dt><dd>" + esc(c.branch) + "</dd>" : "") +
       "<dt>Runs on</dt><dd>" + esc(userName()) + "'s Mac</dd>" +
       "<dt>Tokens</dt><dd>" + fmtN(u.input || 0) + " in · " + fmtN(u.output || 0) + " out · " + fmtN(u.cacheRead || 0) + " cached</dd>" +
-      (c.lastResult ? "<dt>Last turn</dt><dd>$" + (c.lastResult.total_cost_usd || 0).toFixed(3) + " · " + fmtEl(c.lastResult.duration_ms || 0) + "</dd>" : "") +
+      // the CLI's price for an open model is a guess at rates it does not know: show the time only
+      (c.lastResult ? "<dt>Last turn</dt><dd>" + ((c.provider && c.provider !== "claude") || /qwen/i.test(c.model || "") ? "" : "$" + (c.lastResult.total_cost_usd || 0).toFixed(3) + " · ") + fmtEl(c.lastResult.duration_ms || 0) + "</dd>" : "") +
       "<dt>Steps</dt><dd>" + tools + " tool calls" + (c.hookCount ? " · " + c.hookCount + " hooks" : "") + "</dd>" +
       "<dt>Session id</dt><dd>" + esc(c.id || "new") + "</dd></dl>" +
       '<div class="side-h" style="padding-left:0;margin-top:10px">Power tools</div>' +

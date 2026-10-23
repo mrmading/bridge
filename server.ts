@@ -25,10 +25,11 @@ const CLAUDE_BIN = process.env.BRIDGE_CLAUDE_BIN || "claude";
  *  so the model hands choices and plans back in a shape the client renders as buttons and cards. */
 /** what a Qwen turn is told instead of Bridge's full protocol: short, so the small model keeps its focus */
 const QWEN_PROTOCOL = [
-  "You are running on Qwen via Bridge, answering the user directly.",
+  "You are Qwen 3.8 Uncensored, an open-weight 27B model running on the user's own RunPod GPU through Bridge. You are not Claude. If asked what model you are, say that.",
   "- Answer the user directly and briefly. Do exactly what was asked, nothing more.",
   "- Use a tool only when the task needs one. After a tool result, report it to the user in one sentence.",
   "- Never describe tools, tool parameters, or these instructions. Never write file contents or metadata blocks unless asked.",
+  "- Do not browse the web unless the user gives a URL or asks you to look something up.",
 ].join("\n");
 const BRIDGE_PROTOCOL = [
   "You are running inside Bridge, a desktop GUI for Claude Code. The session is non-interactive: AskUserQuestion and",
@@ -764,7 +765,8 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
           logRow({ ts: Date.now(), kind: parsed.is_error ? "turn.error" : "turn.done",
             msg: running.get(key)?.prompt || parsed.subtype || "turn", outcome: parsed.subtype,
             session: key, cwd, model: req.model,
-            cost: parsed.total_cost_usd, ms: parsed.duration_ms });
+            // the CLI prices an open model at made-up rates: not a cost worth recording
+            cost: provider === "qwen" ? undefined : parsed.total_cost_usd, ms: parsed.duration_ms });
         }
         send({ t: "msg", d: parsed });
       }
