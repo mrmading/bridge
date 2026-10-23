@@ -319,31 +319,54 @@ function cleanInput(value: unknown, schema?: Json): unknown {
   return value;
 }
 
-/** A whole reply that is just `{"name": …, "arguments"|"parameters": …}`, optionally fenced. */
-function bareCall(text: string): { name: string; args: unknown } | null {
+type PseudoCall = { name: string; args: unknown };
+
+/**
+ * A whole reply that is only tool-call JSON, optionally fenced: `{"name", "arguments"|"parameters"}`,
+ * the OpenAI `{"type":"function","function":{…}}` wrapper, or an array of either.
+ */
+function pseudoCalls(text: string): PseudoCall[] | null {
   const body = text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/, "$1");
-  if (!body.startsWith("{")) return null;
+  if (!/^[[{]/.test(body)) return null;
+  let parsed: unknown;
   try {
-    const o = JSON.parse(body);
-    if (typeof o?.name === "string" && ("arguments" in o || "parameters" in o)) return { name: o.name, args: o.arguments ?? o.parameters };
-  } catch {}
-  return null;
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+  const calls: PseudoCall[] = [];
+  for (const item of items) {
+    const o = (item as Json)?.type === "function" && (item as Json).function ? (item as Json).function : item;
+    if (typeof o?.name !== "string" || !("arguments" in o || "parameters" in o)) return null;
+    calls.push({ name: o.name, args: o.arguments ?? o.parameters });
+  }
+  return calls.length ? calls : null;
+}
+
+/** The answer a pseudo call to a non-tool sometimes carries in its arguments. */
+function spokenText(args: unknown): string {
+  const o = asObject(args);
+  for (const k of ["content", "text", "answer", "response", "message", "reply", "output", "description"]) {
+    if (typeof o[k] === "string" && o[k].trim()) return (o[k] as string).trim();
+  }
+  return "";
 }
 
 /**
- * True when the model answered with a pseudo tool call to a tool that does not exist, which
- * it does now and then under Claude Code's huge prompt. Worth one retry rather than showing it.
+ * True when the model answered with a pseudo tool call to a tool that does not exist and
+ * nothing readable in it, which it does now and then. Worth one retry rather than showing it.
  */
 export function isMalformedToolCall(msg: AnthropicMessage, toolNames: Set<string>): boolean {
   if (msg.content.length !== 1 || msg.content[0].type !== "text") return false;
-  const call = bareCall(msg.content[0].text);
-  return !!call && !toolNames.has(call.name);
+  const calls = pseudoCalls(msg.content[0].text);
+  return !!calls && calls.some((c) => !toolNames.has(c.name));
 }
 
 /**
  * Builds the Anthropic message from a finished RunPod job. Strips Qwen's <think> output and
  * recovers tool calls the model wrote as text when the handler did not parse them: <tool_call>
- * tags, or a bare JSON reply naming one of `toolNames`.
+ * tags, or a reply that is only tool-call JSON (see pseudoCalls).
  */
 export function ollamaToAnthropic(res: Json, inputEstimate: number, toolNames?: Set<string>, schemas?: Map<string, Json>): AnthropicMessage {
   const { msg, meta } = extractMessage(res);
@@ -367,10 +390,16 @@ export function ollamaToAnthropic(res: Json, inputEstimate: number, toolNames?: 
     });
   }
   text = text.trim();
-  const bare = !raw.length && toolNames ? bareCall(text) : null;
-  if (bare && toolNames!.has(bare.name)) {
-    raw.push({ function: { name: bare.name, arguments: bare.args } });
-    text = "";
+  // Tool calls written as plain JSON: real tools become tool_use, a non-tool's answer becomes
+  // text, and a non-tool with nothing to say is left as-is for isMalformedToolCall to retry.
+  const pseudo = !raw.length && toolNames ? pseudoCalls(text) : null;
+  if (pseudo) {
+    const real = pseudo.filter((c) => toolNames!.has(c.name));
+    const said = pseudo.filter((c) => !toolNames!.has(c.name)).map((c) => spokenText(c.args)).filter(Boolean);
+    if (real.length || said.length) {
+      for (const c of real) raw.push({ function: { name: c.name, arguments: c.args } });
+      text = said.join("\n\n");
+    }
   }
 
   const content: Block[] = [];

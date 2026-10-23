@@ -268,6 +268,29 @@ describe("ollamaToAnthropic", () => {
     expect(isMalformedToolCall(ollamaToAnthropic({ output: { message: { content: "qwen is alive" } } }, 1, tools), tools)).toBe(false);
   });
 
+  test("OpenAI-style {type:function, function:{…}} pseudo calls, single or in arrays", () => {
+    const tools = new Set(["Bash", "Read"]);
+    // Seen live on "What model are you?": a pseudo call to a non-tool with nothing to say.
+    const junk = ollamaToAnthropic({ output: { message: { content: '{"type":"function","function":{"name":"Qwen 3.8 Uncensored","parameters":{}}}' } } }, 1, tools);
+    expect(isMalformedToolCall(junk, tools)).toBe(true);
+
+    const real = ollamaToAnthropic({ output: { message: { content: '[{"type":"function","function":{"name":"Bash","arguments":"{\\"command\\":\\"ls\\"}"}},{"type":"function","function":{"name":"Read","parameters":{"file_path":"/a"}}}]' } } }, 1, tools);
+    expect(real.stop_reason).toBe("tool_use");
+    expect(real.content.map((b: any) => [b.name, b.input])).toEqual([["Bash", { command: "ls" }], ["Read", { file_path: "/a" }]]);
+
+    // A non-tool call that carries an answer: the answer is shown, no retry needed.
+    const said = ollamaToAnthropic({ output: { message: { content: '{"type":"function","function":{"name":"respond","arguments":{"content":"I am Qwen."}}}' } } }, 1, tools);
+    expect(said.content).toEqual([{ type: "text", text: "I am Qwen." }]);
+    expect(said.stop_reason).toBe("end_turn");
+    expect(isMalformedToolCall(said, tools)).toBe(false);
+    const bareSaid = ollamaToAnthropic({ output: { message: { content: '{"name":"Qwen","parameters":{"description":"I am Qwen, a 27B model."}}' } } }, 1, tools);
+    expect(bareSaid.content).toEqual([{ type: "text", text: "I am Qwen, a 27B model." }]);
+
+    // Real and fake mixed: the real call survives, the empty fake is dropped.
+    const mixed = ollamaToAnthropic({ output: { message: { content: '[{"name":"Bash","arguments":{"command":"pwd"}},{"name":"nope","arguments":{}}]' } } }, 1, tools);
+    expect(mixed.content.map((b: any) => b.type)).toEqual(["tool_use"]);
+  });
+
   test("length stop maps to max_tokens; OpenAI-shaped and bare-string outputs are understood", () => {
     expect(ollamaToAnthropic({ output: { message: { content: "x" }, done_reason: "length" } }, 1).stop_reason).toBe("max_tokens");
     expect(ollamaToAnthropic({ output: { choices: [{ message: { content: "oa" } }] } }, 1).content).toEqual([{ type: "text", text: "oa" }]);
