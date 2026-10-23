@@ -772,8 +772,8 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
     }
   });
   child.stderr.on("data", (c) => {
-    // a Qwen turn authenticates with the adapter's key, so the CLI always warns that claude.ai connectors are off; that is by design
-    const d = provider === "qwen" ? c.toString().split("\n").filter((l: string) => !/claude\.ai connectors are disabled/i.test(l)).join("\n") : c.toString();
+    // a Qwen turn authenticates with the adapter's key, so the CLI always warns that claude.ai connectors are off and that it doesn't know the model "qwen"; both are by design
+    const d = provider === "qwen" ? c.toString().split("\n").filter((l: string) => !/claude\.ai connectors are disabled|\[claude-code:unrecognized_model\]/i.test(l)).join("\n") : c.toString();
     if (d.trim()) send({ t: "stderr", d });
   });
   child.on("close", (code) => {
@@ -2147,7 +2147,9 @@ async function route(req: Request): Promise<Response> {
           models: ["opus", "sonnet", "haiku", "fable"],
           permissionModes: ["acceptEdits", "auto", "plan", "bypassPermissions", "manual", "dontAsk"],
           efforts: ["", "low", "medium", "high", "xhigh", "max"],
-          providers: [{ id: "claude", name: "Claude", available: true }, { id: "qwen", name: "Qwen (RunPod)", available: await qwenAvailable() }],
+          // grouped for the model menu's tabs: Claude, and open models served through the local adapter
+          providers: [{ id: "claude", name: "Claude", group: "claude", available: true },
+            { id: "qwen", name: "Qwen 3.8 Uncensored", short: "Qwen 3.8", group: "open", available: await qwenAvailable(), note: "RunPod · slower, private" }],
           // where chats run when there is no second computer: this Mac, or the cloud box this server is
           host: { name: process.env.BRIDGE_HOST_NAME || (process.platform === "darwin" ? principalName(settings) + "'s Mac" : "Cloud computer"), kind: process.platform === "darwin" ? "mac" : "cloud" },
           auth: await authStatus(),
