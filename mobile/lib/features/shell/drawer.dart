@@ -181,7 +181,7 @@ class _Chats extends StatelessWidget {
         _ChatItem(
           title: r.title,
           cloud: r.computer == 'cloud',
-          qwen: store.providerOf(r.id) == 'qwen',
+          model: store.providerShort(store.providerOf(r.id)),
           on: current == r.id,
           dot: PulseDot(color: t.accent, size: 7),
           trailing: r.started > 0 ? Elapsed(r.started, style: TextStyle(color: t.faint, fontSize: 11.5, fontFeatures: const [FontFeature.tabularFigures()])) : null,
@@ -194,7 +194,7 @@ class _Chats extends StatelessWidget {
             _ChatItem(
               title: s.title,
               cloud: s.computer == 'cloud',
-              qwen: store.providerOf(s.id) == 'qwen',
+              model: store.providerShort(store.providerOf(s.id)),
               on: current == s.id,
               onTap: () => openSession(key: s.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, computer: s.computer),
             ),
@@ -206,8 +206,10 @@ class _Chats extends StatelessWidget {
 }
 
 class _ChatItem extends StatelessWidget {
-  const _ChatItem({required this.title, required this.onTap, this.on = false, this.dot, this.trailing, this.cloud = false, this.qwen = false});
-  final bool cloud, qwen;
+  const _ChatItem({required this.title, required this.onTap, this.on = false, this.dot, this.trailing, this.cloud = false, this.model = ''});
+  final bool cloud;
+  /// An open model's short name ("Qwen 3.8"); '' for Claude.
+  final String model;
   final String title;
   final VoidCallback onTap;
   final bool on;
@@ -231,7 +233,7 @@ class _ChatItem extends StatelessWidget {
               if (dot != null) ...[dot!, const SizedBox(width: 2)],
               Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: on ? t.fg : t.muted, fontSize: 14))),
               if (cloud) ...[const SizedBox(width: 6), const CloudBadge(size: 13)],
-              if (qwen) ...[const SizedBox(width: 6), const Tag('Qwen', kind: 'think')],
+              if (model.isNotEmpty) ...[const SizedBox(width: 6), Tag(model, kind: 'think')],
               if (trailing != null) ...[const SizedBox(width: 8), trailing!],
               const SizedBox(width: 12),
             ]),

@@ -107,7 +107,7 @@ class _SessionScreenState extends State<SessionScreen> {
   void _onFocusAsk() => _focus.requestFocus();
 
   Future<void> _start() async {
-    // A chat keeps the provider it ran on: reopening a Qwen chat switches the composer to Qwen.
+    // A chat keeps the provider it ran on: reopening an open-model chat switches the composer back to that model.
     final p = _isNew ? _store.turn.provider : _store.providerOf(_id);
     if (p != _store.turn.provider) unawaited(_store.setTurn(_store.turn.copy(provider: p)));
     if (_isNew) {
@@ -736,7 +736,7 @@ class _SessionScreenState extends State<SessionScreen> {
                   if (_busy) ...[PulseDot(color: t.accent, size: 6), const SizedBox(width: 2)],
                   Flexible(child: Text(_busy ? 'Working · $folder' : folder, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 12, fontWeight: FontWeight.w500))),
                   if (_computer == 'cloud') ...[const SizedBox(width: 5), const CloudBadge(size: 13)],
-                  if (_store.providerOf(_id) == 'qwen') ...[const SizedBox(width: 6), const Tag('Qwen', kind: 'think')],
+                  if (_store.providerShort(_store.providerOf(_id)).isNotEmpty) ...[const SizedBox(width: 6), Tag(_store.providerShort(_store.providerOf(_id)), kind: 'think')],
                 ]),
             ]),
           ),

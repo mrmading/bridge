@@ -25,12 +25,27 @@ class AuthStatus {
   static final signedOut = AuthStatus(loggedIn: false);
 }
 
-/// A model provider the server can run chats on: claude (default) · qwen (RunPod).
+/// A model provider the server can run chats on. group: claude · open (models such as Qwen on
+/// RunPod). `short` is the tag on chats ("Qwen 3.8"); `note` the line under it in the sheet.
 class Provider {
-  Provider({required this.id, required this.name, this.available = true});
-  final String id, name;
+  Provider({required this.id, required this.name, this.short = '', this.group = '', this.available = true, this.note = '', this.reason = ''});
+  final String id, name, short, group, note, reason;
   final bool available;
-  factory Provider.fromJson(Map<String, dynamic> j) => Provider(id: _s(j['id']), name: _s(j['name']).isEmpty ? _s(j['id']) : _s(j['name']), available: j['available'] != false);
+  bool get isOpen => group == 'open';
+  factory Provider.fromJson(Map<String, dynamic> j) {
+    final id = _s(j['id']);
+    final name = _s(j['name']).isEmpty ? id : _s(j['name']);
+    return Provider(
+      id: id,
+      name: name,
+      short: _s(j['short']).isEmpty ? name : _s(j['short']),
+      // No group: anything that is not Claude is an open model.
+      group: _s(j['group']).isNotEmpty ? _s(j['group']) : (id == 'claude' ? 'claude' : 'open'),
+      available: j['available'] != false,
+      note: _s(j['note']),
+      reason: _s(j['reason']).isNotEmpty ? _s(j['reason']) : _s(j['error']),
+    );
+  }
 }
 
 class Bootstrap {
@@ -395,7 +410,8 @@ class TurnOptions {
   TurnOptions({this.model = '', this.permissionMode = 'acceptEdits', this.effort = '', this.agent = '', this.provider = ''});
   /// provider: '' (Claude) or a /api/bootstrap provider id such as qwen.
   String model, permissionMode, effort, agent, provider;
-  bool get isQwen => provider == 'qwen';
+  /// Running on an open model (any provider but Claude).
+  bool get isOpen => provider.isNotEmpty;
   Map<String, dynamic> toJson() => {'model': model, 'permissionMode': permissionMode, 'effort': effort, 'agent': agent, 'provider': provider};
   factory TurnOptions.fromJson(Map<String, dynamic>? j) => TurnOptions(
         model: _s(j?['model']),

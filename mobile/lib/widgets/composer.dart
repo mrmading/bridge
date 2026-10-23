@@ -267,7 +267,7 @@ class _ComposerState extends State<Composer> {
                   key: const ValueKey('chip-model'),
                   onTap: () => showModelSheet(context),
                   tip: 'Model and effort',
-                  child: Text(turn.isQwen ? 'Qwen' : (turn.model.isEmpty ? (turn.effort.isEmpty ? 'Model' : effortLabel(turn.effort)) : '${cap(turn.model)}${turn.effort.isEmpty ? '' : ' · ${effortLabel(turn.effort)}'}'),
+                  child: Text(turn.isOpen ? _store.providerShort(turn.provider) : (turn.model.isEmpty ? (turn.effort.isEmpty ? 'Model' : effortLabel(turn.effort)) : '${cap(turn.model)}${turn.effort.isEmpty ? '' : ' · ${effortLabel(turn.effort)}'}'),
                       style: TextStyle(color: t.muted, fontSize: 13, fontWeight: FontWeight.w500)),
                 ),
                 const SizedBox(width: 2),
@@ -389,66 +389,104 @@ Future<void> showModeSheet(BuildContext context) => _sheet(context, (c) {
       ]);
     });
 
-Future<void> showModelSheet(BuildContext context) => _sheet(context, (c) {
-      final store = AppStore.instance;
-      final t = c.t;
-      final models = ['', ...?store.boot?.models.where((m) => m.isNotEmpty)];
-      final efforts = store.boot?.efforts ?? const ['', 'low', 'medium', 'high'];
-      String help(String m) => switch (m) {
-            'opus' => 'Best for hard, long work',
-            'sonnet' => 'Fast and capable, cheaper',
-            'haiku' => 'Quick answers',
-            '' => 'Whatever Claude Code is set to',
-            _ => '',
-          };
-      final providers = store.boot?.providers ?? const <Provider>[];
-      final qwen = providers.where((p) => p.id == 'qwen').firstOrNull;
-      final onQwen = store.turn.isQwen && qwen != null;
-      return ListView(shrinkWrap: true, padding: const EdgeInsets.only(bottom: 20), children: [
-        const SheetTitle('Model'),
-        if (qwen != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: SegmentedButton<String>(
-              key: const ValueKey('provider-switch'),
-              segments: [
-                const ButtonSegment(value: '', label: Text('Claude')),
-                ButtonSegment(value: 'qwen', enabled: qwen.available, label: Text(qwen.available ? 'Qwen' : 'Qwen · offline')),
-              ],
-              selected: {onQwen ? 'qwen' : ''},
-              showSelectedIcon: false,
-              onSelectionChanged: (s) => _setTurn(provider: s.first),
-            ),
-          ),
-        if (onQwen)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-            child: Text('${qwen.name}: an open model on your own GPU. Claude models and effort apply when you switch back.', style: TextStyle(color: t.muted, fontSize: 13.5, height: 1.4)),
-          )
-        else ...[
-        for (final m in models) PickRow(title: modelLabel(m), sub: help(m), selected: store.turn.model == m, onTap: () => _setTurn(model: m)),
-        Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 8), child: Text('THINKING EFFORT', style: TextStyle(color: t.faint, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 1.1))),
+/// Model: two tabs, Claude (models + effort) and Open models (from /api/bootstrap providers in the
+/// open group). The tab opens on whichever the next message uses.
+Future<void> showModelSheet(BuildContext context) => _sheet(context, (c) => const _ModelSheet());
+
+class _ModelSheet extends StatefulWidget {
+  const _ModelSheet();
+  @override
+  State<_ModelSheet> createState() => _ModelSheetState();
+}
+
+class _ModelSheetState extends State<_ModelSheet> {
+  final store = AppStore.instance;
+  late bool _open = store.turn.isOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final openModels = (store.boot?.providers ?? const <Provider>[]).where((p) => p.isOpen).toList();
+    return ListView(shrinkWrap: true, padding: const EdgeInsets.only(bottom: 20), children: [
+      const SheetTitle('Model'),
+      if (openModels.isNotEmpty)
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          // Chips, not a segmented bar: six levels do not fit one row on a phone.
-          child: Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final e in efforts)
-              ChoiceChip(
-                label: Text(e == 'xhigh' ? 'Extra high' : effortLabel(e)),
-                selected: (efforts.contains(store.turn.effort) ? store.turn.effort : efforts.first) == e,
-                showCheckmark: false,
-                labelStyle: TextStyle(color: store.turn.effort == e ? t.accentFg : t.fg, fontSize: 14, fontWeight: FontWeight.w600),
-                selectedColor: t.accent,
-                backgroundColor: t.active,
-                side: BorderSide.none,
-                shape: const StadiumBorder(),
-                onSelected: (_) => _setTurn(effort: e),
-              ),
-          ]),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: SegmentedButton<bool>(
+            key: const ValueKey('model-tabs'),
+            segments: const [ButtonSegment(value: false, label: Text('Claude')), ButtonSegment(value: true, label: Text('Open models'))],
+            selected: {_open},
+            showSelectedIcon: false,
+            onSelectionChanged: (s) => setState(() => _open = s.first),
+          ),
         ),
-        ],
-      ]);
-    });
+      if (_open && openModels.isNotEmpty) ..._openTab(context, openModels) else ..._claudeTab(context),
+    ]);
+  }
+
+  List<Widget> _openTab(BuildContext context, List<Provider> list) {
+    final t = context.t;
+    return [
+      for (final p in list)
+        Opacity(
+          opacity: p.available ? 1 : .5,
+          child: PickRow(
+            title: p.name,
+            sub: p.available ? (p.note.isNotEmpty ? p.note : 'Open model') : 'Unavailable${p.reason.isNotEmpty ? ' · ${p.reason}' : ''}',
+            leading: Icon(Icons.memory_rounded, color: p.available ? t.think : t.faint),
+            selected: store.turn.provider == p.id,
+            onTap: () {
+              if (!p.available) {
+                toast(context, '${p.name} is unavailable${p.reason.isNotEmpty ? ': ${p.reason}' : ''}');
+                return;
+              }
+              _setTurn(provider: p.id);
+            },
+          ),
+        ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+        child: Text('Open models run on your own GPU. Claude models and effort come back when you pick one in the Claude tab.', style: TextStyle(color: t.faint, fontSize: 12.5, height: 1.4)),
+      ),
+    ];
+  }
+
+  List<Widget> _claudeTab(BuildContext context) {
+    final t = context.t;
+    final models = ['', ...?store.boot?.models.where((m) => m.isNotEmpty)];
+    final efforts = store.boot?.efforts ?? const ['', 'low', 'medium', 'high'];
+    String help(String m) => switch (m) {
+          'opus' => 'Best for hard, long work',
+          'sonnet' => 'Fast and capable, cheaper',
+          'haiku' => 'Quick answers',
+          '' => 'Whatever Claude Code is set to',
+          _ => '',
+        };
+    final onClaude = !store.turn.isOpen;
+    return [
+      // Picking a Claude model also moves the next message back to Claude.
+      for (final m in models) PickRow(title: modelLabel(m), sub: help(m), selected: onClaude && store.turn.model == m, onTap: () => _setTurn(model: m, provider: '')),
+      Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 8), child: Text('THINKING EFFORT', style: TextStyle(color: t.faint, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 1.1))),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        // Chips, not a segmented bar: six levels do not fit one row on a phone.
+        child: Wrap(spacing: 8, runSpacing: 8, children: [
+          for (final e in efforts)
+            ChoiceChip(
+              label: Text(e == 'xhigh' ? 'Extra high' : effortLabel(e)),
+              selected: (efforts.contains(store.turn.effort) ? store.turn.effort : efforts.first) == e,
+              showCheckmark: false,
+              labelStyle: TextStyle(color: store.turn.effort == e ? t.accentFg : t.fg, fontSize: 14, fontWeight: FontWeight.w600),
+              selectedColor: t.accent,
+              backgroundColor: t.active,
+              side: BorderSide.none,
+              shape: const StadiumBorder(),
+              onSelected: (_) => _setTurn(effort: e, provider: ''),
+            ),
+        ]),
+      ),
+    ];
+  }
+}
 
 Future<void> showAgentSheet(BuildContext context) => _sheet(context, (c) {
       final store = AppStore.instance;

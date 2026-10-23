@@ -405,6 +405,15 @@ class AppStore extends ChangeNotifier {
     return '';
   }
 
+  /// The tag for a provider id ("Qwen 3.8"), or '' for Claude.
+  String providerShort(String id) {
+    if (id.isEmpty || id == 'claude') return '';
+    for (final p in boot?.providers ?? const <Provider>[]) {
+      if (p.id == id) return p.short;
+    }
+    return '${id[0].toUpperCase()}${id.substring(1)}';
+  }
+
   Future<void> rememberProvider(String id, String provider) async {
     if (id.isEmpty || (_chatProviders[id] ?? '') == provider) return;
     if (provider.isEmpty) {

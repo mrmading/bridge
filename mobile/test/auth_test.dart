@@ -72,13 +72,26 @@ void main() {
     expect(r.accessToken, 'a2');
   });
 
-  test('providers parse from bootstrap; turns keep their provider', () {
-    final b = Bootstrap.fromJson({'providers': [{'id': 'claude', 'name': 'Claude'}, {'id': 'qwen', 'name': 'Qwen (RunPod)', 'available': false}, {'name': 'no id'}]});
-    expect(b.providers.map((p) => p.id), ['claude', 'qwen']);
-    expect(b.providers.last.available, isFalse);
+  test('providers parse from bootstrap: groups, short names, notes; turns keep their provider', () {
+    final b = Bootstrap.fromJson({
+      'providers': [
+        {'id': 'claude', 'name': 'Claude', 'group': 'claude'},
+        {'id': 'qwen', 'name': 'Qwen 3.8 Uncensored', 'short': 'Qwen 3.8', 'group': 'open', 'available': false, 'note': 'RunPod · slower, private', 'reason': 'GPU asleep'},
+        {'id': 'llama', 'name': 'Llama'},
+        {'name': 'no id'},
+      ]
+    });
+    expect(b.providers.map((p) => p.id), ['claude', 'qwen', 'llama']);
+    expect(b.providers[0].isOpen, isFalse);
+    expect(b.providers[1].short, 'Qwen 3.8');
+    expect(b.providers[1].note, 'RunPod · slower, private');
+    expect(b.providers[1].available, isFalse);
+    expect(b.providers[1].reason, 'GPU asleep');
+    expect(b.providers[2].isOpen, isTrue, reason: 'no group: anything but Claude is open');
+    expect(b.providers[2].short, 'Llama', reason: 'no short: the name');
     expect(Bootstrap.fromJson({}).providers, isEmpty);
     final t = TurnOptions.fromJson({'provider': 'qwen', 'model': 'opus'});
-    expect(t.isQwen, isTrue);
+    expect(t.isOpen, isTrue);
     expect(t.copy(effort: 'high').provider, 'qwen');
     expect(TurnOptions.fromJson({'provider': 'claude'}).provider, '');
   });
@@ -100,26 +113,54 @@ void main() {
     await tester.binding.setSurfaceSize(null);
   });
 
-  testWidgets('model sheet: Claude / Qwen switch, Qwen greyed when unavailable', (tester) async {
+  testWidgets('model sheet: Claude | Open models tabs; unavailable open models are greyed with the reason', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final s = AppStore.instance;
     await s.init();
-    s.boot = Bootstrap.fromJson({'models': ['opus', 'sonnet'], 'providers': [{'id': 'claude', 'name': 'Claude'}, {'id': 'qwen', 'name': 'Qwen (RunPod)', 'available': true}]});
+    s.boot = Bootstrap.fromJson({
+      'models': ['opus', 'sonnet'],
+      'providers': [
+        {'id': 'claude', 'name': 'Claude', 'group': 'claude'},
+        {'id': 'qwen', 'name': 'Qwen 3.8 Uncensored', 'short': 'Qwen 3.8', 'group': 'open', 'available': true, 'note': 'RunPod · slower, private'},
+      ],
+    });
     await tester.binding.setSurfaceSize(const Size(402, 874));
     await tester.pumpWidget(host(Scaffold(body: Builder(builder: (c) => Center(child: TextButton(onPressed: () => showModelSheet(c), child: const Text('open')))))));
-    await tester.tap(find.text('open'));
-    for (var i = 0; i < 8; i++) {
-      await tester.pump(const Duration(milliseconds: 60));
+    Future<void> settle() async {
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
     }
-    expect(find.byKey(const ValueKey('provider-switch')), findsOneWidget);
-    expect(find.text('Opus'), findsOneWidget);
-    await tester.tap(find.text('Qwen'));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(s.turn.isQwen, isTrue);
-    expect(find.text('Opus'), findsNothing, reason: 'Claude models hide while on Qwen');
+
+    await tester.tap(find.text('open'));
+    await settle();
+    expect(find.byKey(const ValueKey('model-tabs')), findsOneWidget);
+    expect(find.text('Opus'), findsOneWidget, reason: 'opens on the Claude tab');
+    await tester.tap(find.text('Open models'));
+    await settle();
+    expect(find.text('Qwen 3.8 Uncensored'), findsOneWidget);
+    expect(find.text('RunPod · slower, private'), findsOneWidget);
+    expect(find.text('Opus'), findsNothing);
+    await tester.tap(find.text('Qwen 3.8 Uncensored'));
+    await settle();
+    expect(s.turn.provider, 'qwen');
+    expect(s.providerShort(s.turn.provider), 'Qwen 3.8');
+
     await tester.tap(find.text('Claude'));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(s.turn.provider, '');
+    await settle();
+    await tester.tap(find.text('Sonnet'));
+    await settle();
+    expect(s.turn.provider, '', reason: 'a Claude model moves the next message back to Claude');
+    expect(s.turn.model, 'sonnet');
+
+    s.boot = Bootstrap.fromJson({'providers': [{'id': 'qwen', 'name': 'Qwen 3.8 Uncensored', 'available': false, 'reason': 'GPU asleep'}]});
+    s.changed();
+    await tester.tap(find.text('Open models'));
+    await settle();
+    expect(find.text('Unavailable · GPU asleep'), findsOneWidget);
+    await tester.tap(find.text('Qwen 3.8 Uncensored'));
+    await settle();
+    expect(s.turn.provider, '', reason: 'an unavailable model cannot be picked');
     await tester.binding.setSurfaceSize(null);
   });
 }
