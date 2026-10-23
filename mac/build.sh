@@ -22,6 +22,7 @@ swiftc -O \
 cp "$ROOT/server.ts" "$APP/Contents/Resources/app/server.ts"
 cp -R "$ROOT/public" "$APP/Contents/Resources/app/public"
 cp -R "$ROOT/stt" "$APP/Contents/Resources/app/stt"
+cp -R "$ROOT/providers" "$APP/Contents/Resources/app/providers"
 cp "$HERE/assets/Bridge.icns" "$APP/Contents/Resources/Bridge.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
