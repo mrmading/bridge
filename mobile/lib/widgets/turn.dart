@@ -5,9 +5,11 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../core/artifacts.dart';
 import '../core/clock.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
+import 'artifact.dart';
 import 'bridge.dart';
 import 'transcript.dart';
 
@@ -172,7 +174,7 @@ Map<String, bool> touchedFiles(Iterable<Msg> tools) {
 
 /// One assistant turn. [msgs] are every row after a user message up to the next one.
 class AssistantTurn extends StatelessWidget {
-  const AssistantTurn({super.key, required this.msgs, required this.name, this.started, this.live = false, this.liveSince = 0, this.showTech = false, this.onChoice, this.onOpenFile, this.footer = ''});
+  const AssistantTurn({super.key, required this.msgs, required this.name, this.started, this.live = false, this.liveSince = 0, this.showTech = false, this.onChoice, this.onOpenFile, this.onOpenArtifact, this.footer = ''});
   final List<Msg> msgs;
   /// Who answered: the agent or assistant name.
   final String name;
@@ -182,6 +184,8 @@ class AssistantTurn extends StatelessWidget {
   final bool showTech;
   final ValueChanged<String>? onChoice;
   final ValueChanged<String>? onOpenFile;
+  /// Opens the artifact sheet; falls back to [onOpenFile].
+  final ValueChanged<String>? onOpenArtifact;
   final String footer;
 
   @override
@@ -202,7 +206,10 @@ class AssistantTurn extends StatelessWidget {
       if (m.ts != null && (end == null || m.ts!.isAfter(end))) end = m.ts;
     }
     final took = started != null && end != null ? end.difference(started!) : null;
-    final files = touchedFiles(tools);
+    final artifacts = turnArtifacts(msgs);
+    final shown = {for (final a in artifacts) a.path};
+    final files = {for (final f in touchedFiles(tools).entries) if (!shown.contains(f.key)) f.key: f.value};
+    final open = onOpenArtifact ?? onOpenFile;
     final lastText = texts.lastIndexWhere((m) => m.isAssistant);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
@@ -213,7 +220,8 @@ class AssistantTurn extends StatelessWidget {
           Text(name, style: TextStyle(color: t.muted, fontSize: 13, fontWeight: FontWeight.w600)),
         ]),
         const SizedBox(height: 6),
-        if (tools.isNotEmpty || live) WorkBlock(tools: tools, thinking: msgs.where((m) => m.isThinking).toList(), took: took, live: live, liveSince: liveSince),
+        // Text and thinking alone read as plain chat; the work line appears with the first tool.
+        if (tools.isNotEmpty) WorkBlock(tools: tools, thinking: msgs.where((m) => m.isThinking).toList(), took: took, live: live, liveSince: liveSince),
         for (var i = 0; i < texts.length; i++)
           isHarnessNote(texts[i])
               ? Padding(
@@ -227,6 +235,8 @@ class AssistantTurn extends StatelessWidget {
               : texts[i].kind == 'choices'
               ? ChoiceChips(options: texts[i].options, onChoice: onChoice)
               : AssistantText(key: ObjectKey(texts[i]), msg: texts[i], onChoice: i == lastText ? onChoice : null, padding: const EdgeInsets.only(top: 4, bottom: 4)),
+        if (live && tools.isEmpty) const Padding(padding: EdgeInsets.only(top: 6, bottom: 4), child: TypingDots()),
+        for (final a in artifacts) ArtifactCard(artifact: a, onTap: open == null ? null : () => open(a.path)),
         for (final f in files.entries.take(4)) FileCard(path: f.key, isNew: f.value, onTap: onOpenFile == null ? null : () => onOpenFile!(f.key)),
         if (files.length > 4) Padding(padding: const EdgeInsets.only(top: 2), child: Text('+${files.length - 4} more in Files & progress', style: TextStyle(color: t.faint, fontSize: 12))),
         if (footer.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(footer, style: TextStyle(color: t.faint, fontSize: 11.5))),
@@ -387,6 +397,43 @@ class JobCard extends StatelessWidget {
           ]),
         ),
       ]),
+    );
+  }
+}
+
+/// Three soft dots while a text-only turn is still coming in.
+class TypingDots extends StatefulWidget {
+  const TypingDots({super.key});
+  @override
+  State<TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<TypingDots> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat();
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return SizedBox(
+      key: const ValueKey('typing'),
+      height: 16,
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (_, _) => Row(mainAxisSize: MainAxisSize.min, children: [
+          for (var i = 0; i < 3; i++) ...[
+            if (i > 0) const SizedBox(width: 5),
+            Opacity(
+              opacity: .3 + .7 * (1 - ((_c.value * 3 - i) % 3 - 1).abs().clamp(0.0, 1.0)),
+              child: Container(width: 7, height: 7, decoration: BoxDecoration(color: t.muted, shape: BoxShape.circle)),
+            ),
+          ],
+        ]),
+      ),
     );
   }
 }

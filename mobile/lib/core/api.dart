@@ -284,6 +284,14 @@ class BridgeApi {
     return _u('/api/raw', {'path': path, ..._cq(computer), if (t.isNotEmpty) 'access_token': t});
   }
 
+  /// The file's bytes (sharing an artifact, reading an SVG's source).
+  Future<Uint8List> rawBytes(String path, {String computer = 'mac'}) async {
+    final r = await _client.get(_u('/api/raw', {'path': path, ..._cq(computer)}), headers: await _auth()).timeout(const Duration(seconds: 40));
+    if (r.statusCode == 401) onUnauthorized?.call();
+    if (r.statusCode >= 400) throw ApiException(r.statusCode == 403 ? 'Bridge cannot open this file' : 'Could not load the file (${r.statusCode})', status: r.statusCode);
+    return r.bodyBytes;
+  }
+
   /// GET /api/authconfig (open): whether Bridge sign-in is required, and the Supabase project.
   /// A server without it needs no sign-in.
   Future<AuthConfig> authConfig() async {

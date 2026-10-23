@@ -6,15 +6,18 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/api.dart';
+import '../../core/artifacts.dart';
 import '../../core/clock.dart';
 import '../../core/models.dart';
 import '../../core/nav.dart';
 import '../../core/store.dart';
 import '../../core/theme.dart';
+import '../../widgets/artifact.dart';
 import '../../widgets/bridge.dart';
 import '../../widgets/common.dart';
 import '../../widgets/composer.dart';
@@ -138,6 +141,7 @@ class _SessionScreenState extends State<SessionScreen> {
     _chatSub?.cancel();
     _jobsTimer?.cancel();
     _paint?.cancel();
+    _revisions.dispose();
     _input.dispose();
     _focus.dispose();
     _scroll.dispose();
@@ -694,7 +698,13 @@ class _SessionScreenState extends State<SessionScreen> {
     }
   }
 
-  void _openFile(String path) => Nav.instance.push(FileScreen(path: path, computer: _computer));
+  /// Edits per file in this chat; an open artifact sheet reloads when its count moves.
+  final _revisions = ValueNotifier<Map<String, int>>(const {});
+
+  /// Pages, docs, images and PDFs open in the artifact sheet; everything else in the file viewer.
+  void _openFile(String path) => artifactKindOf(path) != null
+      ? showArtifactSheet(context, path: path, computer: _computer, revisions: _revisions)
+      : Nav.instance.push(FileScreen(path: path, computer: _computer));
 
   void _openPanel() => showChatPanel(
         context,
@@ -810,6 +820,12 @@ class _SessionScreenState extends State<SessionScreen> {
       return EmptyState(icon: Icons.chat_bubble_outline_rounded, title: _isNew ? 'What should we work on?' : 'Nothing here yet', body: _isNew ? 'in ${prettyPath(_cwd)}' : null);
     }
     final turns = _turns();
+    final revs = artifactRevisions(_msgs);
+    if (!mapEquals(revs, _revisions.value)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_disposed) _revisions.value = revs;
+      });
+    }
     final name = _store.turn.agent.isNotEmpty && _store.turn.agent != 'auto' ? _store.turn.agent : _store.assistantName;
     final rows = <Widget>[];
     for (var i = 0; i < turns.length; i++) {
@@ -835,7 +851,7 @@ class _SessionScreenState extends State<SessionScreen> {
     final jobs = _liveJobs;
     final extra = <Widget>[
       if (_busy && jobs.isNotEmpty) JobCard(title: _jobs.step.isNotEmpty ? _jobs.step : 'Working in the background', since: _runSince, jobs: jobs),
-      if (_busy && jobs.isEmpty) Padding(padding: const EdgeInsets.only(left: 4), child: StatusLine(_progressLine(), spinner: true)),
+      if (_busy && jobs.isEmpty && turns.isNotEmpty && turnHasTools(turns.last.rest)) Padding(padding: const EdgeInsets.only(left: 4), child: StatusLine(_progressLine(), spinner: true)),
       for (final q in _queue) UserBubble(text: q, queued: true),
       const SizedBox(height: 12),
     ];
