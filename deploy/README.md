@@ -28,7 +28,7 @@ stays behind Fly's login (`--url-auth sprite`) until that gate has been proven o
 |---|---|
 | Stage a commit (its files via `git archive` + a Flutter web build of it, cached per commit in `~/Library/Caches/bridge-deploy/<sha>`) | `deploy/stage.sh [commit]` |
 | Assemble the Worker for a commit (its public/ at /, its Flutter build at /m/, its own deploy/worker) | `deploy/build.sh [commit]` |
-| Deploy the Worker from a commit | `deploy/deploy.sh [commit] [wrangler args]` (e.g. `deploy/deploy.sh 07cb824 --dry-run`) |
+| Deploy the Worker from a commit | `deploy/deploy.sh [commit] [wrangler args]` (e.g. `deploy/deploy.sh 07cb824 --dry-run`). Exits non-zero unless `bridge <sha>` is the current deployment afterwards |
 | Local Worker against a local Bridge | `cd deploy/worker && wrangler dev --port 8811 --var BACKEND_URL:http://localhost:4293` |
 | Push auth config to Supabase | `deploy/supabase/auth.sh [ref]` (`SITE_URL=` to change the site URL) |
 | Ship a commit + its Flutter build + env to the sprite, restart, health-check | `deploy/sprite.sh [commit]` (`SKIP_WEB=1` keeps the sprite's Flutter build) |
