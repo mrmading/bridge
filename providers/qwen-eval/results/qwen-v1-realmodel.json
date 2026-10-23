@@ -1,0 +1,798 @@
+{
+  "label": "qwen-v1-realmodel",
+  "provider": "qwen",
+  "model": "qwen",
+  "notes": "real Qwen 27B (was llama3.2:3b); slim CC session + appended QWEN_PROTOCOL unchanged",
+  "started": "2026-10-23T03:07:44.309Z",
+  "finished": "2026-10-23T03:12:01.362Z",
+  "passed": 11,
+  "total": 14,
+  "core": "11/12",
+  "context": "0/2",
+  "infra": 0,
+  "turnErrors": 0,
+  "medianTtftMs": 17425,
+  "medianMs": 36625,
+  "jobs": 36,
+  "gpuMs": 199913,
+  "results": [
+    {
+      "id": "qa",
+      "title": "Plain Q&A, no tools",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "Accurate, concise two-sentence contrast of TCP (connection-oriented, reliable, ordered) with UDP (connectionless, no guarantees, lower latency), with no tool use needed or made."
+      },
+      "ms": 26904,
+      "ttftMs": 26351,
+      "errors": 0,
+      "jobs": 1,
+      "gpuMs": 4462,
+      "turns": [
+        {
+          "prompt": "In one or two sentences: what is the difference between TCP and UDP?",
+          "text": "TCP is a connection-oriented protocol that guarantees ordered, reliable delivery of data (via acknowledgments and retransmissions), while UDP is connectionless and sends packets without guarantees of delivery, ordering, or duplicates. In short, TCP trades speed for reliability, whereas UDP trades reliability for low latency.",
+          "tools": [],
+          "ms": 26904,
+          "ttftMs": 26351,
+          "usage": {
+            "jobs": 1,
+            "gpuMs": 4462,
+            "usd": 0.001383,
+            "estimated": true
+          },
+          "cost": 0.001383
+        }
+      ]
+    },
+    {
+      "id": "identity",
+      "title": "What model are you",
+      "group": "core",
+      "pass": false,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": false,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "The answer claims to be Qwen 3.8 on a RunPod GPU, but the environment states the model is Claude Haiku 5.5, so the identity claim is wrong; the reply is otherwise brief and clean."
+      },
+      "ms": 16170,
+      "ttftMs": 15153,
+      "errors": 0,
+      "jobs": 1,
+      "gpuMs": 5181,
+      "turns": [
+        {
+          "prompt": "What model are you? One sentence.",
+          "text": "I'm Qwen 3.8 Uncensored, an open-weight 27B model running on your RunPod GPU through Bridge.",
+          "tools": [],
+          "ms": 16170,
+          "ttftMs": 15153,
+          "usage": {
+            "jobs": 1,
+            "gpuMs": 5181,
+            "usd": 0.001606,
+            "estimated": true
+          },
+          "cost": 0.001606
+        }
+      ]
+    },
+    {
+      "id": "readme",
+      "title": "Summarize the README",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "The reply gives three bullets covering the required features, but the Bun/`formatPrice` details in bullet 3 can't be checked because the tool result is truncated before the rest of the README."
+      },
+      "ms": 36625,
+      "ttftMs": 19607,
+      "errors": 0,
+      "jobs": 2,
+      "gpuMs": 13913,
+      "turns": [
+        {
+          "prompt": "Summarize README.md in this folder in 3 bullet points.",
+          "text": "- **tinyshop** is a tiny command-line tool that totals shopping carts for small online shops.\n- Features: cart totals computed in cents to avoid rounding errors, discount codes (e.g., `SAVE10` = 10% off, unknown codes ignored), regional VAT (TH 7%, ES 21%, US 0%), and CSV export for accounting.\n- Developed with Bun (`bun test`); prices are integer cents throughout, with `formatPrice` handling display formatting.",
+          "tools": [
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/readme/README.md"
+              },
+              "result": "1\t# tinyshop\n2\t\n3\tA tiny command-line tool that totals shopping carts for small online shops.\n4\t\n5\t## Features\n6\t\n7\t- **Cart totals** — sums item price × quantity, in cents, so there are no rounding errors.\n8\t- **Discount codes** — `SAVE10` takes 10% off the total; unknown codes are ignored.\n9\t- **Regional tax** — adds VAT by region (TH 7%, ES 21%, US 0% at checkout).\n10\t- **CSV export** — writes the cart to a CSV file for the shop's accounting.\n11\t\n12\t## Develop\n13\t\n14\t```sh\n15\tbun test\n16\t```\n17\t\n18\tPrices are integers in cents everywhere; `formatPrice` turns them into display strings.\n19\t",
+              "isError": false
+            }
+          ],
+          "ms": 36625,
+          "ttftMs": 19607,
+          "usage": {
+            "jobs": 2,
+            "gpuMs": 13913,
+            "usd": 0.004313,
+            "estimated": true
+          },
+          "cost": 0.004313
+        }
+      ]
+    },
+    {
+      "id": "grep",
+      "title": "Find a function",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "The assistant used Grep, got src/format.ts:2, and answered briefly with the correct path and line number."
+      },
+      "ms": 27737,
+      "ttftMs": 23785,
+      "errors": 0,
+      "jobs": 2,
+      "gpuMs": 6517,
+      "turns": [
+        {
+          "prompt": "Which file defines the function formatPrice? Give the path and the line number.",
+          "text": "`formatPrice` is defined in `src/format.ts:2`.",
+          "tools": [
+            {
+              "name": "Grep",
+              "input": {
+                "-n": true,
+                "output_mode": "content",
+                "pattern": "function\\s+formatPrice|formatPrice\\s*[=(]"
+              },
+              "result": "src/format.ts:2:export function formatPrice(cents: number): string {",
+              "isError": false
+            }
+          ],
+          "ms": 27737,
+          "ttftMs": 23785,
+          "usage": {
+            "jobs": 2,
+            "gpuMs": 6517,
+            "usd": 0.00202,
+            "estimated": true
+          },
+          "cost": 0.00202
+        }
+      ]
+    },
+    {
+      "id": "edit",
+      "title": "Edit a file correctly",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "Read the file, made a single targeted edit changing Hello to Hola while preserving the rest, and gave a brief confirmation."
+      },
+      "ms": 37886,
+      "ttftMs": 16825,
+      "errors": 0,
+      "jobs": 3,
+      "gpuMs": 9288,
+      "turns": [
+        {
+          "prompt": "In src/greet.ts change the greeting from Hello to Hola. Don't change anything else.",
+          "text": "Done — `src/greet.ts:2` now returns `Hola, ${name}!`; nothing else was touched.",
+          "tools": [
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/edit/src/greet.ts"
+              },
+              "result": "1\t/** Greeting shown at the top of the receipt. */\n2\texport const greet = (name: string) => `Hello, ${name}!`;\n3\t",
+              "isError": false
+            },
+            {
+              "name": "Edit",
+              "input": {
+                "replace_all": false,
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/edit/src/greet.ts",
+                "old_string": "`Hello, ${name}!`",
+                "new_string": "`Hola, ${name}!`"
+              },
+              "result": "The file /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/edit/src/greet.ts has been updated successfully. (file state is current in your context — no need to Read it back)",
+              "isError": false
+            }
+          ],
+          "ms": 37886,
+          "ttftMs": 16825,
+          "usage": {
+            "jobs": 3,
+            "gpuMs": 9288,
+            "usd": 0.002879,
+            "estimated": true
+          },
+          "cost": 0.002879
+        }
+      ]
+    },
+    {
+      "id": "command",
+      "title": "Run a command and report",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "The assistant ran `bun --version` via Bash, got 1.3.9, and reported exactly that in a brief answer."
+      },
+      "ms": 29888,
+      "ttftMs": 15260,
+      "errors": 0,
+      "jobs": 2,
+      "gpuMs": 4906,
+      "turns": [
+        {
+          "prompt": "Run `bun --version` and tell me the version.",
+          "text": "Bun version is **1.3.9**.",
+          "tools": [
+            {
+              "name": "Bash",
+              "input": {
+                "command": "bun --version",
+                "description": "Print Bun version"
+              },
+              "result": "1.3.9",
+              "isError": false
+            }
+          ],
+          "ms": 29888,
+          "ttftMs": 15260,
+          "usage": {
+            "jobs": 2,
+            "gpuMs": 4906,
+            "usd": 0.001521,
+            "estimated": true
+          },
+          "cost": 0.001521
+        }
+      ]
+    },
+    {
+      "id": "bugfix",
+      "title": "Fix a bug and run its test",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "The assistant found the `* 0.1` bug in applyDiscount, changed it to `* 0.9` without touching the test, ran `bun test` showing 3 passing, and gave a brief accurate summary."
+      },
+      "ms": 54864,
+      "ttftMs": 14268,
+      "errors": 0,
+      "jobs": 4,
+      "gpuMs": 18360,
+      "turns": [
+        {
+          "prompt": "The tests in src/cart.test.ts fail. Fix the bug in src/cart.ts and run the tests to confirm they pass.",
+          "text": "Fixed: `applyDiscount` was returning 10% of the total (`* 0.1`) instead of the discounted total (`* 0.9`) for SAVE10 — see src/cart.ts:10. All 3 tests now pass.",
+          "tools": [
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/bugfix/src/cart.ts"
+              },
+              "result": "1\texport type Item = { name: string; cents: number; qty: number };\n2\t\n3\t/** Sum of price × quantity, in cents. */\n4\texport function cartTotal(items: Item[]): number {\n5\t  return items.reduce((sum, i) => sum + i.cents * i.qty, 0);\n6\t}\n7\t\n8\t/** SAVE10 takes 10% off; any other code leaves the total unchanged. */\n9\texport function applyDiscount(totalCents: number, code: string): number {\n10\t  if (code === \"SAVE10\") return Math.round(totalCents * 0.1);\n11\t  return totalCents;\n12\t}\n13\t",
+              "isError": false
+            },
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/bugfix/src/cart.test.ts"
+              },
+              "result": "1\timport { expect, test } from \"bun:test\";\n2\timport { applyDiscount, cartTotal } from \"./cart\";\n3\t\n4\ttest(\"cartTotal sums price × qty\", () => {\n5\t  expect(cartTotal([{ name: \"tea\", cents: 250, qty: 2 }, { name: \"cup\", cents: 1000, qty: 1 }])).toBe(1500);\n6\t});\n7\t\n8\ttest(\"SAVE10 takes 10% off\", () => {\n9\t  expect(applyDiscount(10000, \"SAVE10\")).toBe(9000);\n10\t});\n11\t\n12\ttest(\"unknown codes are ignored\", () => {\n13\t  expect(applyDiscount(10000, \"BOGUS\")).toBe(10000);\n14\t});\n15\t",
+              "isError": false
+            },
+            {
+              "name": "Edit",
+              "input": {
+                "replace_all": false,
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/bugfix/src/cart.ts",
+                "old_string": "  if (code === \"SAVE10\") return Math.round(totalCents * 0.1);",
+                "new_string": "  if (code === \"SAVE10\") return Math.round(totalCents * 0.9);"
+              },
+              "result": "The file /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/bugfix/src/cart.ts has been updated successfully. (file state is current in your context — no need to Read it back)",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "bun test",
+                "description": "Run bun tests"
+              },
+              "result": "bun test v1.3.9 (cf6cdbbb)\n\n 3 pass\n 0 fail\n 3 expect() calls\nRan 3 tests across 1 file. [70.00ms]",
+              "isError": false
+            }
+          ],
+          "ms": 54864,
+          "ttftMs": 14268,
+          "usage": {
+            "jobs": 4,
+            "gpuMs": 18360,
+            "usd": 0.005692,
+            "estimated": true
+          },
+          "cost": 0.005692
+        }
+      ]
+    },
+    {
+      "id": "multistep",
+      "title": "Create a file, then list the folder",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "Wrote docs/todo.md with the single item '- ship eval', listed the docs directory, and reported that it contains only todo.md, matching the task."
+      },
+      "ms": 65404,
+      "ttftMs": 14021,
+      "errors": 0,
+      "jobs": 3,
+      "gpuMs": 20721,
+      "turns": [
+        {
+          "prompt": "Create docs/todo.md containing a markdown list whose only item is 'ship eval', then list the docs directory and tell me what's in it.",
+          "text": "Created `docs/todo.md` with a single list item: \"ship eval\".\n\nThe `docs` directory contains just one file:\n- `todo.md` (12 bytes)",
+          "tools": [
+            {
+              "name": "Write",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/multistep/docs/todo.md",
+                "content": "- ship eval\n"
+              },
+              "result": "File created successfully at: /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/multistep/docs/todo.md (file state is current in your context — no need to Read it back)",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -la /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/multistep/docs",
+                "description": "List docs directory contents"
+              },
+              "result": "total 8\ndrwxr-xr-x  3 mrmading  staff   96 Oct 23 10:09 .\ndrwxr-xr-x  5 mrmading  staff  160 Oct 23 10:09 ..\n-rw-r--r--  1 mrmading  staff   12 Oct 23 10:09 todo.md",
+              "isError": false
+            }
+          ],
+          "ms": 65404,
+          "ttftMs": 14021,
+          "usage": {
+            "jobs": 3,
+            "gpuMs": 20721,
+            "usd": 0.006424,
+            "estimated": true
+          },
+          "cost": 0.006424
+        }
+      ]
+    },
+    {
+      "id": "clarify",
+      "title": "Ask when ambiguous",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "The request was ambiguous across several candidate functions, and the assistant correctly asked which function and what new name without editing anything; the reads were a reasonable amount of investigation."
+      },
+      "ms": 87266,
+      "ttftMs": 17425,
+      "errors": 0,
+      "jobs": 4,
+      "gpuMs": 31363,
+      "turns": [
+        {
+          "prompt": "Rename the function.",
+          "text": "Which function, and to what? There are a few candidates in `src`:\n\n- `cartTotal` (cart.ts:4)\n- `applyDiscount` (cart.ts:9)\n- `formatPrice` (format.ts:2)\n- `greet` (greet.ts:2)\n\nTell me the function and the new name (and whether to update the usages/tests, e.g. `cart.test.ts:2`).",
+          "tools": [
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -la /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/clarify",
+                "description": "List files in working directory"
+              },
+              "result": "total 8\ndrwxr-xr-x   4 mrmading  staff  128 Oct 23 10:09 .\ndrwxr-xr-x  12 mrmading  staff  384 Oct 23 10:07 ..\n-rw-r--r--   1 mrmading  staff  559 Oct 23 09:52 README.md\ndrwxr-xr-x   6 mrmading  staff  192 Oct 23 10:09 src",
+              "isError": false
+            },
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/clarify/README.md"
+              },
+              "result": "1\t# tinyshop\n2\t\n3\tA tiny command-line tool that totals shopping carts for small online shops.\n4\t\n5\t## Features\n6\t\n7\t- **Cart totals** — sums item price × quantity, in cents, so there are no rounding errors.\n8\t- **Discount codes** — `SAVE10` takes 10% off the total; unknown codes are ignored.\n9\t- **Regional tax** — adds VAT by region (TH 7%, ES 21%, US 0% at checkout).\n10\t- **CSV export** — writes the cart to a CSV file for the shop's accounting.\n11\t\n12\t## Develop\n13\t\n14\t```sh\n15\tbun test\n16\t```\n17\t\n18\tPrices are integers in cents everywhere; `formatPrice` turns them into display strings.\n19\t",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -R /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/clarify/src",
+                "description": "List src directory recursively"
+              },
+              "result": "cart.test.ts\ncart.ts\nformat.ts\ngreet.ts",
+              "isError": false
+            },
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/clarify/src/cart.ts"
+              },
+              "result": "1\texport type Item = { name: string; cents: number; qty: number };\n2\t\n3\t/** Sum of price × quantity, in cents. */\n4\texport function cartTotal(items: Item[]): number {\n5\t  return items.reduce((sum, i) => sum + i.cents * i.qty, 0);\n6\t}\n7\t\n8\t/** SAVE10 takes 10% off; any other code leaves the total unchanged. */\n9\texport function applyDiscount(totalCents: number, code: string): number {\n10\t  if (code === \"SAVE10\") return Math.round(totalCents * 0.1);\n11\t  return totalCents;\n12\t}\n13\t",
+              "isError": false
+            },
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/clarify/src/format.ts"
+              },
+              "result": "1\t/** Display string for a price in cents, e.g. 1999 → \"$19.99\". */\n2\texport function formatPrice(cents: number): string {\n3\t  const dollars = Math.floor(cents / 100);\n4\t  const rest = String(cents % 100).padStart(2, \"0\");\n5\t  return `$${dollars}.${rest}`;\n6\t}\n7\t",
+              "isError": false
+            },
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/clarify/src/greet.ts"
+              },
+              "result": "1\t/** Greeting shown at the top of the receipt. */\n2\texport const greet = (name: string) => `Hello, ${name}!`;\n3\t",
+              "isError": false
+            },
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/clarify/src/cart.test.ts"
+              },
+              "result": "1\timport { expect, test } from \"bun:test\";\n2\timport { applyDiscount, cartTotal } from \"./cart\";\n3\t\n4\ttest(\"cartTotal sums price × qty\", () => {\n5\t  expect(cartTotal([{ name: \"tea\", cents: 250, qty: 2 }, { name: \"cup\", cents: 1000, qty: 1 }])).toBe(1500);\n6\t});\n7\t\n8\ttest(\"SAVE10 takes 10% off\", () => {\n9\t  expect(applyDiscount(10000, \"SAVE10\")).toBe(9000);\n10\t});\n11\t\n12\ttest(\"unknown codes are ignored\", () => {\n13\t  expect(applyDiscount(10000, \"BOGUS\")).toBe(10000);\n14\t});\n15\t",
+              "isError": false
+            }
+          ],
+          "ms": 87266,
+          "ttftMs": 17425,
+          "usage": {
+            "jobs": 4,
+            "gpuMs": 31363,
+            "usd": 0.009723,
+            "estimated": true
+          },
+          "cost": 0.009723
+        }
+      ]
+    },
+    {
+      "id": "noinvent",
+      "title": "Don't invent files",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "The assistant checked via Read, Glob, and ls, correctly reported that src/payments.ts does not exist, listed the real src files, and invented no contents or created no file."
+      },
+      "ms": 69896,
+      "ttftMs": 31033,
+      "errors": 0,
+      "jobs": 4,
+      "gpuMs": 12482,
+      "turns": [
+        {
+          "prompt": "What does src/payments.ts export?",
+          "text": "There is no `src/payments.ts` in this project. The `src/` directory contains only:\n\n- `cart.ts` (and `cart.test.ts`)\n- `format.ts`\n- `greet.ts`",
+          "tools": [
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/noinvent/src/payments.ts"
+              },
+              "result": "File does not exist. Note: your current working directory is /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/noinvent.",
+              "isError": true
+            },
+            {
+              "name": "Glob",
+              "input": {
+                "pattern": "**/payments.ts"
+              },
+              "result": "No files found",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -R /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/noinvent",
+                "description": "List directory contents recursively"
+              },
+              "result": "README.md\nsrc\n\n/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/noinvent/src:\ncart.test.ts\ncart.ts\nformat.ts\ngreet.ts",
+              "isError": false
+            }
+          ],
+          "ms": 69896,
+          "ttftMs": 31033,
+          "usage": {
+            "jobs": 4,
+            "gpuMs": 12482,
+            "usd": 0.003869,
+            "estimated": true
+          },
+          "cost": 0.003869
+        }
+      ]
+    },
+    {
+      "id": "spanish",
+      "title": "Spanish question",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "La respuesta en español es correcta, breve, en una frase, sin herramientas ni texto basura."
+      },
+      "ms": 21477,
+      "ttftMs": 21438,
+      "errors": 0,
+      "jobs": 1,
+      "gpuMs": 1446,
+      "turns": [
+        {
+          "prompt": "¿Cuál es la capital de Australia? Responde en una frase.",
+          "text": "La capital de Australia es Canberra.",
+          "tools": [],
+          "ms": 21477,
+          "ttftMs": 21438,
+          "usage": {
+            "jobs": 1,
+            "gpuMs": 1446,
+            "usd": 0.000448,
+            "estimated": true
+          },
+          "cost": 0.000448
+        }
+      ]
+    },
+    {
+      "id": "followup",
+      "title": "Follow-up turn uses context",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "Turn 1 correctly returns \"$2.50\" from one Read, and turn 2 correctly derives \"$0.05\" from the prior context without needless tool use."
+      },
+      "ms": 26787,
+      "ttftMs": 5395,
+      "errors": 0,
+      "jobs": 3,
+      "gpuMs": 11110,
+      "turns": [
+        {
+          "prompt": "Read src/format.ts and tell me what formatPrice(250) returns.",
+          "text": "`formatPrice(250)` returns **`\"$2.50\"`** — the function takes a price in *cents*, so 250 cents → `$${Math.floor(250/100)}.${(250%100).padStart(2,\"0\")}` = `$2.50`.",
+          "tools": [
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/followup/src/format.ts"
+              },
+              "result": "1\t/** Display string for a price in cents, e.g. 1999 → \"$19.99\". */\n2\texport function formatPrice(cents: number): string {\n3\t  const dollars = Math.floor(cents / 100);\n4\t  const rest = String(cents % 100).padStart(2, \"0\");\n5\t  return `$${dollars}.${rest}`;\n6\t}\n7\t",
+              "isError": false
+            }
+          ],
+          "ms": 15178,
+          "ttftMs": 5395,
+          "usage": {
+            "jobs": 2,
+            "gpuMs": 7196,
+            "usd": 0.002231,
+            "estimated": true
+          },
+          "cost": 0.002231
+        },
+        {
+          "prompt": "And what would it return for 5?",
+          "text": "`formatPrice(5)` returns **`\"$0.05\"`** — 5 cents: `Math.floor(5/100)` is 0, and `String(5 % 100).padStart(2, \"0\")` is `\"05\"`.",
+          "tools": [],
+          "ms": 11609,
+          "ttftMs": 11407,
+          "usage": {
+            "jobs": 1,
+            "gpuMs": 3914,
+            "usd": 0.001213,
+            "estimated": true
+          },
+          "cost": 0.001213
+        }
+      ]
+    },
+    {
+      "id": "projects",
+      "title": "Knows the user's projects",
+      "group": "context",
+      "pass": false,
+      "infra": null,
+      "check": "fewer than 3 real projects named",
+      "junk": null,
+      "verdict": {
+        "correct": false,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": false,
+        "note": "The assistant only looked inside a tinyshop eval folder and reported tinyshop as the sole project, never consulting ~/.claude/LIFEOS/USER/PROJECTS.md where the user's real projects (Setpoint, OpenRally, etc.) are listed, so the answer is wrong and the tool choice missed the relevant source."
+      },
+      "ms": 53596,
+      "ttftMs": 35358,
+      "errors": 0,
+      "jobs": 3,
+      "gpuMs": 41403,
+      "turns": [
+        {
+          "prompt": "What projects am I working on right now? A short list.",
+          "text": "Based on the current directory, you're working on:\n\n- **tinyshop** — a CLI tool that totals shopping carts (cart math in cents, discount codes, regional VAT, CSV export), built with TypeScript/Bun (`bun test`).\n\nThat's the only project in this workspace.",
+          "tools": [
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -la /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/projects",
+                "description": "List files in the projects directory"
+              },
+              "result": "total 8\ndrwxr-xr-x   4 mrmading  staff  128 Oct 23 10:11 .\ndrwxr-xr-x  17 mrmading  staff  544 Oct 23 10:07 ..\n-rw-r--r--   1 mrmading  staff  559 Oct 23 09:52 README.md\ndrwxr-xr-x   6 mrmading  staff  192 Oct 23 10:11 src",
+              "isError": false
+            },
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/projects/README.md"
+              },
+              "result": "1\t# tinyshop\n2\t\n3\tA tiny command-line tool that totals shopping carts for small online shops.\n4\t\n5\t## Features\n6\t\n7\t- **Cart totals** — sums item price × quantity, in cents, so there are no rounding errors.\n8\t- **Discount codes** — `SAVE10` takes 10% off the total; unknown codes are ignored.\n9\t- **Regional tax** — adds VAT by region (TH 7%, ES 21%, US 0% at checkout).\n10\t- **CSV export** — writes the cart to a CSV file for the shop's accounting.\n11\t\n12\t## Develop\n13\t\n14\t```sh\n15\tbun test\n16\t```\n17\t\n18\tPrices are integers in cents everywhere; `formatPrice` turns them into display strings.\n19\t",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -la /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/projects/src",
+                "description": "List files in src directory"
+              },
+              "result": "total 32\ndrwxr-xr-x  6 mrmading  staff  192 Oct 23 10:11 .\ndrwxr-xr-x  4 mrmading  staff  128 Oct 23 10:11 ..\n-rw-r--r--  1 mrmading  staff  445 Oct 23 09:52 cart.test.ts\n-rw-r--r--  1 mrmading  staff  455 Oct 23 09:52 cart.ts\n-rw-r--r--  1 mrmading  staff  251 Oct 23 09:52 format.ts\n-rw-r--r--  1 mrmading  staff  107 Oct 23 09:52 greet.ts",
+              "isError": false
+            }
+          ],
+          "ms": 53596,
+          "ttftMs": 35358,
+          "usage": {
+            "jobs": 3,
+            "gpuMs": 41403,
+            "usd": 0.012835,
+            "estimated": true
+          },
+          "cost": 0.012835
+        }
+      ]
+    },
+    {
+      "id": "setpoint",
+      "title": "Knows where a repo lives",
+      "group": "context",
+      "pass": false,
+      "infra": null,
+      "check": "did not give ~/setpoint",
+      "junk": null,
+      "verdict": {
+        "correct": false,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "The answer gives a path under a temp eval directory rather than the expected ~/setpoint (/Users/mrmading/setpoint) from the projects table, which the assistant never consulted; it did not check for a canonical location or invent one, but the path it reported is not the expected one."
+      },
+      "ms": 32560,
+      "ttftMs": 12999,
+      "errors": 0,
+      "jobs": 3,
+      "gpuMs": 18761,
+      "turns": [
+        {
+          "prompt": "Where is the Setpoint repo on this machine?",
+          "text": "The Setpoint repo is at `/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/setpoint` — it contains a `README.md` and a `src/` directory with `cart.ts`, `cart.test.ts`, `format.ts`, and `greet.ts`.",
+          "tools": [
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -la /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/setpoint",
+                "description": "List contents of setpoint directory"
+              },
+              "result": "total 8\ndrwxr-xr-x   4 mrmading  staff  128 Oct 23 10:11 .\ndrwxr-xr-x  17 mrmading  staff  544 Oct 23 10:07 ..\n-rw-r--r--   1 mrmading  staff  559 Oct 23 09:52 README.md\ndrwxr-xr-x   6 mrmading  staff  192 Oct 23 10:11 src",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/setpoint/src; find /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/qwen-v1-realmodel/setpoint -maxdepth 2 -name \".git\"",
+                "description": "Check src contents and look for .git"
+              },
+              "result": "cart.test.ts\ncart.ts\nformat.ts\ngreet.ts",
+              "isError": false
+            }
+          ],
+          "ms": 32560,
+          "ttftMs": 12999,
+          "usage": {
+            "jobs": 3,
+            "gpuMs": 18761,
+            "usd": 0.005816,
+            "estimated": true
+          },
+          "cost": 0.005816
+        }
+      ]
+    }
+  ]
+}

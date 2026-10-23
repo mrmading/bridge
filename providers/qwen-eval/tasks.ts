@@ -6,11 +6,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type ToolCall = { name: string; input: any; result?: string; isError?: boolean };
-export type Turn = { prompt: string; text: string; tools: ToolCall[]; ms: number; error?: string; usage?: any; cost?: number };
+export type Turn = { prompt: string; text: string; tools: ToolCall[]; ms: number; ttftMs: number; error?: string; usage?: any; cost?: number };
 export type Ctx = { dir: string; turns: Turn[]; final: string; tools: ToolCall[] };
 export type Task = {
   id: string;
   title: string;
+  /** core = the 12 Bridge tasks; context = needs the principal's world (projects, people) */
+  group?: "core" | "context";
   prompt: string;
   followup?: string;
   expect: string;
@@ -122,6 +124,22 @@ export const TASKS: Task[] = [
     followup: "And what would it return for 5?",
     expect: "Turn 1: \"$2.50\". Turn 2 (follow-up, relying on turn 1's context): \"$0.05\".",
     check: (c) => (!c.turns[0]?.text.includes("$2.50") ? "turn 1 missing $2.50" : !c.final.includes("$0.05") ? "turn 2 missing $0.05" : null),
+  },
+  {
+    id: "projects",
+    group: "context",
+    title: "Knows the user's projects",
+    prompt: "What projects am I working on right now? A short list.",
+    expect: "Lists real projects of the principal. Ground truth (~/.claude/LIFEOS/USER/PROJECTS.md): Setpoint (+ landing, booking), OpenRally, The Padel Society app, Pad Thai Padel app, Polaris (+ mobile), ControlTower, TAPE, zeroship, Floor, consultalegal, 24 BLVD, PTP jobs site, TPS expenses, Bridge; Activa also appears in his memory/goals. Any subset of these is correct; inventing other projects, or describing the tinyshop folder as his projects, is wrong.",
+    check: (c) => (["Setpoint", "OpenRally", "Polaris", "TAPE", "zeroship", "Padel"].filter((p) => c.final.includes(p)).length >= 3 ? null : "fewer than 3 real projects named"),
+  },
+  {
+    id: "setpoint",
+    group: "context",
+    title: "Knows where a repo lives",
+    prompt: "Where is the Setpoint repo on this machine?",
+    expect: "Answers ~/setpoint (i.e. /Users/mrmading/setpoint), from the projects table. No invented paths.",
+    check: (c) => (/(~|\/Users\/mrmading)\/setpoint\b/.test(c.final) ? null : "did not give ~/setpoint"),
   },
 ];
 

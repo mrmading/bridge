@@ -90,10 +90,10 @@ describe("anthropicToOllama", () => {
       messages: [
         { role: "user", content: [{ type: "text", text: "<system-reminder>\nCLAUDE.md says hi\n</system-reminder>" }, { type: "text", text: "Reply with exactly: qwen is alive" }] },
         { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "echo QWEN_OK" } }] },
-        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "QWEN_OK\n<system-reminder>Attribution for git commits</system-reminder>" }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "QWEN_OK\n<system-reminder>The todo list is empty</system-reminder>" }] },
       ],
     });
-    expect(payload.messages[0]).toEqual({ role: "system", content: "Base.\n\nCLAUDE.md says hi\n\nAttribution for git commits" });
+    expect(payload.messages[0]).toEqual({ role: "system", content: "Base.\n\nCLAUDE.md says hi\n\nThe todo list is empty" });
     expect(payload.messages[1]).toEqual({ role: "user", content: "Reply with exactly: qwen is alive" });
     expect(payload.messages[3].content).toBe("QWEN_OK");
     expect(JSON.stringify(payload.messages.slice(1))).not.toContain("system-reminder");
@@ -135,6 +135,41 @@ describe("anthropicToOllama", () => {
     const { payload } = anthropicToOllama({ messages: [{ role: "user", content: "x" }] }, { model: "hf.co/a/b:Q4_K_M" });
     expect(payload.model).toBe("hf.co/a/b:Q4_K_M");
     expect(anthropicToOllama({ messages: [{ role: "user", content: "x" }] }).payload.model).toBeUndefined();
+  });
+
+  test("core tools get Qwen's compact profile: short description, minimal schema; others pass through", () => {
+    const bashSchema = { type: "object", properties: { command: { type: "string" }, timeout: { type: "number" }, run_in_background: { type: "boolean" }, dangerouslyDisableSandbox: { type: "boolean" } }, required: ["command"] };
+    const { payload } = anthropicToOllama({
+      messages: [{ role: "user", content: "x" }],
+      tools: [
+        { name: "Bash", description: "x".repeat(1700), input_schema: bashSchema },
+        { name: "Custom", description: "Mine.", input_schema: { type: "object", properties: { a: { type: "string" } } } },
+      ],
+    }, { toolProfile: true });
+    const bash = payload.tools!.find((t) => t.function.name === "Bash")!.function;
+    expect(bash.description.length).toBeLessThan(400);
+    expect(Object.keys((bash.parameters as any).properties)).toEqual(["command", "timeout"]);
+    expect((bash.parameters as any).required).toEqual(["command"]);
+    expect(payload.tools!.find((t) => t.function.name === "Custom")!.function.description).toBe("Mine.");
+    const off = anthropicToOllama({ messages: [{ role: "user", content: "x" }], tools: [{ name: "Bash", description: "long", input_schema: bashSchema }] });
+    expect(off.payload.tools![0].function.parameters).toEqual(bashSchema);
+  });
+
+  test("Claude identity lines and the git attribution reminder never reach Qwen", () => {
+    const { payload } = anthropicToOllama({
+      system: [
+        { type: "text", text: "You are a Claude agent, built on Anthropic's Claude Agent SDK." },
+        { type: "text", text: "You are Qwen." },
+      ],
+      messages: [{ role: "user", content: [{ type: "text", text: "<system-reminder>\nAttribution for git commits and pull requests: end with Co-Authored-By\n</system-reminder>" }, { type: "text", text: "hi" }] }],
+    });
+    expect(payload.messages[0]).toEqual({ role: "system", content: "You are Qwen." });
+  });
+
+  test("Qwen's recommended sampling is the default; a request's own temperature wins", () => {
+    const d = anthropicToOllama({ messages: [{ role: "user", content: "x" }] }, { sampling: true }).payload.options;
+    expect(d).toMatchObject({ temperature: 0.6, top_p: 0.95, top_k: 20 });
+    expect(anthropicToOllama({ messages: [{ role: "user", content: "x" }], temperature: 0 }, { sampling: true }).payload.options.temperature).toBe(0);
   });
 
   test("nothing is trimmed when the prompt fits", () => {
@@ -394,15 +429,24 @@ describe("handleQwen", () => {
 
   test("a malformed pseudo tool call is retried once with a fresh job", async () => {
     let runs = 0;
-    globalThis.fetch = (async (input: any) => {
+    const sent: any[] = [];
+    globalThis.fetch = (async (input: any, init?: any) => {
       const url = String(input);
-      if (url.endsWith("/run")) return Response.json({ id: `job${++runs}`, status: "IN_QUEUE" });
+      if (url.endsWith("/run")) {
+        sent.push(JSON.parse(init.body));
+        return Response.json({ id: `job${++runs}`, status: "IN_QUEUE" });
+      }
       const content = url.endsWith("job1") ? '{"name": "qwen", "parameters": {}}' : "qwen is alive";
       return Response.json({ status: "COMPLETED", output: { message: { content } } });
     }) as typeof fetch;
     const res = await handleQwen(post({ messages: [{ role: "user", content: "hi" }], tools: [{ name: "Bash", input_schema: { type: "object" } }] }), "v1/messages");
     expect((await res.json()).content).toEqual([{ type: "text", text: "qwen is alive" }]);
     expect(runs).toBe(2);
+    // the retry tells the model what went wrong instead of rolling the dice again
+    const retry = sent.at(-1)!.input.messages;
+    expect(retry.at(-2)).toEqual({ role: "assistant", content: '{"name": "qwen", "parameters": {}}' });
+    expect(retry.at(-1).role).toBe("user");
+    expect(retry.at(-1).content).toContain("tool call written as text");
   });
 
   test("GPU time is accumulated per Claude Code session from /status executionTime", async () => {

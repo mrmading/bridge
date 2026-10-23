@@ -83,6 +83,8 @@ const config = () => ({
   // which is what every turn ran on until this was set. Q4_K_M (16 GB) + a 64k KV cache fit 48 GB.
   model: process.env.RUNPOD_QWEN_MODEL || "hf.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF:Q4_K_M",
   numCtx: num("RUNPOD_NUM_CTX", 65536),
+  toolProfile: process.env.RUNPOD_QWEN_TOOL_PROFILE !== "0",
+  sampling: process.env.RUNPOD_QWEN_SAMPLING !== "0",
   maxOutput: num("RUNPOD_MAX_OUTPUT", 8192),
   timeoutMs: num("RUNPOD_JOB_TIMEOUT_MS", 900_000),
   pollMs: num("RUNPOD_POLL_MS", 2000),
@@ -120,12 +122,17 @@ function asObject(args: unknown): Record<string, unknown> {
   return {};
 }
 
+/** Claude Code's own one-line identity, which a --system-prompt cannot remove; Qwen then believes it is Claude. */
+const CLAUDE_IDENTITY = /^\s*You are (a Claude agent|Claude Code)\b[^\n]*$/;
+/** Injected reminders that only matter to Claude's own git habits. */
+const DROPPED_REMINDER = /^Attribution for git commits/;
+
 function convertMessages(body: Json): OllamaMessage[] {
   const out: OllamaMessage[] = [];
   const system = Array.isArray(body.system)
     ? body.system
         .map((b: Json) => b?.text ?? "")
-        .filter((t: string) => t && !t.startsWith("x-anthropic-billing-header"))
+        .filter((t: string) => t && !t.startsWith("x-anthropic-billing-header") && !CLAUDE_IDENTITY.test(t))
         .join("\n\n")
     : body.system || "";
   // Qwen's chat template renders a system message only in first position, so Claude Code's
@@ -136,7 +143,7 @@ function convertMessages(body: Json): OllamaMessage[] {
   const fold = (text: string) =>
     text
       .replace(/<system-reminder>\s*([\s\S]*?)\s*<\/system-reminder>/g, (_, inner: string) => {
-        if (inner && !systemParts.includes(inner)) systemParts.push(inner);
+        if (inner && !DROPPED_REMINDER.test(inner) && !systemParts.includes(inner)) systemParts.push(inner);
         return "";
       })
       .trim();
@@ -178,14 +185,35 @@ function convertMessages(body: Json): OllamaMessage[] {
   return out;
 }
 
-function convertTools(body: Json): NonNullable<OllamaPayload["tools"]> {
+/**
+ * Qwen copies whatever a schema offers: given Claude Code's full Bash/Read/Edit schemas it fills in
+ * timeout, run_in_background, allow_large, replace_all and empty old_strings on every call. The core
+ * tools get a short description and only the parameters a turn needs, closed so stray keys are dropped
+ * by cleanInput. Property schemas come from the request, so inputs stay valid for Claude Code.
+ */
+const TOOL_PROFILE: Record<string, { description: string; keep: string[] }> = {
+  Bash: { description: "Run a shell command in the project folder and return its output. Use it for tests, scripts, git, ls and other CLI work.", keep: ["command", "timeout"] },
+  Read: { description: "Read a file and return its contents with line numbers. Paths may be relative to the project folder.", keep: ["file_path", "offset", "limit"] },
+  Edit: { description: "Replace one exact, unique piece of text in a file. Read the file first; old_string must match it exactly (indentation included) and is never empty.", keep: ["file_path", "old_string", "new_string"] },
+  Write: { description: "Create a file, or overwrite one, with the given content.", keep: ["file_path", "content"] },
+  Glob: { description: "Find files by name pattern such as \"**/*.ts\" or \"src/*\". Returns the matching paths.", keep: ["pattern", "path"] },
+  Grep: { description: "Search file contents with a regular expression. output_mode \"content\" shows matching lines with line numbers; the default lists matching files.", keep: ["pattern", "path", "glob", "output_mode"] },
+};
+
+function profiled(name: string, description: string, schema: Json, on: boolean) {
+  const p = on ? TOOL_PROFILE[name] : undefined;
+  if (!p || schema?.type !== "object" || !schema.properties) return { name, description, parameters: schema };
+  const properties: Json = {};
+  for (const k of p.keep) if (schema.properties[k]) properties[k] = schema.properties[k];
+  const required = (schema.required || []).filter((k: string) => k in properties);
+  return { name, description: p.description, parameters: { type: "object", properties, required, additionalProperties: false } };
+}
+
+function convertTools(body: Json, toolProfile = false): NonNullable<OllamaPayload["tools"]> {
   if (body.tool_choice?.type === "none") return [];
   return (body.tools || [])
     .filter((t: Json) => t?.input_schema && !t.defer_loading)
-    .map((t: Json) => ({
-      type: "function" as const,
-      function: { name: t.name, description: t.description || "", parameters: t.input_schema },
-    }));
+    .map((t: Json) => ({ type: "function" as const, function: profiled(t.name, t.description || "", t.input_schema, toolProfile) }));
 }
 
 const firstSentence = (s: string) => {
@@ -214,13 +242,13 @@ function cutMiddle(text: string, keep: number): string {
  */
 export function anthropicToOllama(
   body: Json,
-  opts: { numCtx?: number; maxOutput?: number; model?: string } = {},
+  opts: { numCtx?: number; maxOutput?: number; model?: string; toolProfile?: boolean; sampling?: boolean } = {},
 ): { payload: OllamaPayload; trimmed: string[] } {
   const numCtx = opts.numCtx ?? 65536;
   const maxOutput = opts.maxOutput ?? 8192;
   const budget = Math.max(1000, (numCtx - maxOutput) * CHARS_PER_TOKEN);
   let messages = convertMessages(body);
-  const tools = convertTools(body);
+  const tools = convertTools(body, opts.toolProfile);
   const trimmed: string[] = [];
 
   if (sizeOf(messages, tools) > budget && tools.length) {
@@ -272,6 +300,8 @@ export function anthropicToOllama(
   }
 
   const options: Record<string, unknown> = { num_ctx: numCtx, num_predict: Math.min(body.max_tokens || maxOutput, maxOutput) };
+  // Qwen's recommended thinking-mode sampling; Ollama's GGUF default (0.8, no top_k) rambles.
+  if (opts.sampling) Object.assign(options, { temperature: 0.6, top_p: 0.95, top_k: 20 });
   if (typeof body.temperature === "number") options.temperature = body.temperature;
   if (typeof body.top_p === "number") options.top_p = body.top_p;
   if (typeof body.top_k === "number") options.top_k = body.top_k;
@@ -572,8 +602,17 @@ async function messages(req: Request, cfg: Cfg): Promise<Response> {
   const complete = async () => {
     let msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal, sessionId), inputEstimate, toolNames, schemas);
     if (isMalformedToolCall(msg, toolNames)) {
-      console.error("[qwen] reply was a pseudo tool call to an unknown tool; retrying once");
-      msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal, sessionId), inputEstimate, toolNames, schemas);
+      console.error("[qwen] reply was a pseudo tool call to an unknown tool; retrying once with a correction");
+      const bad = (msg.content[0] as { text: string }).text;
+      const corrected: OllamaPayload = {
+        ...payload,
+        messages: [
+          ...payload.messages,
+          { role: "assistant", content: bad },
+          { role: "user", content: `That reply was a tool call written as text, and "${bad.slice(0, 80)}" is not a tool the user can see. Either call one of your tools properly, or answer the previous request in plain words.` },
+        ],
+      };
+      msg = ollamaToAnthropic(await runJob(cfg, corrected, abort.signal, sessionId), inputEstimate, toolNames, schemas);
     }
     return msg;
   };

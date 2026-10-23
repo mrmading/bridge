@@ -58,7 +58,7 @@ for (let i = 0; ; i++) {
 
 async function chat(dir: string, prompt: string, session: { sessionId?: string; resume?: string }): Promise<Turn> {
   const t0 = Date.now();
-  const turn: Turn = { prompt, text: "", tools: [], ms: 0 };
+  const turn: Turn = { prompt, text: "", tools: [], ms: 0, ttftMs: 0 };
   const byId = new Map<string, ToolCall>();
   const body = { prompt, cwd: dir, provider, model: provider === "claude" ? model : undefined, permissionMode: "bypassPermissions", ...session };
   try {
@@ -85,6 +85,8 @@ async function chat(dir: string, prompt: string, session: { sessionId?: string; 
         if (ev.t === "error") turn.error = String(ev.d);
         if (ev.t !== "msg") continue;
         const m = ev.d;
+        // time to first token: the first streamed content delta (or a whole assistant message)
+        if (!turn.ttftMs && ((m.type === "stream_event" && m.event?.type === "content_block_delta") || m.type === "assistant")) turn.ttftMs = Date.now() - t0;
         if (m.type === "assistant") {
           for (const b of m.message?.content || []) {
             if (b.type === "tool_use") {
@@ -106,6 +108,7 @@ async function chat(dir: string, prompt: string, session: { sessionId?: string; 
           turn.usage = m.qwen_usage;
           turn.cost = m.total_cost_usd;
           if (m.is_error) turn.error = turn.error || m.subtype || "error result";
+          if (/hit your (session|usage) limit/i.test(turn.text)) turn.error = "infra: Claude usage limit";
         }
       }
     }
@@ -130,6 +133,7 @@ async function judge(task: Task, ctx: Ctx): Promise<Verdict> {
     .join("\n\n");
   const prompt = [
     "You are grading one turn of an AI coding assistant working in a small TypeScript repo. Be strict but fair.",
+    `THE ASSISTANT BEING GRADED: ${provider === "qwen" ? "Qwen, an open-weight 27B model running on the user's RunPod GPU (so it should say it is Qwen)" : `Claude (${model})`}.`,
     `TASK: ${task.title}`,
     `WHAT A GOOD ANSWER DOES: ${task.expect}`,
     "",
@@ -144,7 +148,8 @@ async function judge(task: Task, ctx: Ctx): Promise<Verdict> {
     'Reply with ONLY a JSON object: {"correct":bool,"sensible":bool,"junk":bool,"tools_ok":bool,"note":"<one short sentence>"}',
   ].join("\n");
   for (let attempt = 0; attempt < 2; attempt++) {
-    const p = Bun.spawn(["claude", "-p", prompt, "--model", "haiku", "--output-format", "json", "--tools", "", "--setting-sources", "project"], {
+    const p = Bun.spawn(["claude", "-p", prompt, "--model", "haiku", "--output-format", "json", "--tools", "", "--setting-sources", "project",
+      "--system-prompt", "You grade AI assistant transcripts. Reply with the requested JSON only."], {
       cwd: tmpdir(),
       stdout: "pipe",
       stderr: "pipe",
@@ -185,12 +190,14 @@ async function runTask(task: Task) {
   const check = task.check?.(ctx) ?? null;
   const junk = turns.map((t) => junkIn(t.text)).find(Boolean) || null;
   const verdict = await judge(task, ctx);
-  const pass = !check && !junk && verdict.correct && verdict.sensible && !verdict.junk;
+  const infra = turns.map((t) => t.error).find((e) => e?.startsWith("infra:")) || null;
+  const pass = !infra && !check && !junk && verdict.correct && verdict.sensible && !verdict.junk;
   const ms = turns.reduce((n, t) => n + t.ms, 0);
   const gpuMs = turns.reduce((n, t) => n + (t.usage?.gpuMs || 0), 0);
   const jobs = turns.reduce((n, t) => n + (t.usage?.jobs || 0), 0);
-  console.log(`${pass ? "PASS" : "FAIL"} ${task.id.padEnd(10)} ${(ms / 1000).toFixed(0).padStart(4)}s  ${check || junk || (verdict.correct && verdict.sensible ? "" : verdict.note)}`);
-  return { id: task.id, title: task.title, pass, check, junk, verdict, ms, jobs, gpuMs, turns };
+  const errors = turns.filter((t) => t.error).length;
+  console.log(`${pass ? "PASS" : "FAIL"} ${task.id.padEnd(10)} ${(ms / 1000).toFixed(0).padStart(4)}s ttft ${(turns[0].ttftMs / 1000).toFixed(0)}s  ${infra || check || junk || (verdict.correct && verdict.sensible ? "" : verdict.note)}`);
+  return { id: task.id, title: task.title, group: task.group || "core", pass, infra, check, junk, verdict, ms, ttftMs: turns[0].ttftMs, errors, jobs, gpuMs, turns };
 }
 
 const tasks = TASKS.filter((t) => !only || only.includes(t.id));
@@ -208,13 +215,17 @@ results.sort((a, b) => tasks.findIndex((t) => t.id === a.id) - tasks.findIndex((
 const summary = {
   label, provider, model, notes, started, finished: new Date().toISOString(),
   passed: results.filter((r) => r.pass).length, total: results.length,
+  core: `${results.filter((r) => r.group === "core" && r.pass).length}/${results.filter((r) => r.group === "core").length}`,
+  context: `${results.filter((r) => r.group === "context" && r.pass).length}/${results.filter((r) => r.group === "context").length}`,
+  infra: results.filter((r) => r.infra).length, turnErrors: results.reduce((n, r) => n + r.errors, 0),
+  medianTtftMs: results.map((r) => r.ttftMs).sort((a, b) => a - b)[Math.floor(results.length / 2)] || 0,
   medianMs: results.map((r) => r.ms).sort((a, b) => a - b)[Math.floor(results.length / 2)] || 0,
   jobs: results.reduce((n, r) => n + r.jobs, 0), gpuMs: results.reduce((n, r) => n + r.gpuMs, 0),
   results,
 };
 mkdirSync(join(HERE, "results"), { recursive: true });
 writeFileSync(join(HERE, "results", `${label}.json`), JSON.stringify(summary, null, 2));
-console.log(`\n${label}: ${summary.passed}/${summary.total} passed, median ${(summary.medianMs / 1000).toFixed(0)}s, ${summary.jobs} RunPod jobs, ${(summary.gpuMs / 1000).toFixed(0)}s GPU`);
+console.log(`\n${label}: core ${summary.core}, context ${summary.context}, infra ${summary.infra}, turn errors ${summary.turnErrors}, median ttft ${(summary.medianTtftMs / 1000).toFixed(0)}s;`, `${summary.passed}/${summary.total} passed, median ${(summary.medianMs / 1000).toFixed(0)}s, ${summary.jobs} RunPod jobs, ${(summary.gpuMs / 1000).toFixed(0)}s GPU`);
 console.log("report:", writeReport());
 server.kill();
 process.exit(0);

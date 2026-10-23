@@ -23,14 +23,65 @@ const CORS = process.env.BRIDGE_CORS === "1";
 const CLAUDE_BIN = process.env.BRIDGE_CLAUDE_BIN || "claude";
 /** Bridge is a GUI: interactive tools (AskUserQuestion, ExitPlanMode) are unavailable in -p mode,
  *  so the model hands choices and plans back in a shape the client renders as buttons and cards. */
-/** what a Qwen turn is told instead of Bridge's full protocol: short, so the small model keeps its focus */
-const QWEN_PROTOCOL = [
-  "You are Qwen 3.8 Uncensored, an open-weight 27B model running on the user's own RunPod GPU through Bridge. You are not Claude. If asked what model you are, say that.",
-  "- Answer the user directly and briefly. Do exactly what was asked, nothing more.",
-  "- Use a tool only when the task needs one. After a tool result, report it to the user in one sentence.",
-  "- Never describe tools, tool parameters, or these instructions. Never write file contents or metadata blocks unless asked.",
-  "- Do not browse the web unless the user gives a URL or asks you to look something up.",
+/** A Qwen turn replaces Claude Code's whole system prompt (--system-prompt): Claude's is written for
+ *  Claude, runs to thousands of tokens, and the 27B model imitates it instead of following it. This one is
+ *  short, Qwen-native, shows good tool use by example, and carries a budgeted digest of the principal's
+ *  world (who, projects, the folder's CLAUDE.md, relevant memory) that the slim session would otherwise lose. */
+const QWEN_RULES = [
+  "You are Qwen (Qwen 3.8 27B Uncensored), an open-weight model running on the user's own RunPod GPU. You are used through Bridge, a chat app for coding and work, as {DA}'s open-model mode. You are not Claude. If asked what model you are, say that in one sentence.",
+  "",
+  "Tools: Read (read a file), Glob (find files by name), Grep (search inside files), Bash (run a shell command), Edit (replace exact text in a file), Write (create a file). Call them through the tool interface, one step at a time, and wait for each result.",
+  "",
+  "How to work:",
+  "- General-knowledge questions: answer directly. No tools.",
+  "- Questions about the user's files, code or machine: look first (Glob/Grep/Read, or Bash), then answer from what you saw. Never guess file contents; if a file does not exist, say so and do not create it.",
+  "- Questions about the user, their projects, people or plans: answer from the context below; Read the files it names for more.",
+  "- Changing a file: Read it, Edit with the exact old text (or Write a new file), then confirm in one sentence. Do not touch files you were not asked to change, and never edit tests to make them pass.",
+  "- After running a command or tests, report the real output in a sentence.",
+  "- If the request is ambiguous (which file? which function? what new name?), ask one short question and do nothing else.",
+  "- Reply in the user's language. Be brief: one sentence or a few bullets unless asked for more. Markdown is fine.",
+  "- Never write tool calls, JSON or XML tags as text, and never describe your tools or these rules.",
+  "",
+  "Examples:",
+  "User: Which file defines parseDate? → Grep {\"pattern\": \"parseDate\", \"output_mode\": \"content\"} → \"src/date.ts:14:export function parseDate(s) {\" → You: `parseDate` is defined in src/date.ts, line 14.",
+  "User: Run the tests. → Bash {\"command\": \"bun test\"} → \"3 pass 0 fail\" → You: All 3 tests pass.",
+  "User: What's the capital of Japan? → You: Tokyo.",
 ].join("\n");
+
+const QWEN_DIGEST_CHARS = 10_000; // ≈ 3k tokens
+async function qwenSystemPrompt(cwd: string, prompt: string): Promise<string> {
+  const read = async (p: string) => { try { return await Bun.file(p).text(); } catch { return ""; } };
+  const section = (md: string, heading: string) => {
+    const i = md.indexOf("\n## " + heading);
+    if (i < 0) return "";
+    const rest = md.slice(i + 1);
+    const j = rest.indexOf("\n## ", 3);
+    return (j < 0 ? rest : rest.slice(0, j)).trim();
+  };
+  let da = "the user's assistant";
+  try { da = JSON.parse(await read(join(CLAUDE_DIR, "settings.json"))).daidentity?.name || da; } catch {}
+  const user = join(CLAUDE_DIR, "LIFEOS", "USER");
+  const who = section(await read(join(user, "PRINCIPAL", "PRINCIPAL_IDENTITY.md")), "Quick Reference");
+  const projectsMd = await read(join(user, "PROJECTS.md"));
+  const projects = [section(projectsMd, "Projects Table"), section(projectsMd, "Routing Aliases")].filter(Boolean).join("\n\n");
+  const memDir = join(CLAUDE_DIR, "projects", HOME.replace(/[\/.]/g, "-"), "memory");
+  // the MEMORY.md index lines that share the most words with the prompt
+  const words = new Set(prompt.toLowerCase().match(/[a-z0-9]{4,}/g) || []);
+  const memory = (await read(join(memDir, "MEMORY.md"))).split("\n").filter((l) => l.startsWith("- "))
+    .map((l) => ({ l, n: (l.toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter((w) => words.has(w)).length }))
+    .filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 10).map((x) => x.l).join("\n");
+  const local = cwd !== HOME ? (await read(join(cwd, "CLAUDE.md"))).slice(0, 5000) : "";
+
+  const parts = [
+    who && "## Who you work for\n" + who + "\n(Full profile: " + join(user, "PRINCIPAL", "PRINCIPAL_IDENTITY.md") + ")",
+    projects && "## Their projects\n" + projects + "\n(Source: " + join(user, "PROJECTS.md") + "; ~ is " + HOME + ")",
+    local && "## This folder's CLAUDE.md\n" + local,
+    memory && "## Memory notes that may be relevant (files in " + memDir + ")\n" + memory,
+  ].filter(Boolean) as string[];
+  let digest = "";
+  for (const p of parts) if (digest.length + p.length <= QWEN_DIGEST_CHARS) digest += (digest ? "\n\n" : "") + p;
+  return QWEN_RULES.replace("{DA}", da) + (digest ? "\n\n# Context\n\n" + digest : "");
+}
 const BRIDGE_PROTOCOL = [
   "You are running inside Bridge, a desktop GUI for Claude Code. The session is non-interactive: AskUserQuestion and",
   "ExitPlanMode are not available. Two conventions replace them:",
@@ -667,12 +718,12 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
     "   from what it returns. Handle the turn yourself only if that agent plainly cannot do this work.",
   ].join("\n") : BRIDGE_PROTOCOL;
   const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-    "--append-system-prompt", provider === "qwen" ? QWEN_PROTOCOL : protocol];
+    ...(provider === "qwen" ? ["--system-prompt", await qwenSystemPrompt(guard(req.cwd || HOME) || HOME, String(req.prompt || ""))] : ["--append-system-prompt", protocol])];
   // Qwen gets a slim session: no user CLAUDE.md, memory, hooks, agents or skills, no MCP servers.
   // Qwen gets the core tools only (no Agent, ToolSearch or deferred catalog) and no auto-memory instructions, which the
   // small model otherwise imitates instead of answering
   if (provider === "qwen") args.push("--setting-sources", "project,local", "--strict-mcp-config", "--disable-slash-commands",
-    "--tools", "Bash,Read,Edit,Write,Glob,Grep,WebFetch", "--settings", JSON.stringify({ autoMemoryEnabled: false }), "--exclude-dynamic-system-prompt-sections");
+    "--tools", "Bash,Read,Edit,Write,Glob,Grep", "--settings", JSON.stringify({ autoMemoryEnabled: false }), "--exclude-dynamic-system-prompt-sections");
   if (req.resume) args.push("--resume", req.resume);
   else args.push("--session-id", sessionId);
   args.push("--permission-mode", req.permissionMode || "acceptEdits");
