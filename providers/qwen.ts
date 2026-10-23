@@ -15,7 +15,10 @@
  * Env: RUNPOD_QWEN_API_KEY (falls back to that one variable in ~/.claude/.env),
  *      RUNPOD_QWEN_ENDPOINT (6fs36o7hccccvo), RUNPOD_QWEN_MODEL (the Qwen GGUF), RUNPOD_NUM_CTX (65536),
  *      RUNPOD_MAX_OUTPUT (8192, also the room kept free in the window for the answer),
- *      RUNPOD_JOB_TIMEOUT_MS (900000), RUNPOD_POLL_MS (2000), RUNPOD_PING_MS (5000).
+ *      RUNPOD_JOB_TIMEOUT_MS (900000), RUNPOD_POLL_MS (2000), RUNPOD_PING_MS (5000),
+ *      RUNPOD_QWEN_STREAM ("1" streams tokens; off, see config), RUNPOD_QWEN_TOOL_PROFILE / _SAMPLING
+ *      ("0" turns each off), RUNPOD_QWEN_USD_PER_SEC,
+ *      RUNPOD_QWEN_DEBUG_DIR.
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -85,6 +88,9 @@ const config = () => ({
   numCtx: num("RUNPOD_NUM_CTX", 65536),
   toolProfile: process.env.RUNPOD_QWEN_TOOL_PROFILE !== "0",
   sampling: process.env.RUNPOD_QWEN_SAMPLING !== "0",
+  // Off by default: measured 2026-10-23, this handler's stream mode spent 87–91s emitting 2,000 thinking
+  // tokens and no answer for a prompt it answers one-shot in 27–33s. On for a worker that streams properly.
+  stream: process.env.RUNPOD_QWEN_STREAM === "1",
   maxOutput: num("RUNPOD_MAX_OUTPUT", 8192),
   timeoutMs: num("RUNPOD_JOB_TIMEOUT_MS", 900_000),
   pollMs: num("RUNPOD_POLL_MS", 2000),
@@ -465,10 +471,11 @@ export function ollamaToAnthropic(res: Json, inputEstimate: number, toolNames?: 
 
 const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
-/** Everything after message_start: one start/delta/stop per block, then message_delta + message_stop. */
-export function sseEvents(msg: AnthropicMessage): string[] {
+/** Everything after message_start: one start/delta/stop per block (numbered from firstIndex), then message_delta + message_stop. */
+export function sseEvents(msg: AnthropicMessage, firstIndex = 0): string[] {
   const events: string[] = [];
-  msg.content.forEach((b, index) => {
+  msg.content.forEach((b, i) => {
+    const index = firstIndex + i;
     if (b.type === "text") {
       events.push(sse("content_block_start", { type: "content_block_start", index, content_block: { type: "text", text: "" } }));
       events.push(sse("content_block_delta", { type: "content_block_delta", index, delta: { type: "text_delta", text: b.text } }));
@@ -546,13 +553,43 @@ async function runpod(cfg: Cfg, path: string, body?: unknown, signal?: AbortSign
   return JSON.parse(text);
 }
 
-/** Submits with /run and polls /status: one-shot answers take 60–130s, past any runsync wait. */
-async function runJob(cfg: Cfg, input: OllamaPayload, signal: AbortSignal, sessionId?: string): Promise<Json> {
-  debugDump("last-payload.json", input);
-  let res = await runpod(cfg, "run", { input }, signal);
+type Acc = { content: string; tool_calls: Json[]; meta: Json };
+
+/** Folds Ollama stream chunks (NDJSON strings or objects) into one message, calling onText per text delta. */
+function foldChunks(outputs: unknown[], acc: Acc = { content: "", tool_calls: [], meta: {} }, onText?: (t: string) => void): Acc {
+  for (const o of outputs) {
+    const items = typeof o === "string" ? o.split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }) : [o];
+    for (const c of items) {
+      if (!c || typeof c !== "object") continue;
+      const m = c.message || {};
+      if (typeof m.content === "string" && m.content) {
+        acc.content += m.content;
+        onText?.(m.content);
+      }
+      if (Array.isArray(m.tool_calls)) acc.tool_calls.push(...m.tool_calls);
+      if (c.done) acc.meta = c;
+    }
+  }
+  return acc;
+}
+const asOneShot = (a: Acc) => ({ ...a.meta, message: { role: "assistant", content: a.content, ...(a.tool_calls.length ? { tool_calls: a.tool_calls } : {}) } });
+
+/**
+ * Submits with /run and waits. With onText (and RUNPOD_QWEN_STREAM=1) the job runs with
+ * stream:true and /stream/<id> is polled, so text reaches the user as it is generated instead of after
+ * the whole answer; a handler without /stream falls back to /status polling. One-shot answers take
+ * 10–130s, past any runsync wait.
+ */
+async function runJob(cfg: Cfg, input: OllamaPayload, signal: AbortSignal, sessionId?: string, onText?: (t: string) => void): Promise<Json> {
+  const streaming = !!onText && cfg.stream;
+  const sent = streaming ? { ...input, stream: true } : input;
+  debugDump("last-payload.json", sent);
+  let res = await runpod(cfg, "run", { input: sent }, signal);
   const id = res.id;
   const deadline = Date.now() + cfg.timeoutMs;
   const cancel = () => runpod(cfg, `cancel/${id}`, {}).catch(() => {});
+  const acc: Acc = { content: "", tool_calls: [], meta: {} };
+  let useStream = streaming;
   let misses = 0;
   while (["IN_QUEUE", "IN_PROGRESS"].includes(res.status)) {
     if (signal.aborted) {
@@ -563,13 +600,28 @@ async function runJob(cfg: Cfg, input: OllamaPayload, signal: AbortSignal, sessi
       cancel();
       throw new Error(`RunPod job ${id} still ${res.status} after ${cfg.timeoutMs / 1000}s (cold workers or no GPU capacity)`);
     }
-    await Bun.sleep(cfg.pollMs);
+    await Bun.sleep(useStream ? Math.min(cfg.pollMs, 1000) : cfg.pollMs);
     try {
-      res = await runpod(cfg, `status/${id}`, undefined, signal);
+      if (useStream) {
+        const page = await runpod(cfg, `stream/${id}`, undefined, signal);
+        foldChunks((page.stream || []).map((x: Json) => x?.output), acc, onText);
+        res = { ...res, status: page.status ?? res.status };
+      } else {
+        res = await runpod(cfg, `status/${id}`, undefined, signal);
+      }
       misses = 0;
     } catch (e) {
-      if (signal.aborted || ++misses > 5) throw e;
+      if (signal.aborted) throw e;
+      if (useStream) useStream = false; // a handler without /stream: poll /status instead
+      else if (++misses > 5) throw e;
     }
+  }
+  if (streaming) {
+    // /stream carries no billing figures; /status has executionTime (and the aggregated chunks)
+    const final = await runpod(cfg, `status/${id}`, undefined, signal).catch(() => res);
+    const streamed = useStream && (acc.content || acc.tool_calls.length || acc.meta.done);
+    const folded = streamed ? acc : Array.isArray(final.output) ? foldChunks(final.output) : null;
+    res = folded && final.status === "COMPLETED" ? { ...final, output: asOneShot(folded) } : final;
   }
   debugDump("last-result.json", res);
   recordUsage(sessionId, res.executionTime);
@@ -599,8 +651,8 @@ async function messages(req: Request, cfg: Cfg): Promise<Response> {
   req.signal?.addEventListener("abort", () => abort.abort());
   const toolNames = new Set((payload.tools || []).map((t) => t.function.name));
   const schemas = new Map((payload.tools || []).map((t) => [t.function.name, t.function.parameters as Json]));
-  const complete = async () => {
-    let msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal, sessionId), inputEstimate, toolNames, schemas);
+  const complete = async (onText?: (t: string) => void) => {
+    let msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal, sessionId, onText), inputEstimate, toolNames, schemas);
     if (isMalformedToolCall(msg, toolNames)) {
       console.error("[qwen] reply was a pseudo tool call to an unknown tool; retrying once with a correction");
       const bad = (msg.content[0] as { text: string }).text;
@@ -626,8 +678,9 @@ async function messages(req: Request, cfg: Cfg): Promise<Response> {
     }
   }
 
-  // The job answers in one shot after a minute or more; the CLI drops a silent stream, so open
-  // it now, ping every few seconds while RunPod works, then replay the answer as blocks.
+  // The CLI drops a silent stream, so open it now and ping every few seconds while RunPod works. Text
+  // is relayed live as RunPod streams it, unless the reply starts like JSON or markup (a pseudo tool
+  // call or echoed tags), which is held for the full-answer handling; tool calls follow as blocks.
   const enc = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -642,9 +695,29 @@ async function messages(req: Request, cfg: Cfg): Promise<Response> {
       }));
       send(sse("ping", { type: "ping" }));
       const timer = setInterval(() => send(sse("ping", { type: "ping" })), cfg.pingMs);
+      let live = false;
+      let held = false;
+      let pending = "";
+      const onText = (t: string) => {
+        if (held) return;
+        if (live) return send(sse("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } }));
+        pending += t;
+        const head = pending.trimStart();
+        if (!head) return;
+        if (/^[[{<`]/.test(head)) {
+          held = true;
+          return;
+        }
+        live = true;
+        send(sse("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
+        send(sse("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: head } }));
+      };
       try {
-        const msg = await complete();
-        for (const e of sseEvents(msg)) send(e);
+        const msg = await complete(onText);
+        if (live) {
+          send(sse("content_block_stop", { type: "content_block_stop", index: 0 }));
+          for (const e of sseEvents({ ...msg, content: msg.content.filter((b) => b.type !== "text") }, 1)) send(e);
+        } else for (const e of sseEvents(msg)) send(e);
       } catch (e) {
         send(sse("error", { type: "error", error: { type: "api_error", message: String((e as Error).message || e) } }));
       } finally {

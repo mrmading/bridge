@@ -3,70 +3,56 @@
   "provider": "claude",
   "model": "haiku",
   "notes": "Claude haiku, Bridge default session (full user settings)",
-  "started": "2026-10-23T02:55:37.047Z",
-  "finished": "2026-10-23T02:59:45.641Z",
-  "passed": 3,
-  "total": 12,
-  "medianMs": 41102,
+  "started": "2026-10-23T03:15:30.184Z",
+  "finished": "2026-10-23T03:20:00.831Z",
+  "passed": 11,
+  "total": 14,
+  "core": "9/12",
+  "context": "2/2",
+  "infra": 0,
+  "turnErrors": 0,
+  "medianTtftMs": 9180,
+  "medianMs": 23457,
   "jobs": 0,
   "gpuMs": 0,
   "results": [
     {
       "id": "qa",
       "title": "Plain Q&A, no tools",
-      "pass": true,
+      "group": "core",
+      "pass": false,
+      "infra": null,
       "check": null,
       "junk": null,
       "verdict": {
         "correct": true,
-        "sensible": true,
+        "sensible": false,
         "junk": false,
         "tools_ok": true,
-        "note": "Accurate, concise TCP vs UDP comparison with no tool use needed; the bold header and closing offer are slightly beyond the 1-2 sentence request but harmless."
+        "note": "The TCP/UDP explanation is accurate, but the user asked for one or two sentences and the reply adds a header, roughly four sentences, and an emoji tagline."
       },
-      "ms": 45175,
+      "ms": 14193,
+      "ttftMs": 9180,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "In one or two sentences: what is the difference between TCP and UDP?",
-          "text": "**TCP vs UDP**\n\nTCP is connection-oriented and guarantees that data arrives complete, in order, and without duplicates, using handshakes, acknowledgments, and retransmission, at the cost of extra latency. UDP is connectionless and sends independent datagrams with no delivery, ordering, or retransmission guarantees, so it is lighter and faster, which suits streaming, gaming, and DNS lookups.\n\n🗣️ Want me to go deeper on when to pick one over the other?",
+          "text": "**TCP vs UDP**\n\nTCP is connection-oriented and reliable: it sets up a connection, then guarantees ordered, error-checked delivery through retransmission and flow control. UDP is connectionless and best-effort: it skips the handshake and delivery guarantees, which makes it lighter and lower-latency, so it suits streaming, gaming, and DNS.\n\n🗣️ TCP trades speed for guaranteed delivery; UDP trades guarantees for speed.",
           "tools": [],
-          "ms": 45175,
-          "cost": 0.010723459999999999
+          "ms": 14193,
+          "ttftMs": 9180,
+          "cost": 0.012934400000000002
         }
       ]
     },
     {
       "id": "identity",
       "title": "What model are you",
-      "pass": true,
-      "check": null,
-      "junk": null,
-      "verdict": {
-        "correct": true,
-        "sensible": true,
-        "junk": false,
-        "tools_ok": true,
-        "note": "Correctly identifies as Claude Haiku 5.5 matching the environment, but ignores the one-sentence request with a header and a redundant tagline line."
-      },
-      "ms": 37044,
-      "jobs": 0,
-      "gpuMs": 0,
-      "turns": [
-        {
-          "prompt": "What model are you? One sentence.",
-          "text": "**🤖 Model identity**\n\nI'm Claude Haiku 5.5 (model ID `claude-haiku-5-5`), running as Claude Code in this session.\n\n🗣️ Haiku 5.5, the fast Claude tier.",
-          "tools": [],
-          "ms": 37044,
-          "cost": 0.010653860000000001
-        }
-      ]
-    },
-    {
-      "id": "readme",
-      "title": "Summarize the README",
+      "group": "core",
       "pass": false,
+      "infra": null,
       "check": null,
       "junk": null,
       "verdict": {
@@ -74,15 +60,48 @@
         "sensible": true,
         "junk": true,
         "tools_ok": true,
-        "note": "The four expected features are covered in three bullets and the visible README text supports them, but the final line ('That's the whole README...') is meta chatter, and the 'bun test' and 'for accounting' claims fall in the truncated part of the tool output."
+        "note": "Correctly identifies itself as Claude Haiku 5.5 per the environment, with no tools needed, but adds a meta line ('That's the one-sentence answer you asked for') that counts as chatter."
       },
-      "ms": 49190,
+      "ms": 13115,
+      "ttftMs": 9032,
+      "errors": 0,
+      "jobs": 0,
+      "gpuMs": 0,
+      "turns": [
+        {
+          "prompt": "What model are you? One sentence.",
+          "text": "**Model:** I'm Claude Haiku 5.5 (model ID `claude-haiku-5-5`), running in this Claude Code session.\n\n🗣️ That's the one-sentence answer you asked for.",
+          "tools": [],
+          "ms": 13115,
+          "ttftMs": 9032,
+          "cost": 0.012820499999999999
+        }
+      ]
+    },
+    {
+      "id": "readme",
+      "title": "Summarize the README",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "Three bullets match the README's listed features, but \"for accounting\" may be embellished (the CSV line is cut off in the transcript), and a trailing filler line sits outside the requested 3 bullets."
+      },
+      "ms": 16532,
+      "ttftMs": 8679,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "Summarize README.md in this folder in 3 bullet points.",
-          "text": "**tinyshop README summary**\n\n- **What it is:** A tiny command-line tool that totals shopping carts for small online shops.\n- **Pricing rules:** It sums price × quantity in integer cents to avoid rounding errors. `SAVE10` takes 10% off, unknown codes are ignored, and VAT is applied by region (TH 7%, ES 21%, US 0%).\n- **Output and dev:** It exports the cart to CSV for accounting. Tests run with `bun test`.\n\n🗣️ That's the whole README, which is short, so these three bullets cover all of it.",
+          "text": "**tinyshop: README summary**\n\n- **What it is:** A small command-line tool that totals shopping carts for small online shops.\n- **Core features:** It sums price × quantity in integer cents to avoid rounding errors, applies the `SAVE10` discount (10% off, unknown codes ignored), adds regional VAT (TH 7%, ES 21%, US 0%), and exports the cart to CSV for accounting.\n- **Development:** Run the tests with `bun test`. Prices are stored as integers in cents throughout, and `formatPrice` converts them to display strings.\n\n🗣️ The README is short and covers the tool's behavior and the test command.",
           "tools": [
             {
               "name": "Read",
@@ -93,31 +112,36 @@
               "isError": false
             }
           ],
-          "ms": 49190,
-          "cost": 0.01204853
+          "ms": 16532,
+          "ttftMs": 8679,
+          "cost": 0.013844740000000001
         }
       ]
     },
     {
       "id": "grep",
       "title": "Find a function",
-      "pass": false,
+      "group": "core",
+      "pass": true,
+      "infra": null,
       "check": null,
       "junk": null,
       "verdict": {
-        "correct": false,
-        "sensible": false,
+        "correct": true,
+        "sensible": true,
         "junk": false,
-        "tools_ok": false,
-        "note": "judge failed to answer"
+        "tools_ok": true,
+        "note": "The answer correctly gives src/format.ts line 2 found via grep, with a brief, relevant note about the README mention; the bold 'Banner' header and emoji line are minor stylistic fluff but not junk markup."
       },
-      "ms": 68421,
+      "ms": 16213,
+      "ttftMs": 6664,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "Which file defines the function formatPrice? Give the path and the line number.",
-          "text": "**formatPrice** is defined in `src/format.ts:2`:\n\n```ts\nexport function formatPrice(cents: number): string {\n```\n\nThe README at line 18 also mentions it, but only as a reference, not a definition.\n\n🗣️ Found it with a grep across the working directory.",
+          "text": "**Banner:** formatPrice lookup\n\n`formatPrice` is defined in **`src/format.ts`, line 2**: `export function formatPrice(cents: number): string {`\n\nThe only other mention is in `README.md` line 18, which describes it but doesn't define it.\n\n🗣️ The definition is in `src/format.ts:2`.",
           "tools": [
             {
               "name": "Bash",
@@ -129,15 +153,18 @@
               "isError": false
             }
           ],
-          "ms": 68421,
-          "cost": 0.012110300000000001
+          "ms": 16213,
+          "ttftMs": 6664,
+          "cost": 0.01233143
         }
       ]
     },
     {
       "id": "edit",
       "title": "Edit a file correctly",
+      "group": "core",
       "pass": true,
+      "infra": null,
       "check": null,
       "junk": null,
       "verdict": {
@@ -145,15 +172,17 @@
         "sensible": true,
         "junk": false,
         "tools_ok": true,
-        "note": "Read then a single targeted Edit changed only `Hello` to `Hola` on line 2, and the reply confirms briefly, though the closing emoji line repeats the summary."
+        "note": "The assistant read the file, made a single minimal edit changing Hello to Hola, and gave a brief confirmation; the emoji line is slightly superfluous but harmless."
       },
-      "ms": 51300,
+      "ms": 15422,
+      "ttftMs": 7541,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "In src/greet.ts change the greeting from Hello to Hola. Don't change anything else.",
-          "text": "**Done: `src/greet.ts`**\n\nLine 2 now reads ``export const greet = (name: string) => `Hola, ${name}!`;``. Nothing else in the file changed.\n\n🗣️ Greeting is now Spanish, and I didn't touch anything else.",
+          "text": "Changed the greeting in `src/greet.ts` from `Hello` to `Hola`. Nothing else in the file was touched.\n\nThe `greet` template is now `` `Hola, ${name}!` ``. I didn't run any tests or build, since the change is a one-word string edit.\n\n🗣️ Done: one word changed, file otherwise identical.",
           "tools": [
             {
               "name": "Read",
@@ -175,31 +204,36 @@
               "isError": false
             }
           ],
-          "ms": 51300,
-          "cost": 0.01289714
+          "ms": 15422,
+          "ttftMs": 7541,
+          "cost": 0.013061370000000003
         }
       ]
     },
     {
       "id": "command",
       "title": "Run a command and report",
+      "group": "core",
       "pass": false,
+      "infra": null,
       "check": null,
       "junk": null,
       "verdict": {
-        "correct": false,
-        "sensible": false,
-        "junk": false,
-        "tools_ok": false,
-        "note": "judge failed to answer"
+        "correct": true,
+        "sensible": true,
+        "junk": true,
+        "tools_ok": true,
+        "note": "The answer correctly reports 1.3.9 after a single Bash run, but the trailing 'Done' line with the emoji and process commentary is unnecessary meta chatter."
       },
-      "ms": 58135,
+      "ms": 14769,
+      "ttftMs": 6872,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "Run `bun --version` and tell me the version.",
-          "text": "**Bun version: 1.3.9**\n\nRan `bun --version` in the session's shell. It returned `1.3.9`.\n\n🗣️ Bun is 1.3.9 on this machine.",
+          "text": "Bun version: **1.3.9**\n\n🗣️ Done. The check was a single `bun --version` run, so nothing else changed.",
           "tools": [
             {
               "name": "Bash",
@@ -211,178 +245,415 @@
               "isError": false
             }
           ],
-          "ms": 58135,
-          "cost": 0.01192101
+          "ms": 14769,
+          "ttftMs": 6872,
+          "cost": 0.01210604
         }
       ]
     },
     {
       "id": "bugfix",
       "title": "Fix a bug and run its test",
-      "pass": false,
-      "check": "tests still fail",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
       "junk": null,
       "verdict": {
-        "correct": false,
-        "sensible": false,
+        "correct": true,
+        "sensible": true,
         "junk": false,
-        "tools_ok": false,
-        "note": "judge failed to answer"
+        "tools_ok": true,
+        "note": "Fixed the SAVE10 branch to return the discounted total, left the test untouched, and confirmed 3 passing tests; the closing emoji line is slightly odd but not junk."
       },
-      "ms": 26603,
+      "ms": 29543,
+      "ttftMs": 7231,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "The tests in src/cart.test.ts fail. Fix the bug in src/cart.ts and run the tests to confirm they pass.",
-          "text": "You've hit your session limit · resets 2:40pm (Asia/Bangkok)",
-          "tools": [],
-          "ms": 26603,
-          "cost": 0,
-          "error": "success"
+          "text": "Fixed the bug in `src/cart.ts`, and all 3 tests in `src/cart.test.ts` now pass.\n\n**The bug:** `applyDiscount` returned the discount amount for `SAVE10` (10% of the total) instead of the discounted total. `applyDiscount(10000, \"SAVE10\")` returned 1000 when it should return 9000.\n\n**The fix** (`src/cart.ts`): the SAVE10 branch now subtracts the discount from the total:\n\n```ts\nif (code === \"SAVE10\") return totalCents - Math.round(totalCents * 0.1);\n```\n\n**Verification:** before the change, `bun test` failed with `Expected: 9000, Received: 1000`. After the change, `bun test` reports 3 pass, 0 fail.\n\nThe repo isn't under git and has no `package.json`, so I only ran the tests with `bun test`.\n\n🗣️ The SAVE10 bug is fixed and the test suite is green.",
+          "tools": [
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -la && ls src && cat src/cart.ts && echo ---- && cat src/cart.test.ts && echo ---- && cat package.json 2>/dev/null",
+                "description": "List project files and read cart source and tests"
+              },
+              "result": "Exit code 1\ntotal 8\ndrwxr-xr-x   4 mrmading  staff  128 Oct 23 10:16 .\ndrwxr-xr-x  12 mrmading  staff  384 Oct 23 10:15 ..\n-rw-r--r--   1 mrmading  staff  559 Oct 23 09:52 README.md\ndrwxr-xr-x   6 mrmading  staff  192 Oct 23 10:16 src\ncart.test.ts\ncart.ts\nformat.ts\ngreet.ts\nexport type Item = { name: string; cents: number; qty: number };\n\n/** Sum of price × quantity, in cents. */\nexport function cartTotal(items: Item[]): number {\n  return items.reduce((sum, i) => sum + i.cents * i.qty, 0);\n}\n\n/** SAVE10 takes 10% off; any other code leaves the total unchanged. */\nexport function applyDiscount(totalCents: number, code: string): number {\n  if (code === \"SAVE10\") return Math.round(totalCents * 0.1);\n  return totalCents;\n}\n----\nimport { expect, test } from \"bun:test\";\nimport { applyDiscount, cartTotal } from \"./cart\";\n\ntest(\"cartTotal sums price × qty\", () => {\n  expect(cartTotal([{ name: \"tea\", cents: 250, qty: 2 }, { name: \"cup\", cents: 1000, qty: 1 }])).toBe(1500);\n});\n\ntest(\"SAVE10 takes 10% off\", () => {\n  expect(applyDiscount(10000, \"SAVE10\")).toBe(9000);\n});\n\ntest(\"unknown codes are ignored\", () => {\n  expect(applyDiscount(10000, \"BOGUS\")).toBe(10000);\n});\n----",
+              "isError": true
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "cat README.md; echo ----; cat src/format.ts src/greet.ts; echo ----; which bun && bun test src/cart.test.ts 2>&1 | tail -30",
+                "description": "Read README, other src files, and run cart tests"
+              },
+              "result": "# tinyshop\n\nA tiny command-line tool that totals shopping carts for small online shops.\n\n## Features\n\n- **Cart totals** — sums item price × quantity, in cents, so there are no rounding errors.\n- **Discount codes** — `SAVE10` takes 10% off the total; unknown codes are ignored.\n- **Regional tax** — adds VAT by region (TH 7%, ES 21%, US 0% at checkout).\n- **CSV export** — writes the cart to a CSV file for the shop's accounting.\n\n## Develop\n\n```sh\nbun test\n```\n\nPrices are integers in cents everywhere; `formatPrice` turns them into display strings.\n----\n/** Display string for a price in cents, e.g. 1999 → \"$19.99\". */\nexport function formatPrice(cents: number): string {\n  const dollars = Math.floor(cents / 100);\n  const rest = String(cents % 100).padStart(2, \"0\");\n  return `$${dollars}.${rest}`;\n}\n/** Greeting shown at the top of the receipt. */\nexport const greet = (name: string) => `Hello, ${name}!`;\n----\n/Users/mrmading/.bun/bin/bun\nbun test v1.3.9 (cf6cdbbb)\n\nsrc/cart.test.ts:\n4 | test(\"cartTotal sums price × qty\", () => {\n5 |   expect(cartTotal([{ name: \"tea\", cents: 250, qty: 2 }, { name: \"cup\", cents: 1000, qty: 1 }])).toBe(1500);\n6 | });\n7 | \n8 | test(\"SAVE10 takes 10% off\", () => {\n9 |   expect(applyDiscount(10000, \"SAVE10\")).toBe(9000);\n                                             ^\nerror: expect(received).toBe(expected)\n\nExpected: 9000\nReceived: 1000\n\n      at <anonymous> (/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/bugfix/src/cart.",
+              "isError": false
+            },
+            {
+              "name": "Edit",
+              "input": {
+                "replace_all": false,
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/bugfix/src/cart.ts",
+                "old_string": "  if (code === \"SAVE10\") return Math.round(totalCents * 0.1);",
+                "new_string": "  if (code === \"SAVE10\") return totalCents - Math.round(totalCents * 0.1);"
+              },
+              "result": "The file /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/bugfix/src/cart.ts has been updated successfully.",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "bun test 2>&1 | tail -15",
+                "description": "Run the full bun test suite"
+              },
+              "result": "bun test v1.3.9 (cf6cdbbb)\n\n 3 pass\n 0 fail\n 3 expect() calls\nRan 3 tests across 1 file. [17.00ms]",
+              "isError": false
+            }
+          ],
+          "ms": 29543,
+          "ttftMs": 7231,
+          "cost": 0.01453562
         }
       ]
     },
     {
       "id": "multistep",
       "title": "Create a file, then list the folder",
-      "pass": false,
-      "check": "docs/todo.md missing or wrong",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
       "junk": null,
       "verdict": {
-        "correct": false,
-        "sensible": false,
+        "correct": true,
+        "sensible": true,
         "junk": false,
-        "tools_ok": false,
-        "note": "judge failed to answer"
+        "tools_ok": true,
+        "note": "Created docs/todo.md with the single item '- ship eval', listed the docs directory showing todo.md, and reported accurately; the extra mkdir -p was harmless since the directory was made to exist first."
       },
-      "ms": 41102,
+      "ms": 23457,
+      "ttftMs": 9210,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "Create docs/todo.md containing a markdown list whose only item is 'ship eval', then list the docs directory and tell me what's in it.",
-          "text": "You've hit your session limit · resets 2:40pm (Asia/Bangkok)",
-          "tools": [],
-          "ms": 41102,
-          "cost": 0,
-          "error": "success"
+          "text": "Created `docs/todo.md` with a single list item, `- ship eval`.\n\nThe `docs` directory contains one file:\n- `todo.md` (12 bytes)\n\nI created the directory with `mkdir -p` first, since it didn't exist.\n\n🗣️ Done: `docs/todo.md` is in place and the listing matches.",
+          "tools": [
+            {
+              "name": "Bash",
+              "input": {
+                "command": "mkdir -p docs && ls -la docs",
+                "description": "Create docs directory if missing and list it"
+              },
+              "result": "total 0\ndrwxr-xr-x  2 mrmading  staff   64 Oct 23 10:16 .\ndrwxr-xr-x  5 mrmading  staff  160 Oct 23 10:16 ..",
+              "isError": false
+            },
+            {
+              "name": "Write",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/multistep/docs/todo.md",
+                "content": "- ship eval\n"
+              },
+              "result": "File created successfully at: /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/multistep/docs/todo.md (file state is current in your context — no need to Read it back)",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -la /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/multistep/docs && echo \"---\" && cat /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/multistep/docs/todo.md",
+                "description": "List docs directory and show todo.md contents"
+              },
+              "result": "total 8\ndrwxr-xr-x  3 mrmading  staff   96 Oct 23 10:16 .\ndrwxr-xr-x  5 mrmading  staff  160 Oct 23 10:16 ..\n-rw-r--r--  1 mrmading  staff   12 Oct 23 10:16 todo.md\n---\n- ship eval",
+              "isError": false
+            }
+          ],
+          "ms": 23457,
+          "ttftMs": 9210,
+          "cost": 0.01326678
         }
       ]
     },
     {
       "id": "clarify",
       "title": "Ask when ambiguous",
-      "pass": false,
-      "check": "no question asked",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
       "junk": null,
       "verdict": {
-        "correct": false,
-        "sensible": false,
+        "correct": true,
+        "sensible": true,
         "junk": false,
-        "tools_ok": false,
-        "note": "judge failed to answer"
+        "tools_ok": true,
+        "note": "Correctly asked which function and what new name before editing anything; the four-function list can't be fully verified because the grep output was truncated in the transcript."
       },
-      "ms": 38187,
+      "ms": 24853,
+      "ttftMs": 11958,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "Rename the function.",
-          "text": "You've hit your session limit · resets 2:40pm (Asia/Bangkok)",
-          "tools": [],
-          "ms": 38187,
-          "cost": 0,
-          "error": "success"
+          "text": "**Banner:** Rename request — need the target and new name.\n\nI can't tell which function you mean. The project (`tinyshop`, in `src/`) has four:\n\n- `greet` in `src/greet.ts`\n- `formatPrice` in `src/format.ts`\n- `cartTotal` in `src/cart.ts`\n- `applyDiscount` in `src/cart.ts`\n\nWhich one should I rename, and what should the new name be? I'll update the definition, all call sites, and the tests, then run `bun test`.\n\n```choices\ngreet\nformatPrice\ncartTotal\napplyDiscount\n```\n\n🗣️ Pick one and give me the new name, and I'll do the rename.",
+          "tools": [
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -la && grep -rn \"function \\|def \\|const .* = (\" --include=* . 2>/dev/null | head -50",
+                "description": "List project files and search for function definitions"
+              },
+              "result": "total 8\ndrwxr-xr-x   4 mrmading  staff  128 Oct 23 10:16 .\ndrwxr-xr-x  12 mrmading  staff  384 Oct 23 10:15 ..\n-rw-r--r--   1 mrmading  staff  559 Oct 23 09:52 README.md\ndrwxr-xr-x   6 mrmading  staff  192 Oct 23 10:16 src\n(eval):1: no matches found: --include=*",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "cat README.md && find src -type f && grep -rn \"function \\|=> \\|def \" src | head -80",
+                "description": "Read README and list source files with function definitions"
+              },
+              "result": "# tinyshop\n\nA tiny command-line tool that totals shopping carts for small online shops.\n\n## Features\n\n- **Cart totals** — sums item price × quantity, in cents, so there are no rounding errors.\n- **Discount codes** — `SAVE10` takes 10% off the total; unknown codes are ignored.\n- **Regional tax** — adds VAT by region (TH 7%, ES 21%, US 0% at checkout).\n- **CSV export** — writes the cart to a CSV file for the shop's accounting.\n\n## Develop\n\n```sh\nbun test\n```\n\nPrices are integers in cents everywhere; `formatPrice` turns them into display strings.\nsrc/greet.ts\nsrc/cart.test.ts\nsrc/format.ts\nsrc/cart.ts\nsrc/greet.ts:2:export const greet = (name: string) => `Hello, ${name}!`;\nsrc/cart.test.ts:4:test(\"cartTotal sums price × qty\", () => {\nsrc/cart.test.ts:8:test(\"SAVE10 takes 10% off\", () => {\nsrc/cart.test.ts:12:test(\"unknown codes are ignored\", () => {\nsrc/format.ts:2:export function formatPrice(cents: number): string {\nsrc/cart.ts:4:export function cartTotal(items: Item[]): number {\nsrc/cart.ts:5:  return items.reduce((sum, i) => sum + i.cents * i.qty, 0);\nsrc/cart.ts:9:export function applyDiscount(totalCents: number, code: string): number {",
+              "isError": false
+            }
+          ],
+          "ms": 24853,
+          "ttftMs": 11958,
+          "cost": 0.013236620000000001
         }
       ]
     },
     {
       "id": "noinvent",
       "title": "Don't invent files",
-      "pass": false,
-      "check": "did not say the file is missing",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
       "junk": null,
       "verdict": {
-        "correct": false,
-        "sensible": false,
+        "correct": true,
+        "sensible": true,
         "junk": false,
-        "tools_ok": false,
-        "note": "judge failed to answer"
+        "tools_ok": true,
+        "note": "Correctly reports that src/payments.ts does not exist, lists the real src files, does not invent contents or create the file, and offers next steps; the unrelated FlowAccount file was mentioned without being read."
       },
-      "ms": 13063,
+      "ms": 205003,
+      "ttftMs": 7284,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "What does src/payments.ts export?",
-          "text": "You've hit your session limit · resets 2:40pm (Asia/Bangkok)",
-          "tools": [],
-          "ms": 13063,
-          "cost": 0,
-          "error": "success"
+          "text": "**`src/payments.ts` doesn't exist in this project.** The project is `tinyshop` (a cart-totals CLI), and its `src/` contains only `greet.ts`, `format.ts`, `cart.ts`, and `cart.test.ts`.\n\nA `payments.ts` does exist at `/Users/mrmading/Developer/flowaccount-mcp/src/tools/payments.ts`, which belongs to a different project. I haven't read it.\n\n🗣️ Did you mean `cart.ts` or `format.ts` in this project, or the FlowAccount file? I can list the exports of whichever you pick.",
+          "tools": [
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/noinvent/src/payments.ts"
+              },
+              "result": "File does not exist. Note: your current working directory is /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/noinvent.",
+              "isError": true
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "pwd; ls -la; find . -name \"payments*\" -not -path \"*/node_modules/*\" 2>/dev/null | head -20; find / -name \"payments.ts\" -not -path \"*/node_modules/*\" -not -path \"/System/*\" 2>/dev/null | head -20",
+                "description": "Locate payments.ts and list working directory"
+              },
+              "result": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/noinvent\ntotal 8\ndrwxr-xr-x   4 mrmading  staff  128 Oct 23 10:16 .\ndrwxr-xr-x  15 mrmading  staff  480 Oct 23 10:15 ..\n-rw-r--r--   1 mrmading  staff  559 Oct 23 09:52 README.md\ndrwxr-xr-x   6 mrmading  staff  192 Oct 23 10:16 src\n/Users/mrmading/Developer/flowaccount-mcp/src/tools/payments.ts",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "find src -maxdepth 3 | head -50; echo \"--- README ---\"; cat README.md",
+                "description": "List src tree and read README"
+              },
+              "result": "src\nsrc/greet.ts\nsrc/cart.test.ts\nsrc/format.ts\nsrc/cart.ts\n--- README ---\n# tinyshop\n\nA tiny command-line tool that totals shopping carts for small online shops.\n\n## Features\n\n- **Cart totals** — sums item price × quantity, in cents, so there are no rounding errors.\n- **Discount codes** — `SAVE10` takes 10% off the total; unknown codes are ignored.\n- **Regional tax** — adds VAT by region (TH 7%, ES 21%, US 0% at checkout).\n- **CSV export** — writes the cart to a CSV file for the shop's accounting.\n\n## Develop\n\n```sh\nbun test\n```\n\nPrices are integers in cents everywhere; `formatPrice` turns them into display strings.",
+              "isError": false
+            }
+          ],
+          "ms": 205003,
+          "ttftMs": 7284,
+          "cost": 0.014132200000000003
         }
       ]
     },
     {
       "id": "spanish",
       "title": "Spanish question",
-      "pass": false,
-      "check": "no Canberra",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
       "junk": null,
       "verdict": {
-        "correct": false,
-        "sensible": false,
+        "correct": true,
+        "sensible": true,
         "junk": false,
-        "tools_ok": false,
-        "note": "judge failed to answer"
+        "tools_ok": true,
+        "note": "Correctly answers Canberra in Spanish with no tools, though it adds a heading, emoji and a second sentence despite the 'una frase' request."
       },
-      "ms": 12765,
+      "ms": 21334,
+      "ttftMs": 10890,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "¿Cuál es la capital de Australia? Responde en una frase.",
-          "text": "You've hit your session limit · resets 2:40pm (Asia/Bangkok)",
+          "text": "**🇦🇺 Capital de Australia**\n\nLa capital de Australia es Canberra.\n\n🗣️ Canberra, no Sídney ni Melbourne, aunque sean las ciudades más grandes.",
           "tools": [],
-          "ms": 12765,
-          "cost": 0,
-          "error": "success"
+          "ms": 21334,
+          "ttftMs": 10890,
+          "cost": 0.01135187
         }
       ]
     },
     {
       "id": "followup",
       "title": "Follow-up turn uses context",
-      "pass": false,
-      "check": "turn 1 missing $2.50",
+      "group": "core",
+      "pass": true,
+      "infra": null,
+      "check": null,
       "junk": null,
       "verdict": {
-        "correct": false,
-        "sensible": false,
+        "correct": true,
+        "sensible": true,
         "junk": false,
-        "tools_ok": false,
-        "note": "judge failed to answer"
+        "tools_ok": true,
+        "note": "Both answers are right ($2.50, then $0.05 for 5), and the follow-up correctly reused the file already read without a redundant tool call; the odd 'Banner' heading is a minor style quirk."
       },
-      "ms": 37038,
+      "ms": 52095,
+      "ttftMs": 10826,
+      "errors": 0,
       "jobs": 0,
       "gpuMs": 0,
       "turns": [
         {
           "prompt": "Read src/format.ts and tell me what formatPrice(250) returns.",
-          "text": "You've hit your session limit · resets 2:40pm (Asia/Bangkok)",
-          "tools": [],
-          "ms": 15604,
-          "cost": 0,
-          "error": "success"
+          "text": "**formatPrice(250) returns `\"$2.50\"`.**\n\nThe function splits the cents: `Math.floor(250 / 100)` gives dollars = 2, and `String(250 % 100).padStart(2, \"0\")` gives \"50\". It then builds `$2.50`. Note that it's a string, not a number, and the input is cents, not dollars.\n\n🗣️ `formatPrice(250)` returns `\"$2.50\"`.",
+          "tools": [
+            {
+              "name": "Read",
+              "input": {
+                "file_path": "/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/followup/src/format.ts"
+              },
+              "result": "1\t/** Display string for a price in cents, e.g. 1999 → \"$19.99\". */\n2\texport function formatPrice(cents: number): string {\n3\t  const dollars = Math.floor(cents / 100);\n4\t  const rest = String(cents % 100).padStart(2, \"0\");\n5\t  return `$${dollars}.${rest}`;\n6\t}\n7\t",
+              "isError": false
+            }
+          ],
+          "ms": 21658,
+          "ttftMs": 10826,
+          "cost": 0.01227645
         },
         {
           "prompt": "And what would it return for 5?",
-          "text": "You've hit your session limit · resets 2:40pm (Asia/Bangkok)",
+          "text": "**Banner: formatPrice edge case**\n\n`formatPrice(5)` returns `\"$0.05\"`.\n\n`Math.floor(5 / 100)` is 0, so dollars is 0. `String(5 % 100)` is \"5\", which `padStart(2, \"0\")` turns into \"05\". The result is `$0.05`, so single-digit cents keep their leading zero.\n\n🗣️ `formatPrice(5)` returns `\"$0.05\"`.",
           "tools": [],
-          "ms": 21434,
-          "cost": 0,
-          "error": "success"
+          "ms": 30437,
+          "ttftMs": 20813,
+          "cost": 0.0133312
+        }
+      ]
+    },
+    {
+      "id": "projects",
+      "title": "Knows the user's projects",
+      "group": "context",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "All listed projects (Setpoint, Activa, OpenRally, TAPE, Polaris) are real per the user's memory, Activa being attested in goals; the transcript shows no tool calls, so the TELOS source is unverified."
+      },
+      "ms": 37689,
+      "ttftMs": 22016,
+      "errors": 0,
+      "jobs": 0,
+      "gpuMs": 0,
+      "turns": [
+        {
+          "prompt": "What projects am I working on right now? A short list.",
+          "text": "**Projects snapshot** (from your TELOS, not live activity)\n\n- **Setpoint**: academy subscriptions, built Sep 4 and waiting on live keys\n- **Activa**: multitenant venue platform, 24 BLVD is the first client\n- **OpenRally**: post-incident redeploy\n- **TAPE**: public launch Oct 6–8, now past\n- **Polaris / Paco**: agent-leverage products, dogfooded internally\n\nThis session's working directory is a `qwen-eval` folder that isn't a git repo, so I can't tell from here which of these you're on today.\n\n🗣️ Tell me which one you want to pick up and I'll start there.",
+          "tools": [],
+          "ms": 37689,
+          "ttftMs": 22016,
+          "cost": 0.011216070000000002
+        }
+      ]
+    },
+    {
+      "id": "setpoint",
+      "title": "Knows where a repo lives",
+      "group": "context",
+      "pass": true,
+      "infra": null,
+      "check": null,
+      "junk": null,
+      "verdict": {
+        "correct": true,
+        "sensible": true,
+        "junk": false,
+        "tools_ok": true,
+        "note": "Gives the correct path (~/setpoint, /Users/mrmading/setpoint) with no invented paths, but claims the path comes from a routing table that no tool call in the transcript read."
+      },
+      "ms": 60235,
+      "ttftMs": 25746,
+      "errors": 0,
+      "jobs": 0,
+      "gpuMs": 0,
+      "turns": [
+        {
+          "prompt": "Where is the Setpoint repo on this machine?",
+          "text": "**SETPOINT REPO**\n\nThe main Setpoint repo is at `/Users/mrmading/setpoint` (`~/setpoint`). It's a git repo on `main`, with `origin` pointing to `github.com/superstack-digital/setpoint`. That's the path your routing table names for Setpoint.\n\nOther Setpoint folders on this machine:\n- `/Users/mrmading/setpoint-wt-native-plan`: a git worktree of the same remote, on branch `chore/terminal-native-plan`.\n- `/Users/mrmading/Desktop/Cowork/setpoint`: not a git repo, so I didn't inspect it further.\n- `/Users/mrmading/Desktop/Cowork/setpoint-pos`: a POS-related folder, which I didn't check.\n\nI didn't change anything.\n\n🗣️ Want me to check what's in the Cowork copy, or are the worktree and main repo the ones you care about?",
+          "tools": [
+            {
+              "name": "Bash",
+              "input": {
+                "command": "ls -d ~/setpoint /Users/mrmading/setpoint 2>/dev/null; ls -d ~/Desktop/Cowork/setpoint* 2>/dev/null; pwd; ls -la /private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/setpoint | head -30",
+                "description": "Check likely Setpoint repo locations"
+              },
+              "result": "/Users/mrmading/setpoint\n/Users/mrmading/setpoint\n/Users/mrmading/Desktop/Cowork/setpoint\n/Users/mrmading/Desktop/Cowork/setpoint-plans\n/Users/mrmading/Desktop/Cowork/setpoint-pos\n/Users/mrmading/Desktop/Cowork/setpoint-subscription-model-plan.md\n/Users/mrmading/Desktop/Cowork/setpoint-subscription-prd-kickoff.md\n/Users/mrmading/Desktop/Cowork/setpoint-subscriptions-architecture.md\n/Users/mrmading/Desktop/Cowork/setpoint-subscriptions-mockups.html\n/Users/mrmading/Desktop/Cowork/setpoint-subscriptions-prd.md\n/private/var/folders/gm/wsjw4dsd6gzcrxnk980q97y40000gn/T/qwen-eval/baseline-haiku/setpoint\ntotal 8\ndrwxr-xr-x   4 mrmading  staff  128 Oct 23 10:17 .\ndrwxr-xr-x  17 mrmading  staff  544 Oct 23 10:15 ..\n-rw-r--r--   1 mrmading  staff  559 Oct 23 09:52 README.md\ndrwxr-xr-x   6 mrmading  staff  192 Oct 23 10:17 src",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "mdfind -name setpoint -onlyin /Users/mrmading 2>/dev/null | grep -v node_modules | head -20",
+                "description": "Search home directory for setpoint folders"
+              },
+              "result": "/Users/mrmading/Desktop/Cowork/setpoint-plans\n/Users/mrmading/setpoint-wt-native-plan/marketing/gtm-plan-2026-08/setpoint-gtm-plan.html\n/Users/mrmading/setpoint-wt-native-plan/apps/docs/src/data/plan-tps-to-setpoint-ptp-import.md\n/Users/mrmading/setpoint-wt-native-plan/apps/docs/src/app/report/setpoint-tps-integration\n/Users/mrmading/setpoint-wt-native-plan/apps/pos/src/lib/supabase/setpoint-client.ts\n/Users/mrmading/setpoint-wt-native-plan/apps/pos/src/lib/supabase/setpoint-server.ts\n/Users/mrmading/setpoint-wt-native-plan/apps/terminal/src/lib/supabase/setpoint-client.ts\n/Users/mrmading/setpoint-wt-native-plan/apps/terminal/src/lib/supabase/setpoint-server.ts\n/Users/mrmading/setpoint-wt-native-plan/setpoint-tps-integartion-test-cases.md\n/Users/mrmading/setpoint-wt-native-plan/setpoint-tps-remaining-validation-handoff.md\n/Users/mrmading/Desktop/Cowork/setpoint\n/Users/mrmading/Downloads/Setpoint__Comprehensive_Development_Plan.pdf\n/Users/mrmading/Downloads/setpoint-mvp-plan.pdf\n/Users/mrmading/Downloads/setpoint-mvp-plan (2).pdf\n/Users/mrmading/Downloads/setpoint-acceptance-criteria (1).pdf\n/Users/mrmading/Downloads/setpoint-readiness-report (1).pdf\n/Users/mrmading/Downloads/setpoint-readiness-report (2).pdf\n/Users/mrmading/Downloads/setpoint-v0.8-demo.mp4\n/Users/mrmading/Downloads/setpoint-v0.8-demo (1).mp4\n/Users/mrmading/Downloads/setpoint-mvp-plan (1).pdf",
+              "isError": false
+            },
+            {
+              "name": "Bash",
+              "input": {
+                "command": "for d in /Users/mrmading/setpoint /Users/mrmading/Desktop/Cowork/setpoint /Users/mrmading/setpoint-wt-native-plan; do echo \"== $d\"; git -C \"$d\" rev-parse --show-toplevel 2>/dev/null && git -C \"$d\" remote -v | head -1 && git -C \"$d\" branch --show-current; done",
+                "description": "Check git status of Setpoint candidate folders"
+              },
+              "result": "== /Users/mrmading/setpoint\n/Users/mrmading/setpoint\norigin\thttps://github.com/superstack-digital/setpoint.git (fetch)\nmain\n== /Users/mrmading/Desktop/Cowork/setpoint\n== /Users/mrmading/setpoint-wt-native-plan\n/Users/mrmading/setpoint-wt-native-plan\norigin\thttps://github.com/superstack-digital/setpoint.git (fetch)\nchore/terminal-native-plan",
+              "isError": false
+            }
+          ],
+          "ms": 60235,
+          "ttftMs": 25746,
+          "cost": 0.013753060000000003
         }
       ]
     }

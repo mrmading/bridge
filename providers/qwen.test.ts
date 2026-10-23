@@ -481,6 +481,77 @@ describe("handleQwen", () => {
     }
   });
 
+  test("streaming: text deltas arrive live from RunPod /stream, tool calls follow, usage is recorded", async () => {
+    process.env.RUNPOD_QWEN_STREAM = "1";
+    const chunk = (o: unknown) => ({ output: JSON.stringify(o) });
+    const pages = [
+      { status: "IN_PROGRESS", stream: [chunk({ message: { role: "assistant", content: "", thinking: "hmm" } })] },
+      { status: "IN_PROGRESS", stream: [chunk({ message: { content: "Run" } }), chunk({ message: { content: "ning." } })] },
+      { status: "COMPLETED", stream: [chunk({ message: { content: "", tool_calls: [{ function: { name: "Bash", arguments: { command: "ls", timeout: null } } }] }, done: true, done_reason: "stop", prompt_eval_count: 40, eval_count: 6 })] },
+    ];
+    const sent: any[] = [];
+    globalThis.fetch = (async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.endsWith("/run")) {
+        sent.push(JSON.parse(init.body));
+        return Response.json({ id: "s1", status: "IN_QUEUE" });
+      }
+      if (url.includes("/stream/s1")) return Response.json(pages.shift() ?? { status: "COMPLETED", stream: [] });
+      if (url.includes("/status/s1")) return Response.json({ status: "COMPLETED", executionTime: 7000 });
+      return new Response("nope", { status: 404 });
+    }) as typeof fetch;
+    try {
+      const res = await handleQwen(
+        new Request("http://x/qwen/v1/messages", {
+          method: "POST",
+          headers: { "x-claude-code-session-id": "stream-sess" },
+          body: JSON.stringify({ stream: true, messages: [{ role: "user", content: "ls" }], tools: [{ name: "Bash", input_schema: { type: "object", properties: { command: { type: "string" }, timeout: { type: "number" } } } }] }),
+        }),
+        "v1/messages",
+      );
+      const text = await res.text();
+      expect(sent[0].input.stream).toBe(true);
+      const events = [...text.matchAll(/^event: (\w+)\ndata: (.*)$/gm)].map((m) => ({ ev: m[1], data: JSON.parse(m[2]) })).filter((e) => e.ev !== "ping");
+      expect(events.map((e) => e.ev)).toEqual([
+        "message_start",
+        "content_block_start", "content_block_delta", "content_block_delta", "content_block_stop",
+        "content_block_start", "content_block_delta", "content_block_stop",
+        "message_delta", "message_stop",
+      ]);
+      expect(events[2].data.delta.text).toBe("Run");
+      expect(events[3].data.delta.text).toBe("ning.");
+      expect(events[5].data.index).toBe(1);
+      expect(JSON.parse(events[6].data.delta.partial_json)).toEqual({ command: "ls" });
+      expect(events[8].data.delta.stop_reason).toBe("tool_use");
+      expect(events[8].data.usage).toEqual({ input_tokens: 40, output_tokens: 6 });
+      expect(qwenUsage("stream-sess").gpuMs).toBe(7000);
+    } finally {
+      delete process.env.RUNPOD_QWEN_STREAM;
+    }
+  });
+
+  test("streaming holds back a reply that starts like JSON or markup, so pseudo calls are still handled", async () => {
+    process.env.RUNPOD_QWEN_STREAM = "1";
+    const chunk = (o: unknown) => ({ output: JSON.stringify(o) });
+    let job = 0;
+    globalThis.fetch = (async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/run")) return Response.json({ id: `h${++job}`, status: "IN_QUEUE" });
+      if (url.includes("/stream/h1")) return Response.json({ status: "COMPLETED", stream: [chunk({ message: { content: '{"name": "Bash", ' } }), chunk({ message: { content: '"arguments": {"command": "pwd"}}' }, done: true })] });
+      if (url.includes("/status/")) return Response.json({ status: "COMPLETED", executionTime: 1 });
+      return new Response("nope", { status: 404 });
+    }) as typeof fetch;
+    try {
+      const res = await handleQwen(post({ stream: true, messages: [{ role: "user", content: "pwd" }], tools: [{ name: "Bash", input_schema: { type: "object", properties: { command: { type: "string" } } } }] }), "v1/messages");
+      const text = await res.text();
+      expect(text).not.toContain("text_delta");
+      expect(text).toContain('"type":"tool_use"');
+      expect(text).toContain('"stop_reason":"tool_use"');
+    } finally {
+      delete process.env.RUNPOD_QWEN_STREAM;
+    }
+  });
+
   test("count_tokens returns an estimate without calling RunPod", async () => {
     const res = await handleQwen(
       new Request("http://x/qwen/v1/messages/count_tokens", { method: "POST", body: JSON.stringify({ messages: [{ role: "user", content: "a".repeat(350) }] }) }),
