@@ -202,6 +202,39 @@ describe("ollamaToAnthropic", () => {
     expect((msg.content[0] as any).input).toEqual({ file_path: "/x" });
   });
 
+  test("tool input is cleaned against the schema: nulls dropped, unknown keys dropped, strings coerced", () => {
+    // Seen live: Bash {command, timeout: null, run_in_background: null} → InputValidationError.
+    const schemas = new Map<string, any>([[
+      "Bash",
+      {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          command: { type: "string" },
+          timeout: { type: "number" },
+          run_in_background: { type: "boolean" },
+          opts: { type: "object", properties: { depth: { type: "integer" }, tag: { type: "string" } } },
+          list: { type: "array", items: { type: "number" } },
+        },
+      },
+    ]]);
+    const msg = ollamaToAnthropic({
+      output: { message: { content: "", tool_calls: [{ function: { name: "Bash", arguments: {
+        command: "echo QWEN_OK", timeout: null, run_in_background: "false", description: null, bogus: 1,
+        opts: { depth: "3", tag: null, extra: "kept (no additionalProperties:false here)" }, list: ["1", null, 2.5],
+      } } }] } },
+    }, 1, new Set(["Bash"]), schemas);
+    expect((msg.content[0] as any).input).toEqual({
+      command: "echo QWEN_OK", run_in_background: false,
+      opts: { depth: 3, extra: "kept (no additionalProperties:false here)" }, list: [1, 2.5],
+    });
+  });
+
+  test("without a schema, nulls are still dropped recursively and strings left alone", () => {
+    const msg = ollamaToAnthropic({ output: { message: { content: "", tool_calls: [{ function: { name: "X", arguments: { a: null, b: "1", c: { d: null, e: "true" } } } }] } } }, 1);
+    expect((msg.content[0] as any).input).toEqual({ b: "1", c: { e: "true" } });
+  });
+
   test("<think> is stripped and <tool_call> text is recovered as tool_use", () => {
     const msg = ollamaToAnthropic({
       output: { message: { content: '<think>plan</think>Sure.\n<tool_call>\n{"name": "Bash", "arguments": {"command": "ls"}}\n</tool_call>' } },

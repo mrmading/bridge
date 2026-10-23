@@ -291,6 +291,34 @@ function extractMessage(res: Json): { msg: Json; meta: Json } {
   return { msg: { content: JSON.stringify(out).slice(0, 2000) }, meta: out };
 }
 
+const typeIs = (schema: Json | undefined, t: string) =>
+  Array.isArray(schema?.type) ? schema!.type.includes(t) : schema?.type === t;
+
+/**
+ * Qwen fills every optional parameter with an explicit null and sometimes quotes numbers and
+ * booleans; Claude Code rejects both with InputValidationError. Drops nulls (recursively), drops
+ * keys a closed schema (additionalProperties: false) does not declare, and coerces numeric and
+ * "true"/"false" strings where the schema asks for a number or boolean.
+ */
+function cleanInput(value: unknown, schema?: Json): unknown {
+  if (typeof value === "string") {
+    if ((typeIs(schema, "number") || typeIs(schema, "integer")) && value.trim() !== "" && !isNaN(Number(value))) return Number(value);
+    if (typeIs(schema, "boolean") && (value === "true" || value === "false")) return value === "true";
+    return value;
+  }
+  if (Array.isArray(value)) return value.filter((v) => v !== null).map((v) => cleanInput(v, schema?.items));
+  if (value && typeof value === "object") {
+    const props: Json = schema?.properties || {};
+    const out: Json = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === null || (schema?.additionalProperties === false && !(k in props))) continue;
+      out[k] = cleanInput(v, props[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
 /** A whole reply that is just `{"name": …, "arguments"|"parameters": …}`, optionally fenced. */
 function bareCall(text: string): { name: string; args: unknown } | null {
   const body = text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/, "$1");
@@ -317,7 +345,7 @@ export function isMalformedToolCall(msg: AnthropicMessage, toolNames: Set<string
  * recovers tool calls the model wrote as text when the handler did not parse them: <tool_call>
  * tags, or a bare JSON reply naming one of `toolNames`.
  */
-export function ollamaToAnthropic(res: Json, inputEstimate: number, toolNames?: Set<string>): AnthropicMessage {
+export function ollamaToAnthropic(res: Json, inputEstimate: number, toolNames?: Set<string>, schemas?: Map<string, Json>): AnthropicMessage {
   const { msg, meta } = extractMessage(res);
   let text = String(msg.content ?? "")
     .replace(/<think>[\s\S]*?<\/think>/g, "")
@@ -349,7 +377,7 @@ export function ollamaToAnthropic(res: Json, inputEstimate: number, toolNames?: 
   if (text) content.push({ type: "text", text });
   for (const c of raw) {
     const fn = c?.function ?? c ?? {};
-    content.push({ type: "tool_use", id: `toolu_${hexId()}`, name: String(fn.name || ""), input: asObject(fn.arguments) });
+    content.push({ type: "tool_use", id: `toolu_${hexId()}`, name: String(fn.name || ""), input: cleanInput(asObject(fn.arguments), schemas?.get(String(fn.name))) as Record<string, unknown> });
   }
   if (!content.length) content.push({ type: "text", text: "" });
 
@@ -463,11 +491,12 @@ async function messages(req: Request, cfg: Cfg): Promise<Response> {
   const abort = new AbortController();
   req.signal?.addEventListener("abort", () => abort.abort());
   const toolNames = new Set((payload.tools || []).map((t) => t.function.name));
+  const schemas = new Map((payload.tools || []).map((t) => [t.function.name, t.function.parameters as Json]));
   const complete = async () => {
-    let msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate, toolNames);
+    let msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate, toolNames, schemas);
     if (isMalformedToolCall(msg, toolNames)) {
       console.error("[qwen] reply was a pseudo tool call to an unknown tool; retrying once");
-      msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate, toolNames);
+      msg = ollamaToAnthropic(await runJob(cfg, payload, abort.signal), inputEstimate, toolNames, schemas);
     }
     return msg;
   };
