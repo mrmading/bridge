@@ -1376,15 +1376,18 @@ async function boot() {
   document.body.classList.toggle("tech", S.tech);
   // paint as soon as Bridge knows who it is; chats, home and configs land as they arrive (a busy machine or a slow cloud never holds the page blank)
   const [rq, aq, cq2, oq, hq] = ["/api/recent?limit=120", "/api/agents", "/api/configs", "/api/roots", "/api/home"].map((u) => getJ(u).catch(() => null));
-  const b = await getJ("/api/bootstrap").catch(() => null);
+  let b = await getJ("/api/bootstrap").catch(() => null);
+  if (b && (b.error || !Array.isArray(b.models))) b = null;
   Object.assign(S, { boot: b || { models: [], permissionModes: Object.keys(MODES), efforts: Object.keys(EFFORTS), home: "" }, auth: (b && b.auth) || { loggedIn: false } });
   if (!S.boot.permissionModes.includes(S.perm)) S.perm = "acceptEdits";
   const later = (p, apply) => p.then((v) => { if (v && !v.error) { apply(v); renderSide(); if (S.view !== "chat") softRender(); } });
-  later(rq, (v) => (S.recent = v));
-  later(hq, (v) => (S.home = v));
-  later(oq, (v) => (S.roots = v));
-  later(cq2, (v) => { S.configs = v; S.skills = v.filter((c) => c.group === "Skills"); });
-  later(aq, (v) => { S.agents = v; if (S.agent && S.agent !== "auto" && !v.some((a) => a.name === S.agent)) S.agent = "auto"; });
+  // anything that is not the expected shape (an HTML error page, a 401 body) is ignored rather than trusted
+  later(rq, (v) => Array.isArray(v) && (S.recent = v));
+  later(hq, (v) => v && Array.isArray(v.running) && (S.home = v));
+  later(oq, (v) => Array.isArray(v) && (S.roots = v));
+  later(cq2, (v) => { if (!Array.isArray(v)) return; S.configs = v; S.skills = v.filter((c) => c.group === "Skills"); });
+  later(aq, (v) => {
+    if (!Array.isArray(v)) return; S.agents = v; if (S.agent && S.agent !== "auto" && !v.some((a) => a.name === S.agent)) S.agent = "auto"; });
   const q = new URLSearchParams(location.search);
   if (q.get("v")) S.view = q.get("v");
   refreshComputers();

@@ -23,6 +23,9 @@ const CORS = process.env.BRIDGE_CORS === "1";
 const CLAUDE_BIN = process.env.BRIDGE_CLAUDE_BIN || "claude";
 /** Bridge is a GUI: interactive tools (AskUserQuestion, ExitPlanMode) are unavailable in -p mode,
  *  so the model hands choices and plans back in a shape the client renders as buttons and cards. */
+/** what a Qwen turn is told instead of Bridge's full protocol: short, so the small model keeps its focus */
+const QWEN_PROTOCOL = "You are running on Qwen via Bridge. Be concise. Use tools only when the task needs them, one call at a time, " +
+  "and answer in plain text. When the user must choose, end with a fenced block with info string `choices`, one option per line.";
 const BRIDGE_PROTOCOL = [
   "You are running inside Bridge, a desktop GUI for Claude Code. The session is non-interactive: AskUserQuestion and",
   "ExitPlanMode are not available. Two conventions replace them:",
@@ -175,9 +178,9 @@ async function computeMeta(key: string, file: string): Promise<SessionMeta | nul
   const st = await stat(file).catch(() => null);
   if (!st || st.size === 0) return null;
   const cached = metaCache.get(file);
-  if (cached && cached.m === st.mtimeMs && cached.v.v === 7) return cached.v;
+  if (cached && cached.m === st.mtimeMs && cached.v.v === 8) return cached.v;
   const id = basename(file, ".jsonl");
-  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0, v: 7 };
+  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0, v: 8 };
   for (const line of await firstLines(file, 300_000)) {
     let r: any; try { r = JSON.parse(line); } catch { continue; }
     if (r.cwd && !meta.cwd) { meta.cwd = r.cwd; meta.branch = r.gitBranch; }
@@ -211,6 +214,9 @@ async function computeMeta(key: string, file: string): Promise<SessionMeta | nul
   }
   // a prompt hook that re-runs the desk's message in its own `claude -p` leaves the <bridge> block with its tags stripped
   if (/^now: \d{4}-\d\d-\d\dT[\d:.]+Z\s+(running chats|live sessions):/.test(meta.preview)) meta.desk = true;
+  // LifeOS prompt hooks (PromptProcessing's "CONTEXT:\n…\n\nCURRENT MESSAGE:", an older "SENTIMENT:" pass) run their own
+  // claude --print; transcripts from before the request-shape record exist only show it in their first prompt
+  if (/^(CONTEXT:\s|SENTIMENT:\s)/.test(meta.preview)) meta.oneshot = true;
   meta.title ||= meta.preview.slice(0, 60) || "Untitled session";
   metaCache.set(file, { m: st.mtimeMs, v: meta });
   persistCache();
@@ -637,8 +643,8 @@ try {
  *  announces the end itself; when it is gone, the server does, so a turn finishing in an empty room
  *  still reaches the principal. */
 async function runClaude(req: any, send: (o: any) => void, done: () => void, watched: () => boolean = () => false) {
-  // a signed-out CLI fails deep inside the stream; catch it here and hand the UI the sign-in sheet
   const provider = req.provider === "qwen" ? "qwen" : "claude";
+  // a signed-out CLI fails deep inside the stream; catch it here and hand the UI the sign-in sheet
   // Qwen needs no Claude account: the CLI talks to the adapter at /qwen with a placeholder key
   if (provider === "claude") {
     const auth = await authStatus();
@@ -648,7 +654,7 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   // `--agent` does not reach a -p turn (see § agent routing), so the agent is asked for in the
   // system prompt, where the main loop can act on it with the Agent tool. The flag goes along
   // too: it costs nothing and starts working the day the CLI honours it.
-  const agent = typeof req.agent === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(req.agent) ? req.agent : "";
+  const agent = provider === "claude" && typeof req.agent === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(req.agent) ? req.agent : "";
   const protocol = agent ? BRIDGE_PROTOCOL + "\n" + [
     "",
     "3. This turn belongs to the `" + agent + "` agent. Dispatch it with the Agent tool",
@@ -656,7 +662,12 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
     "   from what it returns. Handle the turn yourself only if that agent plainly cannot do this work.",
   ].join("\n") : BRIDGE_PROTOCOL;
   const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-    "--append-system-prompt", protocol];
+    "--append-system-prompt", provider === "qwen" ? QWEN_PROTOCOL : protocol];
+  // Qwen gets a slim session: no user CLAUDE.md, memory, hooks, agents or skills, no MCP servers.
+  // Qwen gets the core tools only (no Agent, ToolSearch or deferred catalog) and no auto-memory instructions, which the
+  // small model otherwise imitates instead of answering
+  if (provider === "qwen") args.push("--setting-sources", "project,local", "--strict-mcp-config", "--disable-slash-commands",
+    "--tools", "Bash,Read,Edit,Write,Glob,Grep,WebFetch", "--settings", JSON.stringify({ autoMemoryEnabled: false }), "--exclude-dynamic-system-prompt-sections");
   if (req.resume) args.push("--resume", req.resume);
   else args.push("--session-id", sessionId);
   args.push("--permission-mode", req.permissionMode || "acceptEdits");
@@ -710,7 +721,7 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   const env: Record<string, string | undefined> = { ...process.env, ...settingsEnv, FORCE_COLOR: "0" };
   if (provider === "qwen") {
     Object.assign(env, {
-      ANTHROPIC_BASE_URL: "http://127.0.0.1:" + PORT + "/qwen", ANTHROPIC_API_KEY: "bridge-qwen",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:" + PORT + "/qwen", ANTHROPIC_API_KEY: QWEN_KEY,
       // a RunPod turn takes 45-130s (longer cold); side calls would each start a slow job
       API_TIMEOUT_MS: "1800000", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", ANTHROPIC_SMALL_FAST_MODEL: "qwen",
     });
@@ -2074,8 +2085,13 @@ const server = Bun.serve({
 /** The Qwen adapter (providers/qwen.ts) speaks the Anthropic Messages API to the claude CLI and RunPod behind
  *  it. Only loopback may call it, and it is loaded on first use so a missing file never stops Bridge booting. */
 let qwenMod: Promise<any> | null = null;
+/** the key Bridge's own qwen turns present; new every boot, never leaves this machine */
+const QWEN_KEY = "bridge-qwen-" + randomUUID();
 async function qwenRoute(req: Request, u: URL, ip: string): Promise<Response> {
   if (!/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(ip)) return json({ error: "not found" }, 404);
+  // loopback is not proof on a host whose public proxy connects locally: a model call must carry this boot's key
+  const key = req.headers.get("x-api-key") || (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (req.method === "POST" && key !== QWEN_KEY) return json({ type: "error", error: { type: "authentication_error", message: "not allowed" } }, 401);
   qwenMod ||= import("./providers/qwen.ts").catch((e) => { qwenMod = null; throw e; });
   let mod: any;
   try { mod = await qwenMod; } catch (e) { return json({ type: "error", error: { type: "api_error", message: "Qwen adapter missing: " + String(e) } }, 500); }

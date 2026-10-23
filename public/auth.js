@@ -75,8 +75,11 @@ window.Auth = (function () {
     box.innerHTML = '<div class="login-card"><canvas id="loginOrb" width="264" height="264"></canvas>' +
       '<div class="login-brand"><div class="logo"><span>B</span></div><span class="name">BRIDGE</span></div>' +
       (st.state === "sent"
-        ? '<h1>Check your email</h1><p class="sub">We sent a sign-in link to <b>' + e(st.email) + '</b>. Open it on this device and Bridge opens signed in.</p>' +
-          '<button class="btn" id="loginBack">Use a different email</button>'
+        ? '<h1>Check your email</h1><p class="sub">We sent a link and a 6-digit code to <b>' + e(st.email) + '</b>. Type the code here, or open the link on this device.</p>' +
+          (st.err ? '<div class="sheet-err">' + e(st.err) + "</div>" : "") +
+          '<form id="codeForm"><input class="sheet-in login-code" id="loginCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" placeholder="123456">' +
+          '<button class="btn pri" type="submit"' + (st.busy ? " disabled" : "") + ">" + (st.busy ? "Checking…" : "Sign in with the code") + "</button></form>" +
+          '<button class="btn login-alt" id="loginBack">Use a different email</button>'
         : '<h1>Sign in to Bridge</h1><p class="sub">Your team, your chats, from anywhere. We email you a link; no password.</p>' +
           (st.err ? '<div class="sheet-err">' + e(st.err) + "</div>" : "") +
           '<form id="loginForm"><input class="sheet-in" id="loginEmail" type="email" placeholder="you@example.com" autocomplete="email" required value="' + e(st.email || localStorage.bridgeLoginEmail || "") + '">' +
@@ -98,6 +101,22 @@ window.Auth = (function () {
         if (error) render(box, { state: "ask", email, err: /rate limit|security purposes/i.test(error.message) ? "A link was just sent. Wait a minute before asking for another." : error.message });
         else render(box, { state: "sent", email });
       };
+    }
+    // the code path matters on iPhone: a home-screen app's links open in Safari, not in the app
+    const codeForm = document.getElementById("codeForm");
+    if (codeForm) {
+      const ci = document.getElementById("loginCode");
+      setTimeout(() => ci.focus(), 30);
+      const go = async () => {
+        const token = ci.value.replace(/\D/g, "");
+        if (token.length !== 6) return;
+        render(box, { state: "sent", email: st.email, busy: true });
+        const { data, error } = await A.client.auth.verifyOtp({ email: st.email, token, type: "email" });
+        if (error || !data || !data.session) render(box, { state: "sent", email: st.email, err: error && /expired|invalid/i.test(error.message) ? "That code is wrong or has expired. Check the latest email, or ask for a new one." : (error ? error.message : "That did not sign you in") });
+        else { setSession(data.session); location.replace(location.origin + location.pathname); }
+      };
+      codeForm.onsubmit = (ev) => { ev.preventDefault(); go(); };
+      ci.oninput = () => { ci.value = ci.value.replace(/\D/g, "").slice(0, 6); if (ci.value.length === 6) go(); };
     }
     const back = document.getElementById("loginBack");
     if (back) back.onclick = () => render(box, { state: "ask" });
