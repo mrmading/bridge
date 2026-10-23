@@ -619,3 +619,40 @@ body.tech .tdet.open{display:block}
 .login-alt{margin-top:12px;border:0;background:transparent;color:var(--fg-muted)}
 .menu .mtabs{margin:4px 6px 8px}
 .menu .mi.off{opacity:.5;cursor:not-allowed}
+
+/* ── artifacts: a card in the chat, a viewer beside it ── */
+.chatgrid.side-open.art{grid-template-columns:minmax(0,1fr) min(52vw,760px)}
+.acard{display:flex;align-items:center;gap:12px;width:100%;max-width:460px;margin:10px 0;padding:10px 12px 10px 10px;border:1px solid var(--border);border-radius:14px;background:var(--bg-raised);text-align:left;transition:border-color .15s,box-shadow .15s,transform .15s}
+.acard:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--border));box-shadow:var(--shadow);transform:translateY(-1px)}
+.acard.on{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+.acard .ath{width:44px;height:44px;border-radius:10px;flex:none;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,var(--ac),color-mix(in srgb,var(--ac) 55%,#000))}
+.acard .ath svg{width:20px;height:20px}
+.acard .l{flex:1;min-width:0}
+.acard .l b{display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acard .l span{font-size:12px;color:var(--fg-faint)}
+.acard .go{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--fg-muted);padding:6px 9px;border-radius:8px;background:var(--bg-sunken);flex:none}
+.acard .go svg{width:13px;height:13px}
+.cpanel.art{background:var(--bg-raised)}
+.arth{display:flex;align-items:center;gap:6px;padding:8px 8px 8px 6px;border-bottom:1px solid var(--border);min-height:50px}
+.arth .l{flex:1;min-width:0;padding:0 4px}
+.arth .l b{display:block;font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arth .l span{font-size:11.5px;color:var(--fg-faint)}
+.arth .seg{margin:0 4px;flex:none}
+.arth .seg button{display:inline-flex;align-items:center;gap:5px;padding:5px 9px}
+.arth .seg svg{width:13px;height:13px}
+.artb{flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto;background:var(--bg)}
+.artframe{flex:1;width:100%;min-height:0;border:0;background:#fff}
+.artframe.pdf{background:var(--bg-sunken)}
+.artdoc{max-width:760px;margin:0 auto;padding:28px 32px 60px;font-size:14.5px}
+.artcode{margin:0;padding:16px 18px;font-family:var(--mono);font-size:12.5px;line-height:1.55;white-space:pre;overflow:auto;flex:1;background:var(--bg-sunken)}
+.artimg{flex:1;display:grid;place-items:center;padding:20px;background:repeating-conic-gradient(var(--bg-sunken) 0 25%,var(--bg) 0 50%) 0 0/18px 18px}
+.artimg img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;box-shadow:var(--shadow)}
+.artload,.artempty{flex:1;display:grid;place-items:center;align-content:center;gap:6px;color:var(--fg-faint);text-align:center;padding:24px}
+.artempty b{color:var(--fg);font-size:14px}
+.artempty span{font-size:12.5px;max-width:320px}
+.thinking-dots{padding:6px 0 2px}
+@media (max-width:900px){
+  .chatgrid.side-open.art{grid-template-columns:minmax(0,1fr)}
+  .arth .seg span{display:none}
+  .artdoc{padding:18px 16px 50px}
+}

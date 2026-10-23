@@ -70,6 +70,9 @@ const I = {
   zap: '<path d="M4 14l6-11v8h6l-6 11v-8z"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   back: '<path d="M15 6l-6 6 6 6"/>',
+  dl: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  code: '<path d="M9 7l-5 5 5 5M15 7l5 5-5 5"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
   pulse: '<path d="M3 12h4l3 8 4-16 3 8h4"/>',
@@ -713,7 +716,8 @@ function renderTurn(c, t, ti, isLast) {
     '<div class="a-name">' + esc(look.name) + qwenTag(t.user && t.user.provider === "qwen" || items.some((m) => /qwen/i.test(m.model || "")) ? "qwen" : "") + (agentName && t.user && t.user.routedTo ? '<span class="tag acc" title="Auto picked this teammate">auto</span>' : "") + '<span class="faint" style="font-weight:400">' + fmtTime(t.user ? t.user.ts : items[0] && items[0].ts) + "</span></div>";
   // the work block: one line per step, collapsed once the turn is done
   const steps = work.concat(sideTail);
-  if (steps.length || (live && !answer.length)) {
+  // a turn that is only thinking and writing reads as plain chat; the work block appears with its first tool call
+  if (tools.length || sideTail.length) {
     const startTs = tms(t.user ? t.user.ts : items[0] && items[0].ts) || c.turnStart;
     const endTs = Math.max.apply(null, [startTs].concat(items.map((m) => tms(m.ts) || 0)).concat(items.filter((m) => m.result && m.result.ts).map((m) => tms(m.result.ts))));
     const pendingTool = live && [...tools].reverse().find((m) => !m.result);
@@ -737,12 +741,14 @@ function renderTurn(c, t, ti, isLast) {
     if (x.choices.length && isLast && !live) h += '<div class="ask"><div class="q">' + ic("hand") + "<span>" + esc(questionOf(x.body)) + '</span></div><div class="opts">' +
       x.choices.map((o, i) => '<button class="opt" data-choice="' + esc(o) + '"><span class="n">' + (i + 1) + "</span><span><b>" + esc(o) + "</b></span></button>").join("") + "</div></div>";
   }
-  if (live && !answer.length && !steps.length) h += '<p class="cursor muted">' + esc(c.step || "Thinking") + "</p>";
+  if (live && !answer.some((m) => m.text && m.text.trim()) && !tools.length) h += '<p class="thinking-dots" aria-label="Thinking"><span class="typing"><i></i><i></i><i></i></span></p>';
   // what the turn made, as cards you can open
+  const arts = artifactsOf(tools, answer);
+  h += arts.map((a) => artCard(c, a)).join("");
   const made = [];
   for (const m of tools) {
     const p = m.input && (m.input.file_path || m.input.notebook_path);
-    if (p && /^(Write|Edit|MultiEdit|NotebookEdit)$/.test(m.name) && !made.some((x) => x.p === p) && !(m.result && m.result.isError)) made.push({ p, n: m.name === "Write" ? "new" : "edited" });
+    if (p && /^(Write|Edit|MultiEdit|NotebookEdit)$/.test(m.name) && !made.some((x) => x.p === p) && !arts.some((x) => x.p === p) && !(m.result && m.result.isError)) made.push({ p, n: m.name === "Write" ? "new" : "edited" });
   }
   if (made.length && !live) h += made.slice(0, 4).map((f) => fileCard(f.p, f.n === "new" ? "Created · " + short(f.p.replace(homeDir(), "~"), 48) : "Edited · " + short(f.p.replace(homeDir(), "~"), 48))).join("") +
     (made.length > 4 ? '<button class="btn" data-act="panelfiles">' + (made.length - 4) + " more files</button>" : "");
@@ -770,6 +776,88 @@ function jobCard(j) {
     (j.subs && j.subs.length ? '<div class="sub-agents">' + j.subs.map((a) => '<span class="sa">' + ava(a) + esc(a) + ' <span class="typing"><i></i><i></i><i></i></span></span>').join("") + "</div>" : "") +
     '<div class="leave">' + ic("bell") + "Takes a while? Leave this chat or close Bridge. It keeps going and you get a ping when it is done.</div></div>";
 }
+/* ── artifacts: pages, docs and images a turn made, opened beside the chat like Claude's ── */
+const ART_RE = /\.(html?|md|markdown|svg|png|jpe?g|gif|webp|pdf)$/i;
+const ART_KIND = { html: "Page", htm: "Page", md: "Document", markdown: "Document", svg: "Image", png: "Image", jpg: "Image", jpeg: "Image", gif: "Image", webp: "Image", pdf: "PDF" };
+const artKind = (p) => ART_KIND[extOf(p).toLowerCase()] || "File";
+/** what a turn produced: files its tools wrote or published, then pages named in its answer */
+function artifactsOf(tools, answer) {
+  const out = [];
+  const add = (p, kind) => {
+    p = String(p || "").trim().replace(/^~(?=\/)/, homeDir());
+    if (!p.startsWith("/") || !ART_RE.test(p)) return;
+    const hit = out.find((x) => x.p === p);
+    if (hit) { if (kind === "edited" && hit.kind === "made") hit.kind = "edited"; return; }
+    out.push({ p, kind });
+  };
+  for (const m of tools) {
+    if (!m.result || m.result.isError) continue;
+    const i = m.input || {};
+    if (/^(Write|Edit|MultiEdit|NotebookEdit)$/.test(m.name)) add(i.file_path || i.notebook_path, m.name === "Write" ? "new" : "edited");
+    else if (m.name === "Artifact") [i.file_path].concat(i.file_paths || []).forEach((p) => add(p, "made"));
+  }
+  for (const m of answer) {
+    if (m.live || !m.text) continue;
+    const re = /(?:^|[\s`(\[*"'])((?:\/|~\/)[^\s`)\]*"'<>]+?\.(?:html?|md|markdown|svg|png|jpe?g|gif|webp|pdf))(?=$|[\s`)\]*"',.:;!?])/gim;
+    let x; while ((x = re.exec(m.text))) add(x[1], "made");
+  }
+  return out.slice(0, 6);
+}
+function artCard(c, a) {
+  const e = extOf(a.p).toLowerCase(), on = S.art && S.art.path === a.p && S.panel;
+  const what = artKind(a.p) + " · " + (a.kind === "new" ? "Created" : a.kind === "edited" ? "Edited" : "Made") + " · " + e.toUpperCase();
+  return '<button class="acard' + (on ? " on" : "") + '" data-art="' + esc(a.p) + '"><span class="ath" style="--ac:' + extColor(e) + '">' + ic(/png|jpe?g|gif|webp|svg/.test(e) ? "view" : /html?/.test(e) ? "globe" : "book") +
+    '</span><span class="l"><b>' + esc(base(a.p)) + "</b><span>" + esc(what) + '</span></span><span class="go">' + (on ? "Open" : "Open") + ic("ext") + "</span></button>";
+}
+function openArt(path) {
+  S.art = { path, mode: "preview", chat: S.chat };
+  S.panel = true;
+  render();
+}
+/** a fingerprint of everything that changes what the viewer shows: a later edit of the same file repaints it, nothing else does */
+function artSig(c, a) {
+  const touches = c.msgs.filter((m) => m.kind === "tool" && m.input && (m.input.file_path === a.path || m.input.notebook_path === a.path || (m.input.file_paths || []).includes(a.path)));
+  return a.path + "|" + a.mode + "|" + touches.length + "|" + touches.filter((m) => m.result).length + "|" + (c.computer || "mac");
+}
+function paintArt(box, c) {
+  const a = S.art, sig = artSig(c, a);
+  if (box.dataset.artsig === sig && $("#artBody", box)) return;
+  box.dataset.artsig = sig;
+  const e = extOf(a.path).toLowerCase(), textual = /html?|md|markdown|svg/.test(e);
+  box.innerHTML = '<div class="arth"><button class="icon-btn" data-act="artback" title="All files">' + ic("back") + '</button><div class="l"><b title="' + esc(a.path) + '">' + esc(base(a.path)) + "</b><span>" + esc(artKind(a.path) + " · " + e.toUpperCase()) + "</span></div>" +
+    (textual ? '<div class="seg"><button class="' + (a.mode === "preview" ? "on" : "") + '" data-artmode="preview">' + ic("eye") + "<span>Preview</span></button><button class=\"" + (a.mode === "code" ? "on" : "") + '" data-artmode="code">' + ic("code") + "<span>Code</span></button></div>" : "") +
+    (textual ? '<button class="icon-btn" data-act="artcopy" title="Copy">' + ic("copy") + "</button>" : "") +
+    '<button class="icon-btn" data-act="artdl" title="Download">' + ic("dl") + '</button><button class="icon-btn" data-doc="' + esc(a.path) + '" data-computer="' + esc(c.computer || "mac") + '" title="Open full page">' + ic("ext") + '</button><button class="icon-btn" data-act="artclose" title="Close">' + ic("x") + "</button></div>" +
+    '<div class="artb" id="artBody"><div class="artload"><span class="spin-s"></span></div></div>';
+  loadArt(c, a, $("#artBody", box));
+}
+const artUrl = (c, path, extra) => "/api/raw?path=" + encodeURIComponent(path) + (c.id ? "&session=" + encodeURIComponent(c.id) : "") + cq(c.computer) + (extra || "");
+async function loadArt(c, a, el) {
+  const e = extOf(a.path).toLowerCase();
+  const d = await getJ("/api/file?path=" + encodeURIComponent(a.path) + (c.id ? "&session=" + encodeURIComponent(c.id) : "") + cq(c.computer)).catch((err) => ({ error: String(err) }));
+  if (!el.isConnected || S.art !== a) return;
+  a.text = d.text || "";
+  if (d.error) { el.innerHTML = '<div class="artempty">' + ic("x") + "<b>Can't open this file</b><span>" + esc(d.error) + "</span></div>"; return; }
+  if (d.blocked) { el.innerHTML = '<div class="artempty">' + ic("shield") + "<b>Blocked</b><span>" + esc(d.text) + "</span></div>"; return; }
+  if (a.mode === "code" && !d.binary) { el.innerHTML = '<pre class="artcode"><code>' + esc(String(d.text).slice(0, 400000)) + "</code></pre>"; return; }
+  if (/html?/.test(e)) {
+    // its own opaque origin: the page's scripts run, but can't reach Bridge, its token or its cookies
+    const f = document.createElement("iframe");
+    f.className = "artframe";
+    f.setAttribute("sandbox", "allow-scripts allow-popups allow-forms allow-modals");
+    f.setAttribute("referrerpolicy", "no-referrer");
+    f.srcdoc = d.text;
+    el.replaceChildren(f);
+  } else if (/md|markdown/.test(e)) el.innerHTML = '<div class="prose artdoc">' + md(String(d.text)) + "</div>";
+  else if (e === "pdf") {
+    const r = await fetch(Auth.withToken(artUrl(c, a.path))).catch(() => null);
+    if (!el.isConnected || S.art !== a) return;
+    if (!r || !r.ok) { el.innerHTML = '<div class="artempty"><b>Can\'t load this PDF</b></div>'; return; }
+    if (a.blob) URL.revokeObjectURL(a.blob);
+    a.blob = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: "application/pdf" }));
+    el.innerHTML = '<iframe class="artframe pdf" src="' + a.blob + '"></iframe>';
+  } else el.innerHTML = '<div class="artimg"><img alt="' + esc(base(a.path)) + '" src="' + esc(Auth.withToken(artUrl(c, a.path, "&v=" + Date.now()))) + '"></div>';
+}
 function fileCard(p, sub) {
   const e = extOf(p);
   return '<button class="fcard" data-file="' + esc(p) + '"><span class="fi" style="background:' + extColor(e) + '">' + esc((e || "file").toUpperCase().slice(0, 4)) + '</span><span class="l"><b>' + esc(base(p)) + "</b><span>" + esc(sub || short(p, 50)) + "</span></span>" + ic("ext") + "</button>";
@@ -791,7 +879,7 @@ function renderChatView() {
       '<div class="suggest">' + projs.map((p) => '<button class="chipx" data-set="proj:' + esc(p.path) + '">' + esc(p.name) + "</button>").join("") + "</div></div></div></div>";
     return;
   }
-  host.innerHTML = '<div class="chatgrid ' + (S.panel ? "side-open" : "") + '"><div class="chatcol">' +
+  host.innerHTML = '<div class="chatgrid ' + (S.panel ? "side-open" : "") + (S.panel && S.art ? " art" : "") + '"><div class="chatcol">' +
     '<div class="msgs view" id="msgs"><div class="wrap" id="turns">' + (c.loading || (!c.loaded && !c.msgs.length) ? '<div class="empty-big"><span class="spin-s" style="display:inline-block"></span></div>' : "") + "</div></div>" +
     '<div class="chat-composer"><div id="tray"></div>' + composer(chatBusy(c) ? "Add to the work, or ask anything meanwhile…" : "Reply…", { chat: true }) + "</div></div>" +
     '<aside class="cpanel" id="cpanel"></aside></div>';
@@ -863,7 +951,7 @@ function chatFiles(c) {
     if (m.kind !== "tool") continue;
     const p = m.input && (m.input.file_path || m.input.notebook_path);
     if (!p) continue;
-    const kind = m.name === "Write" ? "new" : /^(Edit|MultiEdit|NotebookEdit)$/.test(m.name) ? "edited" : m.name === "Read" ? "read" : "";
+    const kind = m.name === "Write" || m.name === "Artifact" ? "new" : /^(Edit|MultiEdit|NotebookEdit)$/.test(m.name) ? "edited" : m.name === "Read" ? "read" : "";
     if (!kind) continue;
     const hit = out.find((x) => x.p === p);
     if (!hit) out.push({ p, kind });
@@ -886,6 +974,10 @@ function paintPanel() {
   const box = $("#cpanel");
   if (!box || !S.chat) return;
   const c = S.chat;
+  if (S.art && S.art.chat !== c) S.art = null;
+  box.classList.toggle("art", !!S.art);
+  if (S.art) return paintArt(box, c);
+  delete box.dataset.artsig;
   const tabs = [["files", "Files"], ["progress", "Progress"], ["details", "Details"]];
   let body = "";
   if (S.ptab === "files") {
@@ -929,7 +1021,8 @@ async function previewInto(path, el) {
   if (!el) return;
   const comp = (S.chat && S.chat.computer) || "mac", ck = comp + ":" + path;
   let d = previewCache.get(ck);
-  if (!d || Date.now() - d.at > 5000) { d = await getJ("/api/file?path=" + encodeURIComponent(path) + cq(comp)).catch((e) => ({ error: String(e) })); d.at = Date.now(); previewCache.set(ck, d); }
+  const sid = S.chat && S.chat.id ? "&session=" + encodeURIComponent(S.chat.id) : "";
+  if (!d || Date.now() - d.at > 5000) { d = await getJ("/api/file?path=" + encodeURIComponent(path) + sid + cq(comp)).catch((e) => ({ error: String(e) })); d.at = Date.now(); previewCache.set(ck, d); }
   if (d.url) d.url = d.url.replace(/(&computer=cloud)?$/, cq(comp));
   if (!el.isConnected) return;
   if (d.error) { el.innerHTML = '<span class="faint">' + esc(d.error) + "</span>"; return; }
@@ -937,7 +1030,7 @@ async function previewInto(path, el) {
   if (d.binary && /png|jpe?g|gif|webp|svg/.test(e)) el.innerHTML = '<img src="' + esc(Auth.withToken(d.url)) + '">';
   else if (d.binary) el.innerHTML = '<button class="btn" data-doc="' + esc(path) + '">Open ' + esc(e.toUpperCase()) + "</button>";
   else if (d.lang === "markdown") el.innerHTML = '<div class="prose">' + md(String(d.text).slice(0, 20000)) + "</div>";
-  else if (e === "html") el.innerHTML = '<iframe sandbox="allow-scripts" src="' + esc(Auth.withToken("/api/raw?path=" + encodeURIComponent(path) + cq(comp))) + '" style="width:100%;height:46vh;border:1px solid var(--border);border-radius:8px;background:#fff"></iframe>';
+  else if (/^html?$/.test(e)) { const f = document.createElement("iframe"); f.setAttribute("sandbox", "allow-scripts"); f.style.cssText = "width:100%;height:46vh;border:1px solid var(--border);border-radius:8px;background:#fff"; f.srcdoc = d.text || ""; el.replaceChildren(f); }
   else el.innerHTML = '<div class="prose"><pre><code>' + esc(String(d.text).slice(0, 12000)) + "</code></pre></div>";
 }
 
@@ -1255,7 +1348,7 @@ function bindView() {
   if (window.VIEW_BIND) window.VIEW_BIND();
 }
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-act],[data-go],[data-open],[data-proj],[data-menu],[data-set],[data-suggest],[data-choice],[data-plan],[data-ptab],[data-pfile],[data-file],[data-doc],[data-tool],[data-copy],[data-rmatt],[data-aci],[data-newin],[data-assign],[data-ask],[data-filter]");
+  const t = e.target.closest("[data-act],[data-go],[data-open],[data-proj],[data-menu],[data-set],[data-suggest],[data-choice],[data-plan],[data-ptab],[data-pfile],[data-art],[data-artmode],[data-file],[data-doc],[data-tool],[data-copy],[data-rmatt],[data-aci],[data-newin],[data-assign],[data-ask],[data-filter]");
   if (menuEl && !e.target.closest(".menu") && !e.target.closest("[data-menu]")) closeMenu();
   if (!t) return;
   const d = t.dataset;
@@ -1274,7 +1367,9 @@ document.addEventListener("click", (e) => {
     else { m.decided = "Revising"; flush(c, 0); const ta = $("#ta"); if (ta) { ta.placeholder = "What should change in the plan?"; ta.focus(); } }
   }
   else if (d.ptab) { S.ptab = d.ptab; paintPanel(); }
-  else if (d.pfile) { S.pfile = d.pfile; paintPanel(); }
+  else if (d.art) openArt(d.art);
+  else if (d.artmode) { if (S.art) { S.art.mode = d.artmode; paintPanel(); } }
+  else if (d.pfile) { if (ART_RE.test(d.pfile)) openArt(d.pfile); else { S.pfile = d.pfile; paintPanel(); } }
   else if (d.file) { S.pfile = d.file; S.ptab = "files"; if (S.view === "chat" && innerWidth > 900) { S.panel = true; render(); } else openDoc(d.file, null, { computer: S.chat && S.chat.computer }); }
   else if (d.doc) openDoc(d.doc, null, { computer: d.computer || (S.view === "chat" && S.chat ? S.chat.computer : "mac") });
   else if (d.tool !== undefined) { if (!S.tech || !S.chat) return; S.chat.detOpen[d.tool] = !S.chat.detOpen[d.tool]; flush(S.chat, 0); }
@@ -1293,7 +1388,11 @@ function act(a, t, e) {
   else if (a === "palette") openPalette();
   else if (a === "theme") toggleTheme();
   else if (a === "settings") openSettings();
-  else if (a === "panel") { S.panel = !S.panel; render(); }
+  else if (a === "panel") { S.panel = !S.panel; if (!S.panel) S.art = null; render(); }
+  else if (a === "artclose") { S.art = null; S.panel = false; render(); }
+  else if (a === "artback") { S.pfile = S.art && S.art.path; S.art = null; S.ptab = "files"; render(); }
+  else if (a === "artcopy") { if (S.art && S.art.text != null) { navigator.clipboard.writeText(S.art.text); toast("Copied"); } }
+  else if (a === "artdl") { if (S.art && S.chat) { const l = document.createElement("a"); l.href = Auth.withToken(artUrl(S.chat, S.art.path, "&download=1")); l.download = base(S.art.path); document.body.appendChild(l); l.click(); l.remove(); } }
   else if (a === "panelfiles") { S.panel = true; S.ptab = "files"; render(); }
   else if (a === "work") {
     const w = t.closest(".work"), ti = +w.dataset.ti, c = S.chat;

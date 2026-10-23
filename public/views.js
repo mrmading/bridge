@@ -278,7 +278,9 @@ async function openDoc(path, title, opts) {
   const computer = opts.computer === "cloud" ? "cloud" : "mac";
   S.doc = { path, title: title || base(path), back, from, loading: true, text: "", computer };
   go("doc");
-  const d = await getJ("/api/file?path=" + encodeURIComponent(path) + cq(computer)).catch((e) => ({ error: String(e) }));
+  // a file a chat made outside the Bridge folders opens on that chat's say-so (its transcript names it)
+  const sid = opts.session || (S.chat && S.chat.id) || "";
+  const d = await getJ("/api/file?path=" + encodeURIComponent(path) + (sid ? "&session=" + encodeURIComponent(sid) : "") + cq(computer)).catch((e) => ({ error: String(e) }));
   if (d.url) d.url += cq(computer);
   if (!S.doc || S.doc.path !== path) return;
   const missing = d.error && /not a file/.test(d.error);

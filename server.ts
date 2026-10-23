@@ -108,6 +108,16 @@ function guard(p: string): string | null {
   return null;
 }
 const isSensitive = (p: string) => SENSITIVE.some((r) => r.test(p));
+/** a file a chat made can sit outside the Bridge folders (the CLI's scratchpad, Downloads); it still opens when that chat's own transcript names it */
+async function guardFor(p: string, sid: string): Promise<string | null> {
+  const abs = guard(p);
+  if (abs || !p || !/^[0-9a-f-]{8,64}$/i.test(sid || "")) return abs;
+  const f = sessionFile(sid);
+  if (!f || !existsSync(f)) return null;
+  const want = resolve(p);
+  const raw = await readFile(f, "utf8").catch(() => "");
+  return raw.includes(JSON.stringify(want).slice(1, -1)) ? want : null;
+}
 
 function frontmatter(text: string): Record<string, string> {
   if (!text.startsWith("---")) return {};
@@ -199,7 +209,8 @@ function defaultRoots(): string[] {
 async function readRoots(): Promise<string[]> {
   try {
     const r = JSON.parse(await Bun.file(ROOTS_FILE).text());
-    if (Array.isArray(r) && r.length) return r.filter((x: string) => typeof x === "string");
+    // a folder list copied from another machine (the cloud computer got the Mac's) names folders that don't exist here; drop those so the defaults apply
+    if (Array.isArray(r) && r.length) { const ok = r.filter((x: string) => typeof x === "string" && existsSync(x)); if (ok.length) return ok; }
   } catch {}
   return [];
 }
@@ -2458,14 +2469,15 @@ async function route(req: Request): Promise<Response> {
         return json({ path: abs, parent: atRoot ? null : dirname(abs), entries, roots: ROOTS });
       }
       if (p === "/api/file") {
-        const abs = guard(q.get("path") || "");
+        const sid = q.get("session") || "";
+        const abs = await guardFor(q.get("path") || "", sid);
         if (!abs) return json({ error: "outside your Bridge folders — add it in Files" }, 403);
         if (isSensitive(abs)) return json({ path: abs, blocked: true, text: "🔒 Blocked by Bridge — this path may hold credentials." });
         const st = await stat(abs).catch(() => null);
         if (!st || st.isDirectory()) return json({ error: "not a file" }, 404);
         const ext = extname(abs).toLowerCase();
         if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf"].includes(ext))
-          return json({ path: abs, size: st.size, binary: true, url: "/api/raw?path=" + encodeURIComponent(abs), ext });
+          return json({ path: abs, size: st.size, binary: true, url: "/api/raw?path=" + encodeURIComponent(abs) + (sid ? "&session=" + encodeURIComponent(sid) : ""), ext });
         if (st.size > 800_000) return json({ path: abs, size: st.size, text: "File too large to preview (" + Math.round(st.size / 1024) + " KB).", lang: "text" });
         return json({ path: abs, size: st.size, mtime: st.mtimeMs, lang: LANGS[ext] || "text", text: await readFile(abs, "utf8") });
       }
@@ -2493,9 +2505,16 @@ async function route(req: Request): Promise<Response> {
         return json({ ok: true, size: st.size, mtime: st.mtimeMs });
       }
       if (p === "/api/raw") {
-        const abs = guard(q.get("path") || "");
+        const abs = await guardFor(q.get("path") || "", q.get("session") || "");
         if (!abs || isSensitive(abs)) return new Response("blocked", { status: 403 });
-        return new Response(Bun.file(abs));
+        const st = await stat(abs).catch(() => null);
+        if (!st || st.isDirectory()) return new Response("not a file", { status: 404 });
+        const ext = extname(abs).toLowerCase();
+        // a page or SVG opened straight from this URL must not run as Bridge itself: it gets an opaque origin, like the preview iframe
+        const h: Record<string, string> = { "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" };
+        if ([".html", ".htm", ".svg", ".xhtml"].includes(ext)) h["Content-Security-Policy"] = "sandbox allow-scripts";
+        if (q.get("download")) h["Content-Disposition"] = 'attachment; filename="' + basename(abs).replace(/["\\\r\n]/g, "_") + '"';
+        return new Response(Bun.file(abs), { headers: h });
       }
       if (p === "/api/open" && req.method === "POST") {
         const { path } = await req.json();
