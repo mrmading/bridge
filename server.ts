@@ -771,7 +771,11 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
       catch { send({ t: "raw", d: line }); }
     }
   });
-  child.stderr.on("data", (c) => send({ t: "stderr", d: c.toString() }));
+  child.stderr.on("data", (c) => {
+    // a Qwen turn authenticates with the adapter's key, so the CLI always warns that claude.ai connectors are off; that is by design
+    const d = provider === "qwen" ? c.toString().split("\n").filter((l: string) => !/claude\.ai connectors are disabled/i.test(l)).join("\n") : c.toString();
+    if (d.trim()) send({ t: "stderr", d });
+  });
   child.on("close", (code) => {
     live.delete(key); running.delete(key); homeCache = null; recentAll = null;
     if (code) logRow({ ts: Date.now(), kind: "turn.exit", msg: prompt, outcome: "exit " + code, session: key, cwd });
