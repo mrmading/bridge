@@ -552,6 +552,25 @@ describe("handleQwen", () => {
     }
   });
 
+  test("a job served by a different model than requested is logged loudly; thinking never becomes the answer", async () => {
+    globalThis.fetch = (async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/run")) return Response.json({ id: "m1", status: "IN_QUEUE" });
+      return Response.json({ status: "COMPLETED", output: { model: "llama3.2:3b", message: { content: "hi", thinking: "secret plan" } } });
+    }) as typeof fetch;
+    const errs: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a.join(" "));
+    try {
+      const msg = await (await handleQwen(post({ messages: [{ role: "user", content: "hi" }] }), "v1/messages")).json();
+      expect(msg.content).toEqual([{ type: "text", text: "hi" }]);
+      expect(JSON.stringify(msg)).not.toContain("secret plan");
+      expect(errs.join("\n")).toMatch(/served by llama3\.2:3b, not hf\.co\/JonathanColetti/);
+    } finally {
+      console.error = orig;
+    }
+  });
+
   test("count_tokens returns an estimate without calling RunPod", async () => {
     const res = await handleQwen(
       new Request("http://x/qwen/v1/messages/count_tokens", { method: "POST", body: JSON.stringify({ messages: [{ role: "user", content: "a".repeat(350) }] }) }),

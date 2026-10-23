@@ -625,6 +625,10 @@ async function runJob(cfg: Cfg, input: OllamaPayload, signal: AbortSignal, sessi
   }
   debugDump("last-result.json", res);
   recordUsage(sessionId, res.executionTime);
+  // The handler silently swaps in its default (llama3.2:3b) when it cannot serve what was named.
+  const served = (Array.isArray(res.output) ? res.output[0] : res.output)?.model;
+  if (input.model && typeof served === "string" && served.toLowerCase() !== input.model.toLowerCase())
+    console.error(`[qwen] WARNING: RunPod job ${id} was served by ${served}, not ${input.model}; answers will not be Qwen's`);
   if (res.status !== "COMPLETED") throw new Error(`RunPod job ${id} ${res.status}: ${JSON.stringify(res.error ?? res).slice(0, 400)}`);
   return res;
 }
