@@ -13,7 +13,7 @@
  *  - options.num_ctx must be raised (Ollama defaults to 4096) or agent prompts fail outright.
  *
  * Env: RUNPOD_QWEN_API_KEY (falls back to that one variable in ~/.claude/.env),
- *      RUNPOD_QWEN_ENDPOINT (6fs36o7hccccvo), RUNPOD_NUM_CTX (65536),
+ *      RUNPOD_QWEN_ENDPOINT (6fs36o7hccccvo), RUNPOD_QWEN_MODEL (the Qwen GGUF), RUNPOD_NUM_CTX (65536),
  *      RUNPOD_MAX_OUTPUT (8192, also the room kept free in the window for the answer),
  *      RUNPOD_JOB_TIMEOUT_MS (900000), RUNPOD_POLL_MS (2000), RUNPOD_PING_MS (5000).
  */
@@ -40,6 +40,7 @@ export type OllamaMessage = {
   tool_call_id?: string;
 };
 export type OllamaPayload = {
+  model?: string;
   messages: OllamaMessage[];
   tools?: { type: "function"; function: { name: string; description: string; parameters: unknown } }[];
   options: Record<string, unknown>;
@@ -78,6 +79,9 @@ const num = (name: string, fallback: number) => Number(process.env[name]) || fal
 const config = () => ({
   key: apiKey(),
   endpoint: process.env.RUNPOD_QWEN_ENDPOINT || "6fs36o7hccccvo",
+  // The handler pulls whatever Ollama model is named and falls back to llama3.2:3b when none is,
+  // which is what every turn ran on until this was set. Q4_K_M (16 GB) + a 64k KV cache fit 48 GB.
+  model: process.env.RUNPOD_QWEN_MODEL || "hf.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF:Q4_K_M",
   numCtx: num("RUNPOD_NUM_CTX", 65536),
   maxOutput: num("RUNPOD_MAX_OUTPUT", 8192),
   timeoutMs: num("RUNPOD_JOB_TIMEOUT_MS", 900_000),
@@ -210,7 +214,7 @@ function cutMiddle(text: string, keep: number): string {
  */
 export function anthropicToOllama(
   body: Json,
-  opts: { numCtx?: number; maxOutput?: number } = {},
+  opts: { numCtx?: number; maxOutput?: number; model?: string } = {},
 ): { payload: OllamaPayload; trimmed: string[] } {
   const numCtx = opts.numCtx ?? 65536;
   const maxOutput = opts.maxOutput ?? 8192;
@@ -274,6 +278,7 @@ export function anthropicToOllama(
   if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) options.stop = body.stop_sequences;
 
   const payload: OllamaPayload = { messages, options };
+  if (opts.model) payload.model = opts.model;
   if (tools.length) payload.tools = tools;
   return { payload, trimmed };
 }

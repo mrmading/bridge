@@ -131,6 +131,12 @@ describe("anthropicToOllama", () => {
     expect(payload.options).toEqual({ num_ctx: 65536, num_predict: 8192, temperature: 0.2 });
   });
 
+  test("the model is named in the payload when given", () => {
+    const { payload } = anthropicToOllama({ messages: [{ role: "user", content: "x" }] }, { model: "hf.co/a/b:Q4_K_M" });
+    expect(payload.model).toBe("hf.co/a/b:Q4_K_M");
+    expect(anthropicToOllama({ messages: [{ role: "user", content: "x" }] }).payload.model).toBeUndefined();
+  });
+
   test("nothing is trimmed when the prompt fits", () => {
     const { trimmed } = anthropicToOllama({ messages: [{ role: "user", content: "small" }] }, { numCtx: 65536, maxOutput: 8192 });
     expect(trimmed).toEqual([]);
@@ -370,6 +376,8 @@ describe("handleQwen", () => {
     expect(calls[0].url).toBe("https://api.runpod.ai/v2/ep123/run");
     expect(calls[0].body.input.messages).toEqual([{ role: "user", content: "hi" }]);
     expect(calls[0].body.input.options.num_ctx).toBe(65536);
+    // The handler serves llama3.2:3b unless a model is named, so the Qwen GGUF is always requested.
+    expect(calls[0].body.input.model).toBe("hf.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF:Q4_K_M");
     expect(statusPolls).toBe(3);
   });
 
