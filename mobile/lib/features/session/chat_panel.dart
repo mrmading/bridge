@@ -14,9 +14,10 @@ import '../../widgets/common.dart';
 import '../../widgets/composer.dart';
 import '../../widgets/transcript.dart';
 import '../../widgets/turn.dart';
+import 'session_screen.dart' show gpuCost;
 import 'session_utils.dart';
 
-Future<void> showChatPanel(BuildContext context, {required List<Msg> msgs, required String id, required String cwd, required Usage usage, required ValueChanged<String> onOpenFile}) {
+Future<void> showChatPanel(BuildContext context, {required List<Msg> msgs, required String id, required String cwd, required Usage usage, Map<String, dynamic>? qwenUsage, required ValueChanged<String> onOpenFile}) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -26,13 +27,14 @@ Future<void> showChatPanel(BuildContext context, {required List<Msg> msgs, requi
       initialChildSize: .7,
       minChildSize: .4,
       maxChildSize: .95,
-      builder: (ctx, scroll) => _ChatPanel(msgs: msgs, id: id, cwd: cwd, usage: usage, onOpenFile: onOpenFile, scroll: scroll),
+      builder: (ctx, scroll) => _ChatPanel(msgs: msgs, id: id, cwd: cwd, usage: usage, qwenUsage: qwenUsage, onOpenFile: onOpenFile, scroll: scroll),
     ),
   );
 }
 
 class _ChatPanel extends StatelessWidget {
-  const _ChatPanel({required this.msgs, required this.id, required this.cwd, required this.usage, required this.onOpenFile, required this.scroll});
+  const _ChatPanel({required this.msgs, required this.id, required this.cwd, required this.usage, this.qwenUsage, required this.onOpenFile, required this.scroll});
+  final Map<String, dynamic>? qwenUsage;
   final List<Msg> msgs;
   final String id, cwd;
   final Usage usage;
@@ -170,6 +172,8 @@ class _ChatPanel extends StatelessWidget {
         kv('Freedom', modeInfo(turn.permissionMode).label),
         kv('Folder', prettyPath(cwd)),
         kv('Runs on', store.computerName),
+        if (qwenUsage != null && (qwenUsage!['jobs'] is num) && (qwenUsage!['jobs'] as num) > 0)
+          kv('GPU, this chat', '${gpuCost(qwenUsage!)} · ${qwenUsage!['jobs']} ${qwenUsage!['jobs'] == 1 ? 'job' : 'jobs'}'),
         if (tokens > 0) kv('Tokens', '${n(tokens)} (${n(usage.output)} written)'),
         kv('Chat id', id, copy: true),
         const SizedBox(height: 12),

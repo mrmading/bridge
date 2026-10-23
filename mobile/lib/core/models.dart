@@ -185,8 +185,10 @@ class Usage {
 }
 
 class Transcript {
-  Transcript({required this.msgs, required this.title, required this.cwd, required this.branch, required this.model, required this.offset, required this.usage});
+  Transcript({required this.msgs, required this.title, required this.cwd, required this.branch, required this.model, required this.offset, required this.usage, this.qwenUsage});
   final List<Msg> msgs;
+  /// RunPod GPU usage for the whole chat ({jobs, gpuMs, usd, estimated}); null for Claude chats.
+  final Map<String, dynamic>? qwenUsage;
   final String title, cwd, branch, model;
   final int offset;
   final Usage usage;
@@ -201,6 +203,7 @@ class Transcript {
       model: _s(meta['model']),
       offset: _i(j['offset']),
       usage: u,
+      qwenUsage: meta['qwenUsage'] is Map ? Map<String, dynamic>.from(meta['qwenUsage'] as Map) : null,
     );
   }
 }

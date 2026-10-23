@@ -59,6 +59,9 @@ void main() {
     expect(turnFooter(q, provider: 'qwen', short: 'Qwen 3.8'), 'Qwen 3.8  ·  ~\$0.004 GPU · 41s  ·  61.2s');
     expect(gpuCost({'usd': 0.0004, 'gpuMs': 2500}), '<\$0.001 GPU · 2.5s');
     expect(gpuCost({'usd': 0.12, 'gpuMs': 3000}), '\$0.12 GPU · 3s');
+    expect(gpuCost({'usd': 0.02, 'gpuMs': 65000, 'estimated': true}), '~\$0.02 GPU · 1m 05s');
+    expect(Transcript.fromJson({'meta': {'qwenUsage': {'jobs': 3, 'gpuMs': 9000, 'usd': 0.01}}}).qwenUsage!['jobs'], 3);
+    expect(Transcript.fromJson({'meta': {}}).qwenUsage, isNull);
   });
 
   Widget host(Widget child) => MaterialApp(theme: buildTheme(Brightness.dark), home: Scaffold(body: SingleChildScrollView(child: child)));

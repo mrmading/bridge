@@ -54,6 +54,7 @@ class _SessionScreenState extends State<SessionScreen> {
   String _loadError = '';
   int _offset = 0;
   Usage _usage = Usage();
+  Map<String, dynamic>? _qwenUsage;
 
   // follow
   StreamSubscription<Frame>? _followSub;
@@ -165,6 +166,7 @@ class _SessionScreenState extends State<SessionScreen> {
         if (tr.cwd.isNotEmpty) _cwd = tr.cwd;
         _offset = tr.offset;
         _usage = tr.usage;
+        _qwenUsage = tr.qwenUsage;
         _loading = false;
         _loadError = '';
         _isNew = false;
@@ -700,6 +702,7 @@ class _SessionScreenState extends State<SessionScreen> {
         id: _id,
         cwd: _cwd,
         usage: _usage,
+        qwenUsage: _qwenUsage,
         onOpenFile: _openFile,
       );
 
@@ -990,6 +993,7 @@ String gpuCost(Map<String, dynamic> u) {
   final usd = u['usd'] is num ? (u['usd'] as num).toDouble() : 0.0;
   final ms = u['gpuMs'] is num ? (u['gpuMs'] as num).toInt() : 0;
   final money = usd > 0 && usd < 0.001 ? '<\$0.001' : '\$${usd < 0.01 ? usd.toStringAsFixed(3) : usd.toStringAsFixed(2)}';
-  final time = ms < 10000 ? '${(ms / 1000).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')}s' : fmtDuration(Duration(milliseconds: ms));
+  // Same as the web: seconds under 10 s, then "1m 05s".
+  final time = ms < 10000 ? '${(ms / 1000).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')}s' : fmtElapsed(1, now: 1 + ms);
   return '${u['estimated'] == true ? '~' : ''}$money GPU · $time';
 }
