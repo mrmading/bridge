@@ -134,6 +134,7 @@ async function judge(task: Task, ctx: Ctx): Promise<Verdict> {
   const prompt = [
     "You are grading one turn of an AI coding assistant working in a small TypeScript repo. Be strict but fair.",
     `THE ASSISTANT BEING GRADED: ${provider === "qwen" ? "Qwen, an open-weight 27B model running on the user's RunPod GPU (so it should say it is Qwen)" : `Claude (${model})`}.`,
+    `THE REPO: the assistant works in ${ctx.dir}, a scratch copy of the repo; that folder IS the user's project, so files written there are in the right place.`,
     `TASK: ${task.title}`,
     `WHAT A GOOD ANSWER DOES: ${task.expect}`,
     "",
