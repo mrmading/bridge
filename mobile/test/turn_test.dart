@@ -1,5 +1,6 @@
 import 'package:bridge_mobile/core/models.dart';
 import 'package:bridge_mobile/core/theme.dart';
+import 'package:bridge_mobile/features/session/session_screen.dart';
 import 'package:bridge_mobile/widgets/transcript.dart';
 import 'package:bridge_mobile/widgets/turn.dart';
 import 'package:flutter/material.dart';
@@ -45,6 +46,14 @@ void main() {
     expect(isHarnessNote(n), isTrue);
     expect(harnessNoteText(n), 'Background command "Sleep" completed (exit code 0)');
     expect(isHarnessNote(Msg(kind: 'user', text: 'deploy it')), isFalse);
+  });
+
+  test('turn footer: Claude shows the cost; open models show their name and time, never a dollar figure', () {
+    final d = {'total_cost_usd': 0.334, 'duration_ms': 61200};
+    expect(turnFooter(d, model: 'haiku'), 'Haiku  ·  \$0.334  ·  61.2s');
+    expect(turnFooter(d, provider: 'qwen', short: 'Qwen 3.8'), 'Qwen 3.8  ·  61.2s');
+    expect(turnFooter({...d, 'model': 'qwen3.8-uncensored'}), 'Open model  ·  61.2s', reason: 'a Qwen model even without a provider');
+    expect(turnFooter(d, provider: 'claude', model: 'opus'), 'Opus  ·  \$0.334  ·  61.2s');
   });
 
   Widget host(Widget child) => MaterialApp(theme: buildTheme(Brightness.dark), home: Scaffold(body: SingleChildScrollView(child: child)));

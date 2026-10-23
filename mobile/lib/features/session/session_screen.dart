@@ -459,15 +459,7 @@ class _SessionScreenState extends State<SessionScreen> {
       case 'user':
         _onToolResults(d);
       case 'result':
-        final parts = <String>[];
-        final model = _store.turn.model;
-        if (model.isNotEmpty) parts.add(cap(model));
-        final cost = d['total_cost_usd'];
-        if (cost is num) parts.add('\$${cost.toStringAsFixed(cost < 1 ? 3 : 2)}');
-        final ms = d['duration_ms'];
-        if (ms is num) parts.add('${(ms / 1000).toStringAsFixed(1)}s');
-        if (d['is_error'] == true) parts.add((d['subtype'] ?? 'error').toString());
-        _footer = parts.join('  ·  ');
+        _footer = turnFooter(d, provider: _store.turn.provider, model: _store.turn.model, short: _store.providerShort(_store.turn.provider));
         _touch();
       default:
         break;
@@ -968,4 +960,23 @@ class _JobsTrayState extends State<_JobsTray> {
       ]),
     );
   }
+}
+
+/// The line under a finished turn: model · cost · time. Open models (Qwen…) show their name and the
+/// time only: the CLI prices a model it does not know at made-up rates, so that dollar figure is wrong.
+String turnFooter(Map<String, dynamic> d, {String provider = '', String model = '', String short = ''}) {
+  final usedModel = (d['model'] ?? model).toString();
+  final open = (provider.isNotEmpty && provider != 'claude') || RegExp('qwen', caseSensitive: false).hasMatch(usedModel);
+  final parts = <String>[];
+  if (open) {
+    parts.add(short.isNotEmpty ? short : 'Open model');
+  } else {
+    if (model.isNotEmpty) parts.add(cap(model));
+    final cost = d['total_cost_usd'];
+    if (cost is num) parts.add('\$${cost.toStringAsFixed(cost < 1 ? 3 : 2)}');
+  }
+  final ms = d['duration_ms'];
+  if (ms is num) parts.add('${(ms / 1000).toStringAsFixed(1)}s');
+  if (d['is_error'] == true) parts.add((d['subtype'] ?? 'error').toString());
+  return parts.join('  ·  ');
 }
