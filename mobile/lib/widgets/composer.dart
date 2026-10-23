@@ -430,12 +430,21 @@ Future<void> showModelSheet(BuildContext context) => _sheet(context, (c) {
         Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 8), child: Text('THINKING EFFORT', style: TextStyle(color: t.faint, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 1.1))),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: SegmentedButton<String>(
-            segments: [for (final e in efforts) ButtonSegment(value: e, label: Text(effortLabel(e), maxLines: 1, overflow: TextOverflow.ellipsis))],
-            selected: {efforts.contains(store.turn.effort) ? store.turn.effort : efforts.first},
-            showSelectedIcon: false,
-            onSelectionChanged: (s) => _setTurn(effort: s.first),
-          ),
+          // Chips, not a segmented bar: six levels do not fit one row on a phone.
+          child: Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final e in efforts)
+              ChoiceChip(
+                label: Text(e == 'xhigh' ? 'Extra high' : effortLabel(e)),
+                selected: (efforts.contains(store.turn.effort) ? store.turn.effort : efforts.first) == e,
+                showCheckmark: false,
+                labelStyle: TextStyle(color: store.turn.effort == e ? t.accentFg : t.fg, fontSize: 14, fontWeight: FontWeight.w600),
+                selectedColor: t.accent,
+                backgroundColor: t.active,
+                side: BorderSide.none,
+                shape: const StadiumBorder(),
+                onSelected: (_) => _setTurn(effort: e),
+              ),
+          ]),
         ),
         ],
       ]);
