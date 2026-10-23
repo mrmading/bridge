@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import 'http_client_io.dart' if (dart.library.js_interop) 'http_client_web.dart';
+import 'auth.dart';
 import 'models.dart';
 
 class ApiException implements Exception {
@@ -37,9 +38,25 @@ class TtsResult {
 }
 
 class BridgeApi {
-  BridgeApi(String base) : base = _norm(base);
+  BridgeApi(String base, {this.token, this.cachedToken, this.onUnauthorized}) : base = _norm(base);
   final String base;
   final http.Client _client = makeClient();
+
+  /// The Bridge sign-in token, refreshed when it is about to expire; null when not signed in.
+  final Future<String?> Function()? token;
+  /// The current token without waiting, for URLs built synchronously (images, raw files).
+  final String? Function()? cachedToken;
+  /// The server answered 401 {error:"auth"}: the session is gone.
+  final void Function()? onUnauthorized;
+
+  Future<Map<String, String>> _auth() async {
+    final t = await token?.call();
+    return t == null || t.isEmpty ? const {} : {'authorization': 'Bearer $t'};
+  }
+
+  void _check401(int status, dynamic j) {
+    if (status == 401 && (j is! Map || j['error'] == null || j['error'] == 'auth')) onUnauthorized?.call();
+  }
 
   static String _norm(String b) {
     var s = b.trim();
@@ -57,12 +74,12 @@ class BridgeApi {
   }
 
   Future<dynamic> _get(String path, {Map<String, String>? q, Duration timeout = const Duration(seconds: 25)}) async {
-    final r = await _client.get(_u(path, q)).timeout(timeout);
+    final r = await _client.get(_u(path, q), headers: await _auth()).timeout(timeout);
     return _decode(r);
   }
 
   Future<dynamic> _post(String path, Map<String, dynamic> body, {Duration timeout = const Duration(seconds: 25)}) async {
-    final r = await _client.post(_u(path), headers: {'content-type': 'application/json'}, body: jsonEncode(body)).timeout(timeout);
+    final r = await _client.post(_u(path), headers: {'content-type': 'application/json', ...await _auth()}, body: jsonEncode(body)).timeout(timeout);
     return _decode(r);
   }
 
@@ -71,14 +88,20 @@ class BridgeApi {
     try {
       j = jsonDecode(utf8.decode(r.bodyBytes));
     } catch (_) {
+      _check401(r.statusCode, null);
       if (r.statusCode >= 400) throw ApiException('HTTP ${r.statusCode}', status: r.statusCode);
       throw ApiException('Bridge answered with something that is not JSON');
     }
+    _check401(r.statusCode, j);
     if (r.statusCode >= 400) {
       throw ApiException(j is Map && j['error'] != null ? j['error'].toString() : 'HTTP ${r.statusCode}', status: r.statusCode);
     }
     return j;
   }
+
+  /// Per-chat calls name the computer only for cloud chats, so a server without cloud support sees
+  /// exactly the requests it always did.
+  Map<String, String> _cq(String computer) => computer == 'cloud' ? const {'computer': 'cloud'} : const {};
 
   Map<String, dynamic> _m(dynamic j) => j is Map ? Map<String, dynamic>.from(j) : <String, dynamic>{};
   List<Map<String, dynamic>> _l(dynamic j) => j is List ? [for (final e in j) _m(e)] : const [];
@@ -87,8 +110,12 @@ class BridgeApi {
   /// closes the stream. Cancel the subscription to drop the connection (the server keeps running
   /// a chat turn regardless: call abort()).
   Stream<Frame> sse(String path, {Map<String, String>? q, Map<String, dynamic>? post}) async* {
-    final req = http.Request(post == null ? 'GET' : 'POST', _u(path, q));
+    // GET streams also carry the token in the query: an EventSource-style proxy may drop headers.
+    final auth = await _auth();
+    final t = auth.isEmpty ? '' : auth['authorization']!.substring(7);
+    final req = http.Request(post == null ? 'GET' : 'POST', _u(path, {...?q, if (post == null && t.isNotEmpty) 'access_token': t}));
     req.headers['accept'] = 'text/event-stream';
+    req.headers.addAll(auth);
     if (post != null) {
       req.headers['content-type'] = 'application/json';
       req.body = jsonEncode(post);
@@ -99,8 +126,11 @@ class BridgeApi {
       String msg = 'HTTP ${res.statusCode}';
       try {
         final j = jsonDecode(body);
+        _check401(res.statusCode, j);
         if (j is Map && j['error'] != null) msg = j['error'].toString();
-      } catch (_) {}
+      } catch (_) {
+        _check401(res.statusCode, null);
+      }
       throw ApiException(msg, status: res.statusCode);
     }
     var buf = '';
@@ -152,12 +182,13 @@ class BridgeApi {
   Future<List<SessionMeta>> recent({int limit = 60}) async => [for (final j in _l(await _get('/api/recent', q: {'limit': '$limit'}))) SessionMeta.fromJson(j)];
   Future<List<SessionMeta>> search(String q) async => q.trim().length < 2 ? const [] : [for (final j in _l(await _get('/api/search', q: {'q': q.trim()}))) SessionMeta.fromJson(j)];
   Future<List<SessionMeta>> find(String q, {String scope = 'all', String? key, String? cwd}) async =>
-      [for (final j in _l(await _get('/api/find', q: {'q': q, 'scope': scope, if (key != null) 'key': key, if (cwd != null) 'cwd': cwd}, timeout: const Duration(seconds: 60)))) SessionMeta.fromJson(j)];
-  Future<Transcript> session(String key, String id) async => Transcript.fromJson(_m(await _get('/api/session', q: {'key': key, 'id': id}, timeout: const Duration(seconds: 60))));
-  Future<void> rename(String id, String title) => _post('/api/rename', {'id': id, 'title': title});
+      [for (final j in _l(await _get('/api/find', q: {'q': q, 'scope': scope, 'key': ?key, 'cwd': ?cwd}, timeout: const Duration(seconds: 60)))) SessionMeta.fromJson(j)];
+  Future<Transcript> session(String key, String id, {String computer = 'mac'}) async =>
+      Transcript.fromJson(_m(await _get('/api/session', q: {'key': key, 'id': id, ..._cq(computer)}, timeout: const Duration(seconds: 60))));
+  Future<void> rename(String id, String title, {String computer = 'mac'}) => _post('/api/rename', {'id': id, 'title': title, ..._cq(computer)});
 
   /// Live follow of a transcript file. Frames: events (events, patches, usage, offset) · ping · gone · error.
-  Stream<Frame> follow(String key, String id, int from) => sse('/api/follow', q: {'key': key, 'id': id, 'from': '$from'});
+  Stream<Frame> follow(String key, String id, int from, {String computer = 'mac'}) => sse('/api/follow', q: {'key': key, 'id': id, 'from': '$from', ..._cq(computer)});
 
   // ── turns ────────────────────────────────────────────────────────────
   /// Runs one turn. Frames: auth · start · msg · stderr · raw · ping · end · error.
@@ -167,6 +198,7 @@ class BridgeApi {
     String? sessionId,
     required String cwd,
     TurnOptions? options,
+    String computer = 'mac',
     List<Map<String, dynamic>> attachments = const [],
   }) =>
       sse('/api/chat', post: {
@@ -178,17 +210,30 @@ class BridgeApi {
         'permissionMode': options?.permissionMode ?? 'acceptEdits',
         if (options != null && options.effort.isNotEmpty) 'effort': options.effort,
         if (options != null && options.agent.isNotEmpty && options.agent != 'auto') 'agent': options.agent,
+        if (options != null && options.provider.isNotEmpty) 'provider': options.provider,
         if (attachments.isNotEmpty) 'attachments': attachments,
+        ..._cq(computer),
       });
-  Future<bool> abort(String sessionId) async => _m(await _post('/api/abort', {'sessionId': sessionId}))['ok'] == true;
+  Future<bool> abort(String sessionId, {String computer = 'mac'}) async => _m(await _post('/api/abort', {'sessionId': sessionId, ..._cq(computer)}))['ok'] == true;
   Future<String> route(String prompt, {String previous = ''}) async => (_m(await _post('/api/route', {'prompt': prompt, 'previous': previous}))['agent'] ?? '').toString();
 
-  // ── live terminal sessions ───────────────────────────────────────────
-  Future<LiveSnapshot> live() async => LiveSnapshot.fromJson(_m(await _get('/api/live', timeout: const Duration(seconds: 15))));
-  Future<({bool ok, String error})> takeover(int pid, String id) async {
-    final j = _m(await _post('/api/live/takeover', {'pid': pid, 'id': id}, timeout: const Duration(seconds: 40)));
-    return (ok: j['ok'] == true, error: (j['error'] ?? '').toString());
+  // ── home + live work ─────────────────────────────────────────────────
+  /// Everything the Home screen and the drawer show. Throws ApiException(status: 404) on a server
+  /// that predates it; the store falls back to /api/recent then.
+  Future<HomeData> home() async => HomeData.fromJson(_m(await _get('/api/home', timeout: const Duration(seconds: 15))));
+  /// The live state of one chat; polled every few seconds while it is open.
+  Future<JobsState> jobs(String key, String id, {String computer = 'mac'}) async =>
+      JobsState.fromJson(_m(await _get('/api/jobs', q: {'key': key, 'id': id, ..._cq(computer)}, timeout: const Duration(seconds: 10))));
+  /// POST /api/move: copies a Mac chat to the cloud computer. Returns its id, key and folder there,
+  /// or throws with the server's reason (not connected, offline, still running…).
+  Future<({String id, String key, String cwd})> moveToCloud(String key, String id) async {
+    final j = _m(await _post('/api/move', {'key': key, 'id': id}, timeout: const Duration(seconds: 120)));
+    if (j['ok'] != true || j['error'] != null) throw ApiException((j['error'] ?? 'could not move the chat').toString());
+    return (id: (j['id'] ?? id).toString(), key: (j['key'] ?? key).toString(), cwd: (j['cwd'] ?? '').toString());
   }
+
+  /// Where chats can run. Throws ApiException(status: 404) on a server without cloud support.
+  Future<List<Computer>> computers() async => [for (final j in _l(await _get('/api/computers', timeout: const Duration(seconds: 15)))) Computer.fromJson(j)];
 
   // ── the desk (assistant) ─────────────────────────────────────────────
   Future<DaState> daState() async => DaState.fromJson(_m(await _get('/api/da/state')));
@@ -203,7 +248,7 @@ class BridgeApi {
   }
   Future<bool> daInterrupt() async => _m(await _post('/api/da/interrupt', {}))['ok'] == true;
   Future<DaState> daReset() async => DaState.fromJson(_m(await _post('/api/da/reset', {}, timeout: const Duration(seconds: 40))));
-  Future<DaState> daConfig({String? permissionMode, String? model}) async => DaState.fromJson(_m(await _post('/api/da/config', {if (permissionMode != null) 'permissionMode': permissionMode, if (model != null) 'model': model}, timeout: const Duration(seconds: 40))));
+  Future<DaState> daConfig({String? permissionMode, String? model}) async => DaState.fromJson(_m(await _post('/api/da/config', {'permissionMode': ?permissionMode, 'model': ?model}, timeout: const Duration(seconds: 40))));
 
   // ── voice ────────────────────────────────────────────────────────────
   Future<VoiceHealth> voiceHealth() async => VoiceHealth.fromJson(_m(await _get('/api/voice/health', timeout: const Duration(seconds: 15))));
@@ -211,7 +256,7 @@ class BridgeApi {
 
   /// Raw audio bytes in, text out. The server answers 200 even on failure, so read `error`.
   Future<({String text, String error})> stt(Uint8List bytes, String mime) async {
-    final r = await _client.post(_u('/api/stt'), headers: {'content-type': mime}, body: bytes).timeout(const Duration(seconds: 100));
+    final r = await _client.post(_u('/api/stt'), headers: {'content-type': mime, ...await _auth()}, body: bytes).timeout(const Duration(seconds: 100));
     final j = _m(_decode(r));
     return (text: (j['text'] ?? '').toString(), error: (j['error'] ?? '').toString());
   }
@@ -219,7 +264,7 @@ class BridgeApi {
   /// Polymorphic: audio bytes to play, or a JSON note that it already played on the Mac / that the
   /// device should speak.
   Future<TtsResult> tts(String text) async {
-    final r = await _client.post(_u('/api/tts'), headers: {'content-type': 'application/json'}, body: jsonEncode({'text': text})).timeout(const Duration(seconds: 60));
+    final r = await _client.post(_u('/api/tts'), headers: {'content-type': 'application/json', ...await _auth()}, body: jsonEncode({'text': text})).timeout(const Duration(seconds: 60));
     final ct = r.headers['content-type'] ?? '';
     if (r.statusCode >= 400) throw ApiException('tts failed (${r.statusCode})', status: r.statusCode);
     if (ct.startsWith('audio/')) return TtsResult(audio: r.bodyBytes, mime: ct);
@@ -230,12 +275,32 @@ class BridgeApi {
   // ── files / folders ──────────────────────────────────────────────────
   Future<List<String>> roots() async => List<String>.from((await _get('/api/roots')) as List? ?? const []);
   Future<List<String>> setRoots(List<String> roots) async => List<String>.from((await _post('/api/roots', {'roots': roots})) as List? ?? const []);
-  Future<DirListing> dir(String path, {bool hidden = false}) async => DirListing.fromJson(_m(await _get('/api/dir', q: {'path': path, if (hidden) 'hidden': '1'})));
-  Future<Map<String, dynamic>> file(String path) async => _m(await _get('/api/file', q: {'path': path}));
-  Uri rawUrl(String path) => _u('/api/raw', {'path': path});
+  Future<DirListing> dir(String path, {bool hidden = false, String computer = 'mac'}) async =>
+      DirListing.fromJson(_m(await _get('/api/dir', q: {'path': path, if (hidden) 'hidden': '1', ..._cq(computer)})));
+  Future<Map<String, dynamic>> file(String path, {String computer = 'mac'}) async => _m(await _get('/api/file', q: {'path': path, ..._cq(computer)}));
+  /// Images and raw files load by URL (no headers), so the token rides in the query.
+  Uri rawUrl(String path, {String computer = 'mac'}) {
+    final t = cachedToken?.call() ?? '';
+    return _u('/api/raw', {'path': path, ..._cq(computer), if (t.isNotEmpty) 'access_token': t});
+  }
+
+  /// GET /api/authconfig (open): whether Bridge sign-in is required, and the Supabase project.
+  /// A server without it needs no sign-in.
+  Future<AuthConfig> authConfig() async {
+    try {
+      final r = await _client.get(_u('/api/authconfig')).timeout(const Duration(seconds: 15));
+      if (r.statusCode == 404) return AuthConfig.open;
+      return AuthConfig.fromJson(_m(jsonDecode(utf8.decode(r.bodyBytes))));
+    } on FormatException {
+      return AuthConfig.open;
+    }
+  }
 
   // ── catalogs ─────────────────────────────────────────────────────────
   Future<List<AgentInfo>> agents() async => [for (final j in _l(await _get('/api/agents'))) AgentInfo.fromJson(j)];
+  Future<List<SkillInfo>> skills() async => [for (final j in _l(await _get('/api/skills'))) SkillInfo.fromJson(j)];
+  Future<List<HookInfo>> hooks() async => [for (final j in _l(await _get('/api/hooks'))) HookInfo.fromJson(j)];
+  Future<List<Map<String, dynamic>>> instructions() async => _l(await _get('/api/instructions'));
   Future<Map<String, dynamic>> activity() async => _m(await _get('/api/activity'));
   Future<Map<String, dynamic>> lifeos() async => _m(await _get('/api/lifeos'));
   Future<void> notify(String title, String body) => _post('/api/notify', {'title': title, 'subtitle': '', 'body': body}).catchError((_) => null);

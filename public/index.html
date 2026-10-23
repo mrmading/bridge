@@ -1,3 +1,6 @@
+<!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#080a0f" media="(prefers-color-scheme: dark)">
@@ -8,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Bridge">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-180.png">
-<title>Bridge — Claude Code client</title>
+<title>Bridge</title>
 <meta name="color-scheme" content="dark light">
 <script>/* one-time: dark became the default, clear any stale pre-v2 choice */
 if(!localStorage.bridgeThemeV2){delete localStorage.bridgeTheme;localStorage.bridgeThemeV2="1"}
@@ -18,193 +21,66 @@ document.documentElement.dataset.theme=localStorage.bridgeTheme||"dark"</script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&display=swap">
 <link rel="stylesheet" href="/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23000'/><rect x='0.5' y='0.5' width='31' height='31' rx='7.5' fill='none' stroke='%234aa8ff' stroke-opacity='.55'/><text x='16' y='23' font-size='18' font-family='Orbitron,Menlo,monospace' font-weight='900' fill='%237fd0ff' text-anchor='middle'>B</text></svg>">
-
+</head>
+<body>
+<div class="light" id="light"></div>
 <div id="app">
-  <nav class="rail" id="rail"></nav>
-
+  <aside class="side" id="side"></aside>
   <main class="main">
-    <header class="topbar">
-      <button class="chip burger" id="btnNav" title="Menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
-      <div class="crumb"><span class="t" id="crumbTitle">Bridge</span><span class="p" id="crumbPath"></span></div>
-      <input class="topsearch" id="topSearch" placeholder="Search…" spellcheck="false" hidden>
-      <div class="spacer"></div>
-      <div class="phases" id="phaseStrip"></div>
-      <div class="lanes" id="lanes" title="Which sessions the tab strip shows"></div>
-      <button class="chip" id="btnBell" title="Notifications">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>
-        <span class="badge" id="bellCount" hidden>0</span>
-      </button>
-      <button class="chip" id="btnPalette" title="Command palette (⌘K)">⌘K</button>
-      <button class="chip" id="btnInspector" title="Inspector (⌘I)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
-      </button>
-    </header>
-
-    <div class="workspace">
-  <aside class="panel" id="panel" hidden>
-        <div class="panel-head">
-          <div class="panel-title"><span id="panelTitle">Folders</span><span id="panelCount" style="font-weight:400"></span></div>
-        </div>
-        <div class="panel-body" id="panelBody"></div>
-      </aside>
-
-      <div class="content">
-
-    <div class="tabbar" id="tabbar">
-      <div class="tabs" id="tabs"></div>
-      <button class="tab-btn" id="tabAdd" title="New session (⌘T)">+</button>
-      <div class="tab-fill"></div>
-      <button class="tab-btn" id="tabMenu" title="Open a session (⌘P)">⌄</button>
-      <div class="recents" id="recents">
-        <input id="recentsSearch" placeholder="Search sessions in this project…" spellcheck="false">
-        <div class="recents-list" id="recentsList"></div>
-      </div>
-    </div>
-
-    <section class="stream" id="stream"><div class="stream-inner" id="streamInner"></div></section>
-
-    <!-- Copilot: the assistant's own view (no session tabs). An orb you talk to, the conversation under it. -->
-    <section class="desk" id="desk" hidden>
-      <div class="desk-main">
-        <div class="desk-head">
-          <span class="desk-state" id="deskState"><span class="dot"></span><span class="t">starting</span></span>
-          <span class="spacer"></span>
-          <button class="chip" id="deskHands" title="Hands-free: after each spoken answer, the microphone opens again on its own">hands-free</button>
-          <button class="chip" id="deskMute" title="Speak answers aloud">🔊 voice</button>
-          <button class="chip" id="deskDrawerBtn" title="Show or hide the updates drawer (⌘U)">updates</button>
-        </div>
-        <!-- voice mode: the orb, captions, the pills, two round buttons -->
-        <div class="desk-body" id="deskBody">
-          <div class="desk-stage" id="deskStage">
-            <canvas id="orb" width="320" height="320"></canvas>
-            <div class="desk-label" id="deskLabel">Click the orb to talk</div>
-            <!-- captions: what was just said, surfacing from behind the orb and sinking back -->
-            <div class="desk-captions" id="deskCaptions"></div>
-          </div>
-        </div>
-        <!-- text mode: a regular chat; the feed moves in here from the drawer -->
-        <div class="desk-chat" id="deskChat" hidden></div>
-        <!-- working on: every live terminal as a floating pill; hover for the card, click to open it -->
-        <div class="desk-activity" id="deskBoard"></div>
-        <div class="desk-controls" id="deskControls">
-          <button class="rbtn" id="deskKeyboard" title="Switch to text (⌘⇧T)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>
-          </button>
-          <span class="desk-tip" id="deskTip"></span>
-          <button class="rbtn mic" id="deskMic" title="Talk (hold Space, or click to toggle)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-          </button>
-        </div>
-        <div class="desk-bar-wrap" id="deskBarWrap" hidden>
-          <div class="desk-bar" id="deskBar">
-            <button class="desk-voice" id="deskVoiceBtn" title="Switch to voice (⌘⇧T)"><span class="rail-orb"></span></button>
-            <input id="deskInput" placeholder="Ask for a summary, or talk through what is going on across every session…" spellcheck="false" autocomplete="off">
-            <button class="desk-send" id="deskSend" title="Send (↵)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-            </button>
-          </div>
-          <div class="hintline desk-hint" id="deskHint"><span><kbd>↵</kbd> send</span><span><kbd>Esc</kbd> stop</span><span id="deskVoiceInfo"></span></div>
-        </div>
-      </div>
-      <!-- the drawer: everything the copilot said and every session event, newest at the bottom -->
-      <aside class="desk-drawer" id="deskDrawer">
-        <div class="drawer-head"><span>Updates</span><span class="drawer-n" id="drawerCount"></span><span class="spacer"></span><button class="chip" id="drawerClose" title="Hide (⌘U)">✕</button></div>
-        <div class="desk-feed" id="deskFeed"></div>
-      </aside>
-    </section>
-
-    <!-- stands in for the composer while a mirrored terminal session is live -->
-    <div class="mirror-bar" id="mirrorBar" hidden></div>
-
-    <div class="composer-wrap" id="composerWrap">
-      <div class="turnstate" id="turnState" hidden></div>
-      <div class="composer" id="composer">
-        <div class="ac" id="ac"></div>
-        <div class="attachments" id="attachments"></div>
-        <textarea id="input" rows="1" placeholder="Message Claude Code…  /skill  @file" spellcheck="false"></textarea>
-        <div class="composer-bar">
-          <button class="mini" id="btnAttach" title="Attach files — drop them here, paste from the clipboard, or click to pick. Images go to the model as images; text files are inlined (up to 200 KB).">⎗</button>
-          <input type="file" id="fileInput" multiple hidden>
-          <div class="mini edial" id="labModel" role="radiogroup" aria-label="Model" title="Model">
-            <span class="ed-ic">◈</span><span class="ed-name">Model</span><div class="ed-track" id="modelTrack"><span class="ed-thumb"></span></div>
-            <select id="selModel" hidden></select>
-          </div>
-          <div class="mini edial" id="labPerm" role="radiogroup" aria-label="Guardrails" title="Guardrails">
-            <span class="ed-ic">⚙</span><span class="ed-name">Mode</span><div class="ed-track" id="permTrack"><span class="ed-thumb"></span></div>
-            <select id="selPerm" hidden></select>
-          </div>
-          <div class="mini edial" id="labEffort" role="radiogroup" aria-label="Effort" title="Effort">
-            <span class="ed-ic">⚡</span><span class="ed-name">Effort</span><div class="ed-track" id="edTrack"><span class="ed-thumb"></span></div>
-            <select id="selEffort" hidden></select>
-          </div>
-          <div class="mini edial" id="labAgent" role="radiogroup" aria-label="Agent" title="Agent">
-            <span class="ed-ic">◇</span><span class="ed-name">Agent</span><div class="ed-track" id="agentTrack"><span class="ed-thumb"></span></div>
-            <select id="selAgent" hidden></select>
-          </div>
-          <span class="mini" id="cwdChip" title="Working directory — the folder Claude Code runs in for this session. Click to change it."></span>
-          <button class="cancel" id="btnCancel" hidden title="Stop the running turn (same as Ctrl+C in the terminal). Anything you queued still goes out afterwards.">cancel</button>
-          <button class="send" id="btnSend" title="Send (↵). Sending while a turn is running queues the message — it goes the moment the current turn finishes.">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="hintline">
-        <span title="Send while a turn is running and the message queues behind it"><kbd>↵</kbd> send / queue</span><span><kbd>⇧↵</kbd> newline</span><span><kbd>/</kbd> skills</span><span><kbd>@</kbd> files</span>
-        <span><kbd>⌘K</kbd> palette</span><span id="costHint"></span>
-      </div>
-      </div>
-      </div>
-    </div>
+    <header class="top" id="top"></header>
+    <div id="viewHost" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
   </main>
-
-  <aside class="inspector" id="inspector" hidden>
-    <div class="insp-head"><strong style="font-size:13px" id="inspTitle">Inspector</strong><div class="spacer"></div>
-      <button class="chip" id="inspClose">✕</button></div>
-    <div class="insp-body" id="inspBody"></div>
-  </aside>
 </div>
+<div class="scrim" id="scrim"></div>
+<div class="modal" id="modal"></div>
+<div class="palette" id="palette"><input id="palIn" placeholder="Search chats, projects, files, agents, skills…" spellcheck="false" autocomplete="off"><div class="res" id="palRes"></div></div>
 
-<div class="palette-bg" id="paletteBg"><div class="palette">
-  <input id="paletteInput" placeholder="Search sessions, agents, skills, commands…" spellcheck="false">
-  <div class="palette-list" id="paletteList"></div>
-</div></div>
 <div class="finder" id="finder">
   <div class="finder-head">
-    <div class="finder-bar">
-      <span class="finder-ic">⌕</span>
-      <input id="finderInput" placeholder="Describe what you're looking for — “the zeroship cloudflare deploy”, “padel occupancy excel”…" spellcheck="false">
-      <span class="spin" id="finderSpin" style="display:none"></span>
-      <button class="chip" id="finderClose">Esc</button>
-    </div>
+    <div class="finder-bar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="finderIn" placeholder="Describe it: “the zeroship cloudflare deploy”, “padel occupancy excel”…" spellcheck="false" autocomplete="off">
+      <span class="spin-s" id="finderSpin" style="display:none"></span>
+      <button class="pill" id="finderClose">Esc</button></div>
     <div class="finder-scope">
-      <button class="seg on" data-scope="folder" id="segFolder">This folder</button>
-      <button class="seg" data-scope="all">Everything</button>
-      <span class="finder-note" id="finderNote">Type a few words and press ↵ — Bridge reads every transcript, not just titles.</span>
+      <div class="seg" style="margin:0"><button class="on" data-scope="folder" id="segFolder">This folder</button><button data-scope="all">Everything</button></div>
+      <span class="finder-note" id="finderNote">Bridge reads every transcript, not just titles.</span>
     </div>
   </div>
   <div class="finder-body" id="finderBody"></div>
 </div>
-<div class="notes" id="notes">
-  <div class="notes-head"><span>Notifications</span>
-    <span style="flex:1"></span>
-    <button class="chip" id="notesRead">Mark read</button>
-    <button class="chip" id="notesClear">Clear</button>
-    <button class="chip" id="notesClose">✕</button>
-  </div>
-  <div class="notes-list" id="notesList"></div>
-</div>
+
 <div class="sheet-bg" id="signinBg"><div class="sheet">
-  <div class="sheet-head">
-    <span class="sheet-t" id="signinTitle">Sign in to Claude Code</span>
-    <span style="flex:1"></span>
-    <button class="chip" id="signinClose">✕</button>
-  </div>
+  <div class="sheet-head"><span id="signinTitle">Sign in to Claude Code</span><span style="flex:1"></span><button class="icon-btn" id="signinClose" title="Close">✕</button></div>
   <div class="sheet-body" id="signinBody"></div>
 </div></div>
-<div class="nav-scrim" id="navScrim"></div>
+
+<div class="voice" id="voice">
+  <div class="vtop">
+    <span class="vstate" id="vstate"><span class="dot"></span><span class="t">starting</span></span>
+    <span style="flex:1"></span>
+    <button class="pill" id="vMute" title="Speak answers aloud">Voice on</button>
+    <button class="pill" id="vFeedBtn" title="Show the conversation">Conversation</button>
+  </div>
+  <canvas id="vorb" width="560" height="560" title="Tap to talk"></canvas>
+  <div class="vlabel" id="vlabel"></div>
+  <div class="cap" id="vcap"></div>
+  <div class="ctrls">
+    <button class="rbtn" title="Type instead" id="vKeys"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg></button>
+    <button class="rbtn" title="Talk (hold Space)" id="vMic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+    <button class="rbtn end" title="End voice (Esc)" id="vEnd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <button class="pill on" id="vHands">Hands-free on</button>
+  </div>
+  <div class="vfeed" id="vfeed"><div class="vf-b" id="vfeedBody"></div>
+    <div class="vf-in"><input id="vInput" placeholder="Ask about everything that is going on…" spellcheck="false" autocomplete="off"><button class="send" id="vSend" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button></div></div>
+</div>
+<input type="file" id="fileInput" multiple hidden>
+<div class="toast" id="toasts"></div>
 <div id="grain"></div>
-<div class="toast" id="toast"></div>
-<div class="toasts" id="toasts"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="/auth.js"></script>
 <script src="/app.js"></script>
-<script src="/desk.js"></script>
+<script src="/views.js"></script>
+<script src="/voice.js"></script>
 <script>if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}))</script>
+</body>
+</html>

@@ -1,54 +1,34 @@
-/// One session: history from /api/session, live updates from /api/follow, and turns sent through
-/// /api/chat (contract §3-§5). The composer sits on the keyboard; send turns into stop while a
-/// turn runs, and anything typed meanwhile is queued.
+/// One chat: history from /api/session, live updates from /api/follow (so opening a chat that is
+/// already running re-attaches to it), turns sent through /api/chat, and the chat's background
+/// work from /api/jobs every 3 s. Each turn reads as one work line plus prose and file cards; the
+/// raw stream is behind Settings › Advanced. Anything sent while work runs is queued.
 library;
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
 import '../../core/api.dart';
 import '../../core/models.dart';
+import '../../core/nav.dart';
 import '../../core/store.dart';
 import '../../core/theme.dart';
+import '../../widgets/bridge.dart';
 import '../../widgets/common.dart';
+import '../../widgets/composer.dart';
 import '../../widgets/transcript.dart';
+import '../../widgets/turn.dart';
+import '../files/file_screen.dart';
+import '../talk/talk_screen.dart';
+import 'chat_panel.dart';
 import 'session_utils.dart';
 
-const _modeLabels = {
-  'acceptEdits': 'Edit freely',
-  'plan': 'Plan first',
-  'bypassPermissions': 'Full auto',
-  'auto': 'Auto',
-  'manual': 'Ask me',
-  'dontAsk': "Don't ask",
-};
-
 class SessionScreen extends StatefulWidget {
-  const SessionScreen({
-    super.key,
-    required this.key_,
-    required this.id,
-    required this.cwd,
-    this.title = '',
-    this.prefill = '',
-    this.isNew = false,
-    this.live,
-    this.sendPrefill = false,
-    this.focusComposer = false,
-  });
-
-  /// Project key (`key` collides with Widget.key).
-  final String key_;
-  final String id, cwd, title, prefill;
-  final bool isNew;
-  final LiveSession? live;
-  /// Send [prefill] as the first message as soon as the screen opens.
-  final bool sendPrefill;
-  final bool focusComposer;
+  const SessionScreen({super.key, required this.chat, this.onMenu});
+  final ChatRef chat;
+  /// Opens the drawer (the chat is a root view behind it).
+  final VoidCallback? onMenu;
 
   @override
   State<SessionScreen> createState() => _SessionScreenState();
@@ -58,12 +38,13 @@ class _SessionScreenState extends State<SessionScreen> {
   final _store = AppStore.instance;
   BridgeApi get _api => _store.api;
 
-  late String _key = widget.key_;
-  late String _id = widget.id;
-  late String _cwd = widget.cwd;
-  late String _title = widget.title;
-  late bool _isNew = widget.isNew;
-  late LiveSession? _terminal = widget.live;
+  late String _key = widget.chat.key;
+  late String _id = widget.chat.id;
+  late String _cwd = widget.chat.cwd;
+  late String _title = widget.chat.title;
+  late bool _isNew = widget.chat.isNew;
+  /// mac · cloud. A chat that moves reopens as a new screen, so this never changes in place.
+  late final String _computer = widget.chat.computer;
 
   final List<Msg> _msgs = [];
   final Map<String, Msg> _tools = {};
@@ -71,6 +52,7 @@ class _SessionScreenState extends State<SessionScreen> {
   bool _loading = true;
   String _loadError = '';
   int _offset = 0;
+  Usage _usage = Usage();
 
   // follow
   StreamSubscription<Frame>? _followSub;
@@ -78,6 +60,11 @@ class _SessionScreenState extends State<SessionScreen> {
   int _followFailures = 0;
   bool _gone = false;
   bool _disposed = false;
+
+  // jobs: running state + background work, for our own turns and ones started elsewhere
+  Timer? _jobsTimer;
+  JobsState _jobs = JobsState.idle;
+  bool _jobsMissing = false;
 
   // turn
   StreamSubscription<Frame>? _chatSub;
@@ -93,15 +80,10 @@ class _SessionScreenState extends State<SessionScreen> {
   final List<String> _queue = [];
   final Map<String, Msg> _blocks = {};
   final Set<String> _streamedMsgIds = {};
-  Timer? _ticker;
 
   // composer
-  late final TextEditingController _input = TextEditingController(text: widget.sendPrefill ? '' : widget.prefill);
+  late final TextEditingController _input = TextEditingController(text: widget.chat.sendPrefill ? '' : widget.chat.prefill);
   final _focus = FocusNode();
-  final SpeechToText _stt = SpeechToText();
-  bool _sttReady = false;
-  bool _listening = false;
-  String _sttBase = '';
 
   // scroll
   final _scroll = ScrollController();
@@ -113,20 +95,32 @@ class _SessionScreenState extends State<SessionScreen> {
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
-    _input.addListener(() => setState(() {}));
+    _store.addListener(_onStore);
+    Nav.instance.focusComposer.addListener(_onFocusAsk);
     _start();
   }
 
+  void _onStore() {
+    if (mounted) setState(() {});
+  }
+
+  void _onFocusAsk() => _focus.requestFocus();
+
   Future<void> _start() async {
+    // A chat keeps the provider it ran on: reopening an open-model chat switches the composer back to that model.
+    final p = _isNew ? _store.turn.provider : _store.providerOf(_id);
+    if (p != _store.turn.provider) unawaited(_store.setTurn(_store.turn.copy(provider: p)));
     if (_isNew) {
       setState(() => _loading = false);
     } else {
       await _resync();
+      _startJobs();
     }
     if (!mounted) return;
-    if (widget.sendPrefill && widget.prefill.trim().isNotEmpty) {
-      _send(widget.prefill.trim());
-    } else if (widget.focusComposer || widget.prefill.isNotEmpty) {
+    final c = widget.chat;
+    if (c.sendPrefill && c.prefill.trim().isNotEmpty) {
+      _send(c.prefill.trim());
+    } else if (c.focus || c.prefill.isNotEmpty) {
       _focus.requestFocus();
       _input.selection = TextSelection.collapsed(offset: _input.text.length);
     }
@@ -135,12 +129,13 @@ class _SessionScreenState extends State<SessionScreen> {
   @override
   void dispose() {
     _disposed = true;
+    _store.removeListener(_onStore);
+    Nav.instance.focusComposer.removeListener(_onFocusAsk);
     _followSub?.cancel();
     _followRetry?.cancel();
     _chatSub?.cancel();
-    _ticker?.cancel();
+    _jobsTimer?.cancel();
     _paint?.cancel();
-    if (_listening) _stt.stop();
     _input.dispose();
     _focus.dispose();
     _scroll.dispose();
@@ -153,7 +148,7 @@ class _SessionScreenState extends State<SessionScreen> {
   Future<void> _resync() async {
     _stopFollow();
     try {
-      final tr = await _api.session(_key, _id);
+      final tr = await _api.session(_key, _id, computer: _computer);
       if (!mounted) return;
       setState(() {
         _msgs
@@ -168,6 +163,7 @@ class _SessionScreenState extends State<SessionScreen> {
         if (_title.isEmpty && tr.title.isNotEmpty) _title = tr.title;
         if (tr.cwd.isNotEmpty) _cwd = tr.cwd;
         _offset = tr.offset;
+        _usage = tr.usage;
         _loading = false;
         _loadError = '';
         _isNew = false;
@@ -195,7 +191,7 @@ class _SessionScreenState extends State<SessionScreen> {
   void _startFollow() {
     if (_disposed || _gone || _isNew) return;
     _followSub?.cancel();
-    _followSub = _api.follow(_key, _id, _offset).listen(
+    _followSub = _api.follow(_key, _id, _offset, computer: _computer).listen(
       _onFollowFrame,
       onError: (_) => _scheduleFollowRetry(),
       onDone: _scheduleFollowRetry,
@@ -248,6 +244,8 @@ class _SessionScreenState extends State<SessionScreen> {
             changed = true;
           }
         }
+        final u = f.json['usage'];
+        if (u is Map) _usage.add(Map<String, dynamic>.from(u));
         if (changed) _touch(newContent: true);
       case 'gone':
         _gone = true;
@@ -257,50 +255,75 @@ class _SessionScreenState extends State<SessionScreen> {
     }
   }
 
-  // ── sending ─────────────────────────────────────────────────────────
+  // ── jobs ────────────────────────────────────────────────────────────
 
-  void _submit() {
-    final text = _input.text.trim();
-    if (text.isEmpty) return;
-    if (_listening) _stopListening();
-    _input.clear();
-    _send(text);
+  void _startJobs() {
+    _jobsTimer?.cancel();
+    if (_jobsMissing || (_isNew && _abortKey.isEmpty)) return;
+    _pollJobs();
+    _jobsTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollJobs());
   }
 
+  Future<void> _pollJobs() async {
+    if (_disposed || _jobsMissing || (_isNew && _abortKey.isEmpty)) return;
+    final wasRemote = _remoteRunning;
+    try {
+      final j = await _api.jobs(_key, _abortKey.isNotEmpty ? _abortKey : _id, computer: _computer);
+      if (!mounted) return;
+      setState(() => _jobs = j);
+    } on ApiException catch (e) {
+      if (e.status == 404) {
+        // An older server: fall back to the running flag the home poll gives us.
+        _jobsMissing = true;
+        _jobsTimer?.cancel();
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    // Work started elsewhere just finished: anything typed meanwhile goes now.
+    if (wasRemote && !_remoteRunning && !_running) _flushQueue();
+  }
+
+  /// A turn runs on the server that this screen is not streaming (started on another device, or
+  /// before this screen opened). The follower shows its output; jobs tell us when it ends.
+  bool get _remoteRunning {
+    if (_running) return false;
+    if (!_jobsMissing) return _jobs.running;
+    return _store.isRunning(_id);
+  }
+
+  bool get _busy => _running || _remoteRunning;
+
+  int get _runSince {
+    if (_running) return _turnStart.millisecondsSinceEpoch;
+    if (_jobs.started > 0) return _jobs.started;
+    return _store.runFor(_id)?.started ?? 0;
+  }
+
+  List<Job> get _liveJobs => _jobs.jobs.isNotEmpty ? _jobs.jobs : (_store.runFor(_id)?.jobs ?? const []);
+
+  // ── sending ─────────────────────────────────────────────────────────
+
   Future<void> _send(String text) async {
-    if (_running) {
+    if (_busy) {
       setState(() => _queue.add(text));
       _jumpToBottomSoon(force: true);
       return;
     }
-    if (_terminal != null) {
-      final term = _terminal!;
-      setState(() {
-        _running = true;
-        _hook = 'Taking over the terminal session…';
-      });
-      ({bool ok, String error}) r;
-      try {
-        r = await _api.takeover(term.pid, term.id);
-      } catch (e) {
-        r = (ok: false, error: e.toString());
-      }
-      if (!mounted) return;
-      if (!r.ok) {
-        setState(() {
-          _running = false;
-          _hook = '';
-          _input.text = text;
-        });
-        toast(context, r.error.isEmpty ? 'Could not take over the terminal' : r.error);
-        return;
-      }
-      setState(() => _terminal = null);
-    }
     await _runTurn(text);
   }
 
+  void _flushQueue() {
+    if (_queue.isEmpty || _busy) return;
+    final next = _queue.removeAt(0);
+    _send(next);
+  }
+
   Future<void> _runTurn(String text) async {
+    if (!_store.auth.loggedIn) {
+      toast(context, 'Sign in to Claude first (Settings)');
+      if (_input.text.trim().isEmpty) _input.text = text;
+      return;
+    }
     _stopFollow();
     final userMsg = Msg(kind: 'user', text: text, ts: DateTime.now());
     _turnMsg = userMsg;
@@ -315,14 +338,10 @@ class _SessionScreenState extends State<SessionScreen> {
       _blocks.clear();
       _msgs.add(userMsg);
     });
-    _ticker?.cancel();
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
     _jumpToBottomSoon(force: true);
 
     final base = _store.turn;
-    final opts = TurnOptions(model: base.model, permissionMode: base.permissionMode, effort: base.effort, agent: base.agent);
+    final opts = base.copy();
     if (opts.agent == 'auto') {
       try {
         opts.agent = await _api.route(text, previous: _lastAgent);
@@ -334,7 +353,7 @@ class _SessionScreenState extends State<SessionScreen> {
     if (!mounted) return;
 
     _chatSub = _api
-        .chat(prompt: text, resume: _isNew ? null : _id, sessionId: _isNew ? _id : null, cwd: _cwd, options: opts)
+        .chat(prompt: text, resume: _isNew ? null : _id, sessionId: _isNew ? _id : null, cwd: _cwd, options: opts, computer: _computer)
         .listen(_onChatFrame, onError: (Object e) {
       if (mounted) toast(context, e.toString());
       _finishTurn();
@@ -342,14 +361,15 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 
   Future<void> _stopTurn() async {
-    if (_listening) _stopListening();
-    if (_abortKey.isEmpty) {
+    final key = _abortKey.isNotEmpty ? _abortKey : (_remoteRunning ? _id : '');
+    if (key.isEmpty) {
       toast(context, 'The turn has not started yet');
       return;
     }
     try {
-      final ok = await _api.abort(_abortKey);
+      final ok = await _api.abort(key, computer: _computer);
       if (!ok && mounted) toast(context, 'Nothing is running');
+      if (ok) unawaited(_pollJobs());
     } catch (e) {
       if (mounted) toast(context, e.toString());
     }
@@ -359,7 +379,6 @@ class _SessionScreenState extends State<SessionScreen> {
     if (!_running || !mounted) return;
     _chatSub?.cancel();
     _chatSub = null;
-    _ticker?.cancel();
     final started = _turnStarted;
     setState(() {
       _running = false;
@@ -376,6 +395,8 @@ class _SessionScreenState extends State<SessionScreen> {
       }
       _turnMsg = null;
     });
+    unawaited(_store.refreshRecent());
+    unawaited(_store.pollHome());
     if (started) {
       _isNew = false;
       await _resync();
@@ -383,25 +404,26 @@ class _SessionScreenState extends State<SessionScreen> {
       _startFollow();
     }
     if (!mounted) return;
-    if (_queue.isNotEmpty) {
-      final next = _queue.removeAt(0);
-      _send(next);
-    }
+    _flushQueue();
   }
 
   void _onChatFrame(Frame f) {
     switch (f.t) {
       case 'auth':
-        toast(context, 'Sign in on the Settings tab');
+        toast(context, 'Sign in to Claude in Settings');
       case 'start':
         _turnStarted = true;
         _abortKey = (f.json['sessionId'] ?? '').toString();
+        unawaited(_store.rememberProvider(_id, _store.turn.provider));
         final c = (f.json['cwd'] ?? '').toString();
         if (c.isNotEmpty && c != _cwd) {
           // Outside the roots the server silently falls back to $HOME (gotcha 8).
           _cwd = c;
           if (_isNew) _key = projectKeyFor(c);
         }
+        // The drawer and Home show it as working right away; background work shows up here.
+        unawaited(_store.pollHome());
+        if (_jobsTimer == null) _startJobs();
       case 'msg':
         final d = f.dMap;
         if (d != null) _onStreamJson(d);
@@ -438,14 +460,14 @@ class _SessionScreenState extends State<SessionScreen> {
         _onToolResults(d);
       case 'result':
         final parts = <String>[];
+        final model = _store.turn.model;
+        if (model.isNotEmpty) parts.add(cap(model));
         final cost = d['total_cost_usd'];
-        if (cost is num) parts.add('\$${cost.toStringAsFixed(cost < 1 ? 4 : 2)}');
+        if (cost is num) parts.add('\$${cost.toStringAsFixed(cost < 1 ? 3 : 2)}');
         final ms = d['duration_ms'];
         if (ms is num) parts.add('${(ms / 1000).toStringAsFixed(1)}s');
-        final n = d['num_turns'];
-        if (n is num) parts.add('${n.toInt()} ${n == 1 ? 'step' : 'steps'}');
         if (d['is_error'] == true) parts.add((d['subtype'] ?? 'error').toString());
-        _footer = parts.join(' · ');
+        _footer = parts.join('  ·  ');
         _touch();
       default:
         break;
@@ -612,60 +634,6 @@ class _SessionScreenState extends State<SessionScreen> {
     _scroll.animateTo(_scroll.position.maxScrollExtent, duration: const Duration(milliseconds: 220), curve: Curves.easeOut).then((_) => _jumpToBottomSoon());
   }
 
-  // ── voice ───────────────────────────────────────────────────────────
-
-  Future<void> _toggleMic() async {
-    if (_listening) {
-      _stopListening();
-      return;
-    }
-    if (!_sttReady) {
-      try {
-        _sttReady = await _stt.initialize(
-          onStatus: (s) {
-            if ((s == 'done' || s == 'notListening') && mounted && _listening) setState(() => _listening = false);
-          },
-          onError: (e) {
-            if (!mounted) return;
-            setState(() => _listening = false);
-            if (e.permanent) toast(context, 'Voice input stopped: ${e.errorMsg}');
-          },
-        );
-      } catch (_) {
-        _sttReady = false;
-      }
-      if (!mounted) return;
-      if (!_sttReady) {
-        toast(context, 'Voice input is not available on this device');
-        return;
-      }
-    }
-    _sttBase = _input.text.trimRight();
-    setState(() => _listening = true);
-    try {
-      await _stt.listen(
-        onResult: _onSpeech,
-        listenOptions: SpeechListenOptions(partialResults: true, listenMode: ListenMode.dictation, cancelOnError: true),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _listening = false);
-      toast(context, 'Could not start voice input');
-    }
-  }
-
-  void _onSpeech(SpeechRecognitionResult r) {
-    final words = r.recognizedWords;
-    final text = _sttBase.isEmpty ? words : '$_sttBase $words';
-    _input.value = TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
-    if (r.finalResult && mounted) setState(() => _listening = false);
-  }
-
-  void _stopListening() {
-    _stt.stop();
-    setState(() => _listening = false);
-  }
-
   // ── menus + sheets ──────────────────────────────────────────────────
 
   Future<void> _rename() async {
@@ -673,7 +641,7 @@ class _SessionScreenState extends State<SessionScreen> {
     final title = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Rename session'),
+        title: const Text('Rename chat'),
         content: TextField(controller: c, autofocus: true, textCapitalization: TextCapitalization.sentences, decoration: const InputDecoration(hintText: 'Title'), onSubmitted: (v) => Navigator.pop(ctx, v)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
@@ -688,7 +656,7 @@ class _SessionScreenState extends State<SessionScreen> {
       return;
     }
     try {
-      await _api.rename(_id, title.trim());
+      await _api.rename(_id, title.trim(), computer: _computer);
       if (!mounted) return;
       setState(() => _title = title.trim());
       unawaited(_store.refreshRecent());
@@ -697,44 +665,85 @@ class _SessionScreenState extends State<SessionScreen> {
     }
   }
 
-  void _openTune() {
-    showModalBottomSheet<void>(
+  Future<void> _moveToCloud() async {
+    if (_isNew || _busy) {
+      toast(context, _isNew ? 'Send a message first, then move it' : 'Wait for the running work to finish, then move it');
+      return;
+    }
+    if (_store.cloudOffline) {
+      toast(context, 'The cloud computer is offline');
+      return;
+    }
+    final yes = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => const _TuneSheet(),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Move to the cloud computer?'),
+        content: const Text('The chat and its history move to the cloud computer, so it keeps working when your Mac sleeps. Files it needs must exist there too.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Move')),
+        ],
+      ),
     );
+    if (yes != true || !mounted) return;
+    toast(context, 'Moving to the cloud computer…');
+    try {
+      final r = await _api.moveToCloud(_key, _id);
+      if (!mounted) return;
+      unawaited(_store.refreshRecent());
+      unawaited(_store.pollHome());
+      // Reopen it where it now lives; the follower and jobs poll switch computer with it.
+      Nav.instance.openChat(ChatRef(key: r.key, id: r.id, cwd: r.cwd.isNotEmpty ? r.cwd : _cwd, title: _title, computer: 'cloud'));
+    } catch (e) {
+      if (mounted) toast(context, 'Could not move it: $e');
+    }
   }
+
+  void _openFile(String path) => Nav.instance.push(FileScreen(path: path, computer: _computer));
+
+  void _openPanel() => showChatPanel(
+        context,
+        msgs: _msgs,
+        id: _id,
+        cwd: _cwd,
+        usage: _usage,
+        onOpenFile: _openFile,
+      );
 
   // ── build ───────────────────────────────────────────────────────────
-
-  String _statusKind() {
-    final live = liveFor(_id);
-    if (_running || live?.busy == true) return 'running';
-    if (live?.waiting != null) return 'waiting';
-    return 'idle';
-  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    final folder = baseName(_cwd);
+    final folder = folderLabel(_cwd);
+    final firstAsk = _msgs.where((m) => m.isUser && !isHarnessNote(m)).map((m) => m.text.trim()).firstOrNull ?? '';
+    final title = _title.isNotEmpty ? _title : (firstAsk.isNotEmpty ? firstAsk.replaceAll(RegExp(r'\s+'), ' ') : 'New chat');
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        titleSpacing: 0,
-        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(_title.isNotEmpty ? _title : (folder.isNotEmpty ? folder : 'New session'), maxLines: 1, overflow: TextOverflow.ellipsis),
-          if (folder.isNotEmpty) Text(folder, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 12.5, fontWeight: FontWeight.w500)),
+        leading: widget.onMenu == null ? null : IconButton(tooltip: 'Menu', onPressed: widget.onMenu, icon: const Icon(Icons.menu_rounded)),
+        titleSpacing: widget.onMenu == null ? 0 : 4,
+        title: Row(children: [
+          if (folder == 'Home')
+            ...[Ava(name: 'Home', size: 24, color: t.active, letter: '⌂'), const SizedBox(width: 9)]
+          else if (folder.isNotEmpty)
+            ...[ProjectIcon(projectLabel(_cwd), size: 24), const SizedBox(width: 9)],
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16)),
+              if (folder.isNotEmpty)
+                Row(children: [
+                  if (_busy) ...[PulseDot(color: t.accent, size: 6), const SizedBox(width: 2)],
+                  Flexible(child: Text(_busy ? 'Working · $folder' : folder, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 12, fontWeight: FontWeight.w500))),
+                  if (_computer == 'cloud') ...[const SizedBox(width: 5), const CloudBadge(size: 13)],
+                  if (_store.providerShort(_store.providerOf(_id)).isNotEmpty) ...[const SizedBox(width: 6), Tag(_store.providerShort(_store.providerOf(_id)), kind: 'think')],
+                ]),
+            ]),
+          ),
         ]),
         actions: [
-          ListenableBuilder(
-            listenable: _store,
-            builder: (_, _) {
-              final k = _statusKind();
-              return Center(child: StatusPill(k, kind: k));
-            },
-          ),
+          IconButton(tooltip: 'Talk', onPressed: () => openTalk(context), icon: Icon(Icons.graphic_eq_rounded, color: t.muted)),
+          IconButton(tooltip: 'Files & progress', onPressed: _openPanel, icon: Icon(Icons.view_agenda_outlined, color: t.muted)),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_horiz_rounded),
             onSelected: (v) {
@@ -743,39 +752,48 @@ class _SessionScreenState extends State<SessionScreen> {
                   _rename();
                 case 'copy':
                   Clipboard.setData(ClipboardData(text: _id));
-                  toast(context, 'Session id copied');
+                  toast(context, 'Chat id copied');
                 case 'stop':
                   _stopTurn();
+                case 'cloud':
+                  _moveToCloud();
+                case 'folder':
+                  Nav.instance.push(FileScreen(path: _cwd, isDir: true, computer: _computer));
               }
             },
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'rename', child: Text('Rename')),
-              const PopupMenuItem(value: 'copy', child: Text('Copy session id')),
-              PopupMenuItem(value: 'stop', enabled: _running, child: const Text('Stop turn')),
+              const PopupMenuItem(value: 'folder', child: Text('Browse project folder')),
+              const PopupMenuItem(value: 'copy', child: Text('Copy chat id')),
+              if (_computer == 'mac' && _store.hasCloud) const PopupMenuItem(value: 'cloud', child: Text('Move to cloud computer')),
+              PopupMenuItem(value: 'stop', enabled: _busy, child: const Text('Stop all running work')),
             ],
           ),
         ],
       ),
       body: Column(children: [
-        if (_terminal != null) _terminalBanner(context),
         Expanded(child: Stack(children: [_stream(context), if (_hasNew) _newChip(context)])),
-        _composer(context),
+        _bottom(context),
       ]),
     );
   }
 
-  Widget _terminalBanner(BuildContext context) {
-    final t = context.t;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(color: t.warnSoft, border: Border(bottom: BorderSide(color: t.border))),
-      child: Row(children: [
-        Icon(Icons.terminal_rounded, size: 16, color: t.warn),
-        const SizedBox(width: 8),
-        Expanded(child: Text('Running in a terminal on the server. Sending takes it over.', style: TextStyle(color: t.warn, fontSize: 13, fontWeight: FontWeight.w600))),
-      ]),
-    );
+  /// Turns: a user message, then everything until the next one.
+  List<({Msg? user, List<Msg> rest})> _turns() {
+    final out = <({Msg? user, List<Msg> rest})>[];
+    Msg? user;
+    var rest = <Msg>[];
+    for (final m in _msgs) {
+      if (m.isUser && !m.side && !isHarnessNote(m)) {
+        if (user != null || rest.isNotEmpty) out.add((user: user, rest: rest));
+        user = m;
+        rest = <Msg>[];
+      } else {
+        rest.add(m);
+      }
+    }
+    if (user != null || rest.isNotEmpty) out.add((user: user, rest: rest));
+    return out;
   }
 
   Widget _stream(BuildContext context) {
@@ -784,7 +802,7 @@ class _SessionScreenState extends State<SessionScreen> {
     if (_loadError.isNotEmpty) {
       return EmptyState(
         icon: Icons.cloud_off_rounded,
-        title: 'Could not load this session',
+        title: 'Could not load this chat',
         body: _loadError,
         action: FilledButton(onPressed: () {
           setState(() => _loading = true);
@@ -792,36 +810,53 @@ class _SessionScreenState extends State<SessionScreen> {
         }, child: const Text('Retry')),
       );
     }
-    if (_msgs.isEmpty && _queue.isEmpty && !_running) {
-      return EmptyState(icon: Icons.chat_bubble_outline_rounded, title: _isNew ? 'New session' : 'Nothing here yet', body: _isNew ? 'in ${prettyPath(_cwd)}' : null);
+    if (_msgs.isEmpty && _queue.isEmpty && !_busy) {
+      return EmptyState(icon: Icons.chat_bubble_outline_rounded, title: _isNew ? 'What should we work on?' : 'Nothing here yet', body: _isNew ? 'in ${prettyPath(_cwd)}' : null);
     }
-    final lastAssistant = _msgs.lastIndexWhere((m) => m.isAssistant);
+    final turns = _turns();
+    final name = _store.turn.agent.isNotEmpty && _store.turn.agent != 'auto' ? _store.turn.agent : _store.assistantName;
+    final rows = <Widget>[];
+    for (var i = 0; i < turns.length; i++) {
+      final tr = turns[i];
+      final last = i == turns.length - 1;
+      final live = last && _busy;
+      if (tr.user != null) rows.add(UserBubble(key: ObjectKey(tr.user), text: tr.user!.text));
+      if (tr.rest.isNotEmpty || live) {
+        rows.add(AssistantTurn(
+          key: ValueKey('turn-${tr.user?.hashCode ?? i}'),
+          msgs: tr.rest,
+          name: name,
+          started: tr.user?.ts,
+          live: live,
+          liveSince: live ? _runSince : 0,
+          showTech: _store.showTech,
+          onChoice: last && !_busy ? (o) => _send(o) : null,
+          onOpenFile: _openFile,
+          footer: last && !_busy ? _footer : '',
+        ));
+      }
+    }
+    final jobs = _liveJobs;
     final extra = <Widget>[
+      if (_busy && jobs.isNotEmpty) JobCard(title: _jobs.step.isNotEmpty ? _jobs.step : 'Working in the background', since: _runSince, jobs: jobs),
+      if (_busy && jobs.isEmpty) Padding(padding: const EdgeInsets.only(left: 4), child: StatusLine(_progressLine(), spinner: true)),
       for (final q in _queue) UserBubble(text: q, queued: true),
-      if (_running) StatusLine(_progressLine(), spinner: true),
-      if (!_running && _footer.isNotEmpty) StatusLine(_footer),
       const SizedBox(height: 12),
     ];
+    final all = [...rows, ...extra];
     return ListView.builder(
       controller: _scroll,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.only(top: 8),
-      itemCount: _msgs.length + extra.length,
-      itemBuilder: (_, i) {
-        if (i >= _msgs.length) return extra[i - _msgs.length];
-        final m = _msgs[i];
-        return MsgRow(
-          key: ObjectKey(m),
-          msg: m,
-          // Only the latest assistant message offers live choices.
-          onChoice: i == lastAssistant ? (o) => _send(o) : null,
-        );
-      },
+      itemCount: all.length,
+      itemBuilder: (_, i) => all[i],
     );
   }
 
   String _progressLine() {
-    final secs = DateTime.now().difference(_turnStart).inSeconds;
+    final since = _runSince;
+    final secs = since > 0 ? ((DateTime.now().millisecondsSinceEpoch - since) / 1000).floor() : 0;
+    if (_remoteRunning) return '${_jobs.step.isNotEmpty ? _jobs.step : 'Working'}… ${secs}s';
     if (_hook.isNotEmpty) return '$_hook · ${secs}s';
     if (!_gotOutput) return 'Thinking… ${secs}s';
     final streaming = _msgs.isNotEmpty && _msgs.last.live;
@@ -857,69 +892,31 @@ class _SessionScreenState extends State<SessionScreen> {
     );
   }
 
-  Widget _composer(BuildContext context) {
+  Widget _bottom(BuildContext context) {
     final t = context.t;
-    final hasText = _input.text.trim().isNotEmpty;
-    Widget btn({required IconData icon, required VoidCallback onTap, required String tip, Color? fg, Color? bg}) => SizedBox(
-          width: 44,
-          height: 44,
-          child: IconButton(
-            tooltip: tip,
-            onPressed: onTap,
-            style: IconButton.styleFrom(backgroundColor: bg, foregroundColor: fg ?? t.muted, shape: const CircleBorder()),
-            icon: Icon(icon, size: 22),
-          ),
-        );
+    final jobs = _busy ? _liveJobs : const <Job>[];
     return Container(
-      decoration: BoxDecoration(color: t.bg, border: Border(top: BorderSide(color: t.border))),
+      color: t.bg,
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            if (!_running) btn(icon: Icons.tune_rounded, onTap: _openTune, tip: 'Model, mode, effort, agent'),
-            const SizedBox(width: 4),
-            Expanded(
-              child: TextField(
-                controller: _input,
-                focusNode: _focus,
-                minLines: 1,
-                maxLines: 6,
-                keyboardType: TextInputType.multiline,
-                textCapitalization: TextCapitalization.sentences,
-                style: TextStyle(color: t.fg, fontSize: 16, height: 1.35),
-                decoration: InputDecoration(
-                  hintText: _listening ? 'Listening…' : (_running ? 'Queue a message…' : 'Message'),
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: t.borderStrong)),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: t.borderStrong)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: t.accent, width: 1.4)),
-                ),
+          padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            if (jobs.isNotEmpty) _JobsTray(jobs: jobs, since: _runSince),
+            if (_computer == 'cloud' && _store.cloudOffline) CloudOfflineBanner(reason: _store.computerById('cloud')?.reason ?? '', inChat: true, margin: const EdgeInsets.only(bottom: 8)),
+            if (_busy)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(6, 2, 6, 6),
+                child: Text('You can keep chatting. New messages go in when the current step ends.', style: TextStyle(color: t.faint, fontSize: 12)),
               ),
+            Composer(
+              controller: _input,
+              focusNode: _focus,
+              hint: 'Reply…',
+              running: _busy,
+              onStop: _stopTurn,
+              onSend: _send,
             ),
-            const SizedBox(width: 4),
-            btn(
-              icon: _listening ? Icons.stop_circle_outlined : Icons.mic_none_rounded,
-              onTap: _toggleMic,
-              tip: _listening ? 'Stop listening' : 'Dictate',
-              fg: _listening ? t.err : t.muted,
-              bg: _listening ? t.errSoft : null,
-            ),
-            if (_running) ...[
-              const SizedBox(width: 4),
-              btn(icon: Icons.stop_rounded, onTap: _stopTurn, tip: 'Stop turn', fg: t.err, bg: t.errSoft),
-            ],
-            if (!_running || hasText) ...[
-              const SizedBox(width: 4),
-              btn(
-                icon: Icons.arrow_upward_rounded,
-                onTap: hasText ? _submit : () {},
-                tip: _running ? 'Queue' : 'Send',
-                fg: hasText ? t.accentFg : t.faint,
-                bg: hasText ? t.accent : t.active,
-              ),
-            ],
           ]),
         ),
       ),
@@ -927,70 +924,48 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 }
 
-/// Model · permission mode · effort · agent, persisted with store.setTurn.
-class _TuneSheet extends StatelessWidget {
-  const _TuneSheet();
+/// "2 running in the background" above the composer; tap to see each one.
+class _JobsTray extends StatefulWidget {
+  const _JobsTray({required this.jobs, required this.since});
+  final List<Job> jobs;
+  final int since;
+  @override
+  State<_JobsTray> createState() => _JobsTrayState();
+}
 
+class _JobsTrayState extends State<_JobsTray> {
+  bool _open = false;
   @override
   Widget build(BuildContext context) {
-    final store = AppStore.instance;
-    return ListenableBuilder(
-      listenable: store,
-      builder: (context, _) {
-        final t = context.t;
-        final boot = store.boot;
-        final turn = store.turn;
-        final models = ['', ...?boot?.models.where((m) => m.isNotEmpty)];
-        final modes = boot?.permissionModes ?? const ['acceptEdits', 'plan', 'bypassPermissions'];
-        final efforts = boot?.efforts ?? const ['', 'low', 'medium', 'high'];
-        final agents = ['', 'auto', ...store.agents.map((a) => a.name)];
-        void set({String? model, String? mode, String? effort, String? agent}) => store.setTurn(TurnOptions(
-              model: model ?? turn.model,
-              permissionMode: mode ?? turn.permissionMode,
-              effort: effort ?? turn.effort,
-              agent: agent ?? turn.agent,
-            ));
-        Widget group(String title, List<String> values, String current, String Function(String) label, void Function(String) onPick) => Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(padding: const EdgeInsets.fromLTRB(4, 14, 4, 8), child: Text(title.toUpperCase(), style: TextStyle(color: t.faint, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 1.1))),
-                Wrap(spacing: 8, runSpacing: 8, children: [
-                  for (final v in values)
-                    ChoiceChip(
-                      label: Text(label(v)),
-                      selected: v == current,
-                      showCheckmark: false,
-                      materialTapTargetSize: MaterialTapTargetSize.padded,
-                      labelStyle: TextStyle(color: v == current ? t.accentFg : t.fg, fontSize: 14, fontWeight: FontWeight.w600),
-                      selectedColor: t.accent,
-                      backgroundColor: t.active,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      side: BorderSide.none,
-                      onSelected: (_) => onPick(v),
-                    ),
-                ]),
-              ],
-            );
-        return DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: .62,
-          minChildSize: .3,
-          maxChildSize: .92,
-          builder: (_, sc) => ListView(
-            controller: sc,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-            children: [
-              Text('Turn settings', style: TextStyle(color: t.fg, fontSize: 17, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text('Applies to the next message you send.', style: TextStyle(color: t.muted, fontSize: 13)),
-              group('Model', models, turn.model, (v) => v.isEmpty ? 'Default' : v, (v) => set(model: v)),
-              group('Mode', modes, turn.permissionMode, (v) => _modeLabels[v] ?? v, (v) => set(mode: v)),
-              group('Effort', efforts, turn.effort, (v) => v.isEmpty ? 'Default' : v, (v) => set(effort: v)),
-              group('Agent', agents, turn.agent, (v) => v.isEmpty ? 'None' : (v == 'auto' ? 'Auto' : v), (v) => set(agent: v)),
-            ],
+    final t = context.t;
+    final n = widget.jobs.length;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(color: t.raised, borderRadius: BorderRadius.circular(14), border: Border.all(color: t.accent.withValues(alpha: .3))),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => setState(() => _open = !_open),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 44),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(children: [
+              PulseDot(color: t.accent),
+              const SizedBox(width: 6),
+              Expanded(child: Text('$n running in the background', style: TextStyle(color: t.fg, fontSize: 13.5, fontWeight: FontWeight.w600))),
+              if (widget.since > 0) Elapsed(widget.since),
+              const SizedBox(width: 4),
+              Icon(_open ? Icons.expand_more_rounded : Icons.expand_less_rounded, size: 18, color: t.faint),
+            ]),
           ),
-        );
-      },
+        ),
+        if (_open)
+          Container(
+            decoration: BoxDecoration(border: Border(top: BorderSide(color: t.border))),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+            child: Column(children: [for (final j in widget.jobs) JobRow(j)]),
+          ),
+      ]),
     );
   }
 }

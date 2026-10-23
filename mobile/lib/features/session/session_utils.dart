@@ -1,29 +1,12 @@
-/// Small helpers shared by the Sessions, Session and Projects features: uuid, project keys,
-/// folder names, and one way to push a session screen.
+/// Small helpers shared by every feature: folder names, pretty paths, and one way to open or
+/// start a chat (through [Nav], so it lands behind the drawer like every other chat).
 library;
 
-import 'dart:math';
-
-import 'package:flutter/material.dart';
-
 import '../../core/models.dart';
+import '../../core/nav.dart';
 import '../../core/store.dart';
-import 'session_screen.dart';
 
-final _rng = Random.secure();
-
-/// RFC 4122 v4 uuid, lower-case, no package.
-String uuidV4() {
-  final b = List<int>.generate(16, (_) => _rng.nextInt(256));
-  b[6] = (b[6] & 0x0f) | 0x40;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  final h = b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
-  return '${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}';
-}
-
-/// Same encoding as the server (contract §2): every non-alphanumeric char becomes `-`.
-/// Lossy: never decode a key back into a path.
-String projectKeyFor(String cwd) => cwd.replaceAll(RegExp(r'[^A-Za-z0-9]'), '-');
+export '../../core/nav.dart' show projectKeyFor, uuidV4;
 
 String baseName(String path) {
   final parts = path.split('/').where((x) => x.isNotEmpty).toList();
@@ -37,24 +20,32 @@ String prettyPath(String path) {
   return path;
 }
 
-LiveSession? liveFor(String id) {
-  for (final s in AppStore.instance.live.sessions) {
-    if (s.id == id) return s;
-  }
-  return null;
+/// Opens an existing chat (history on disk, possibly still running).
+void openSession({required String key, required String id, required String cwd, String title = '', bool focus = false, String computer = 'mac'}) =>
+    Nav.instance.openChat(ChatRef(key: key, id: id, cwd: cwd, title: title, focus: focus, computer: computer));
+
+/// Starts a brand-new chat in [cwd]. When [message] is set it is sent right away.
+void startNewSession({required String cwd, String message = ''}) => Nav.instance.startChat(cwd: cwd, message: message, computer: AppStore.instance.computer);
+
+/// The folder a new chat runs in when the user picked "Any project": the server's home.
+String defaultCwd() => AppStore.instance.boot?.home ?? '';
+
+/// Folders that are not projects: the home folder itself, anything inside ~/.claude, and
+/// throwaway worktrees (agent-1a2b…, repo-wt-feature).
+bool isProjectPath(String path) {
+  final home = defaultCwd();
+  if (path.isEmpty || path == home) return false;
+  if (home.isNotEmpty && path.startsWith('$home/.claude')) return false;
+  final name = baseName(path);
+  return !RegExp(r'^agent-[0-9a-f]{6,}$').hasMatch(name) && !name.contains('-wt-');
 }
 
-/// Opens an existing session (history on disk, possibly running in a terminal).
-Future<void> openSession(BuildContext context, {required String key, required String id, required String cwd, String title = '', String prefill = '', bool focus = false}) {
-  return Navigator.of(context).push(MaterialPageRoute(
-    builder: (_) => SessionScreen(key_: key, id: id, cwd: cwd, title: title, prefill: prefill, focusComposer: focus, live: liveFor(id)),
-  ));
-}
+/// "Home" for the home folder, else the folder name.
+String folderLabel(String cwd) => cwd.isNotEmpty && cwd == defaultCwd() ? 'Home' : baseName(cwd);
 
-/// Starts a brand-new session in [cwd]. When [message] is set it is sent right away.
-Future<void> startNewSession(BuildContext context, {required String cwd, String message = ''}) {
-  final id = uuidV4();
-  return Navigator.of(context).push(MaterialPageRoute(
-    builder: (_) => SessionScreen(key_: projectKeyFor(cwd), id: id, cwd: cwd, isNew: true, prefill: message, sendPrefill: message.trim().isNotEmpty, focusComposer: message.trim().isEmpty),
-  ));
+/// A chat's project as people say it: "Home" for the home folder.
+String projectNameOf(SessionMeta s) {
+  final p = s.projectPath.isNotEmpty ? s.projectPath : s.cwd;
+  if (p.isNotEmpty && p == defaultCwd()) return 'Home';
+  return s.projectName.isNotEmpty ? s.projectName : s.folder;
 }

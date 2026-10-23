@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Bridge listens when you talk to your assistant or dictate a message.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Bridge turns what you say into text on this iPhone.</string>
 </dict>
 </plist>
