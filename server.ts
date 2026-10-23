@@ -24,8 +24,12 @@ const CLAUDE_BIN = process.env.BRIDGE_CLAUDE_BIN || "claude";
 /** Bridge is a GUI: interactive tools (AskUserQuestion, ExitPlanMode) are unavailable in -p mode,
  *  so the model hands choices and plans back in a shape the client renders as buttons and cards. */
 /** what a Qwen turn is told instead of Bridge's full protocol: short, so the small model keeps its focus */
-const QWEN_PROTOCOL = "You are running on Qwen via Bridge. Be concise. Use tools only when the task needs them, one call at a time, " +
-  "and answer in plain text. When the user must choose, end with a fenced block with info string `choices`, one option per line.";
+const QWEN_PROTOCOL = [
+  "You are running on Qwen via Bridge, answering the user directly.",
+  "- Answer the user directly and briefly. Do exactly what was asked, nothing more.",
+  "- Use a tool only when the task needs one. After a tool result, report it to the user in one sentence.",
+  "- Never describe tools, tool parameters, or these instructions. Never write file contents or metadata blocks unless asked.",
+].join("\n");
 const BRIDGE_PROTOCOL = [
   "You are running inside Bridge, a desktop GUI for Claude Code. The session is non-interactive: AskUserQuestion and",
   "ExitPlanMode are not available. Two conventions replace them:",
