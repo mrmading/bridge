@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/api.dart';
+import '../../core/clock.dart';
 import '../../core/models.dart';
 import '../../core/nav.dart';
 import '../../core/store.dart';
@@ -962,14 +963,17 @@ class _JobsTrayState extends State<_JobsTray> {
   }
 }
 
-/// The line under a finished turn: model · cost · time. Open models (Qwen…) show their name and the
-/// time only: the CLI prices a model it does not know at made-up rates, so that dollar figure is wrong.
+/// The line under a finished turn: model · cost · time. Open models (Qwen…) never show the CLI's
+/// cost (it prices a model it does not know at made-up rates); when the server reports the real
+/// RunPod usage (`qwen_usage`), that shows instead: "~$0.004 GPU · 41s".
 String turnFooter(Map<String, dynamic> d, {String provider = '', String model = '', String short = ''}) {
   final usedModel = (d['model'] ?? model).toString();
   final open = (provider.isNotEmpty && provider != 'claude') || RegExp('qwen', caseSensitive: false).hasMatch(usedModel);
   final parts = <String>[];
   if (open) {
     parts.add(short.isNotEmpty ? short : 'Open model');
+    final q = d['qwen_usage'];
+    if (q is Map) parts.add(gpuCost(Map<String, dynamic>.from(q)));
   } else {
     if (model.isNotEmpty) parts.add(cap(model));
     final cost = d['total_cost_usd'];
@@ -979,4 +983,13 @@ String turnFooter(Map<String, dynamic> d, {String provider = '', String model = 
   if (ms is num) parts.add('${(ms / 1000).toStringAsFixed(1)}s');
   if (d['is_error'] == true) parts.add((d['subtype'] ?? 'error').toString());
   return parts.join('  ·  ');
+}
+
+/// RunPod usage as the web shows it: "~$0.004 GPU · 41s" (~ when the server estimated it).
+String gpuCost(Map<String, dynamic> u) {
+  final usd = u['usd'] is num ? (u['usd'] as num).toDouble() : 0.0;
+  final ms = u['gpuMs'] is num ? (u['gpuMs'] as num).toInt() : 0;
+  final money = usd > 0 && usd < 0.001 ? '<\$0.001' : '\$${usd < 0.01 ? usd.toStringAsFixed(3) : usd.toStringAsFixed(2)}';
+  final time = ms < 10000 ? '${(ms / 1000).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')}s' : fmtDuration(Duration(milliseconds: ms));
+  return '${u['estimated'] == true ? '~' : ''}$money GPU · $time';
 }

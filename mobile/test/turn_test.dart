@@ -54,6 +54,11 @@ void main() {
     expect(turnFooter(d, provider: 'qwen', short: 'Qwen 3.8'), 'Qwen 3.8  ·  61.2s');
     expect(turnFooter({...d, 'model': 'qwen3.8-uncensored'}), 'Open model  ·  61.2s', reason: 'a Qwen model even without a provider');
     expect(turnFooter(d, provider: 'claude', model: 'opus'), 'Opus  ·  \$0.334  ·  61.2s');
+    // The server's real RunPod usage replaces the CLI's figure.
+    final q = {...d, 'total_cost_usd': 0.004, 'qwen_usage': {'jobs': 2, 'gpuMs': 41000, 'usd': 0.0042, 'estimated': true}};
+    expect(turnFooter(q, provider: 'qwen', short: 'Qwen 3.8'), 'Qwen 3.8  ·  ~\$0.004 GPU · 41s  ·  61.2s');
+    expect(gpuCost({'usd': 0.0004, 'gpuMs': 2500}), '<\$0.001 GPU · 2.5s');
+    expect(gpuCost({'usd': 0.12, 'gpuMs': 3000}), '\$0.12 GPU · 3s');
   });
 
   Widget host(Widget child) => MaterialApp(theme: buildTheme(Brightness.dark), home: Scaffold(body: SingleChildScrollView(child: child)));
