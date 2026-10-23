@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-/// A rendered page (HTML, or a PDF, which WKWebView draws natively). Links that leave the page
-/// open in the browser.
+/// A rendered page: [html] loaded as a string with no base URL (so it never sees Bridge's origin
+/// or token), or a [url] the web view draws natively (a PDF). Links that leave the page open in
+/// the browser.
 class ArtifactFrame extends StatefulWidget {
-  const ArtifactFrame({super.key, required this.url, this.sandbox = true});
-  final Uri url;
-  /// Web only: the iframe gets an opaque origin. Native web views are already their own process.
-  final bool sandbox;
+  const ArtifactFrame({super.key, this.url, this.html}) : assert((url == null) != (html == null));
+  final Uri? url;
+  final String? html;
   @override
   State<ArtifactFrame> createState() => _ArtifactFrameState();
 }
@@ -29,18 +29,27 @@ class _ArtifactFrameState extends State<ArtifactFrame> {
         },
         onNavigationRequest: (r) {
           final u = Uri.tryParse(r.url);
-          if (u == null || u.host == widget.url.host || u.scheme == 'about' || u.scheme == 'data') return NavigationDecision.navigate;
+          final own = u == null || u.scheme == 'about' || u.scheme == 'data' || (widget.url != null && u.host == widget.url!.host);
+          if (own || !r.isMainFrame) return NavigationDecision.navigate;
           launchUrl(u, mode: LaunchMode.externalApplication).catchError((_) => false);
           return NavigationDecision.prevent;
         },
-      ))
-      ..loadRequest(widget.url);
+      ));
+    _load();
+  }
+
+  void _load() {
+    if (widget.html != null) {
+      _c.loadHtmlString(widget.html!);
+    } else {
+      _c.loadRequest(widget.url!);
+    }
   }
 
   @override
   void didUpdateWidget(ArtifactFrame old) {
     super.didUpdateWidget(old);
-    if (old.url != widget.url) _c.loadRequest(widget.url);
+    if (old.url != widget.url || old.html != widget.html) _load();
   }
 
   @override

@@ -703,8 +703,8 @@ class _SessionScreenState extends State<SessionScreen> {
 
   /// Pages, docs, images and PDFs open in the artifact sheet; everything else in the file viewer.
   void _openFile(String path) => artifactKindOf(path) != null
-      ? showArtifactSheet(context, path: path, computer: _computer, revisions: _revisions)
-      : Nav.instance.push(FileScreen(path: path, computer: _computer));
+      ? showArtifactSheet(context, path: path, computer: _computer, session: _id, revisions: _revisions)
+      : Nav.instance.push(FileScreen(path: path, computer: _computer, session: _id));
 
   void _openPanel() => showChatPanel(
         context,

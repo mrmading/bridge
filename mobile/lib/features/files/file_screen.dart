@@ -17,10 +17,12 @@ import '../../widgets/transcript.dart';
 import '../session/session_utils.dart';
 
 class FileScreen extends StatefulWidget {
-  const FileScreen({super.key, required this.path, this.isDir = false, this.computer = 'mac'});
+  const FileScreen({super.key, required this.path, this.isDir = false, this.computer = 'mac', this.session});
   final String path;
   /// mac · cloud: which computer's disk this is.
   final String computer;
+  /// The chat that opened it, for files outside Bridge's folders.
+  final String? session;
   final bool isDir;
   @override
   State<FileScreen> createState() => _FileScreenState();
@@ -54,7 +56,7 @@ class _FileScreenState extends State<FileScreen> {
           if (l.path.isNotEmpty) _path = l.path;
         });
       } else {
-        final f = await _store.api.file(_path, computer: widget.computer);
+        final f = await _store.api.file(_path, computer: widget.computer, session: widget.session);
         if (!mounted) return;
         setState(() => _file = f);
       }
@@ -65,7 +67,7 @@ class _FileScreenState extends State<FileScreen> {
     }
   }
 
-  void _openRaw() => launchUrl(_store.api.rawUrl(_path, computer: widget.computer), mode: LaunchMode.externalApplication).catchError((_) => false);
+  void _openRaw() => launchUrl(_store.api.rawUrl(_path, computer: widget.computer, session: widget.session), mode: LaunchMode.externalApplication).catchError((_) => false);
 
   @override
   Widget build(BuildContext context) {
@@ -127,7 +129,7 @@ class _FileScreenState extends State<FileScreen> {
       final ext = (f['ext'] ?? '').toString();
       if (ext != '.pdf') {
         return InteractiveViewer(
-          child: Center(child: Image.network(_store.api.rawUrl(_path, computer: widget.computer).toString(), errorBuilder: (_, _, _) => const EmptyState(icon: Icons.broken_image_outlined, title: 'Could not load the image'))),
+          child: Center(child: Image.network(_store.api.rawUrl(_path, computer: widget.computer, session: widget.session).toString(), errorBuilder: (_, _, _) => const EmptyState(icon: Icons.broken_image_outlined, title: 'Could not load the image'))),
         );
       }
       return EmptyState(icon: Icons.picture_as_pdf_outlined, title: 'PDF', body: 'Open it in your browser to read it.', action: FilledButton(onPressed: _openRaw, child: const Text('Open PDF')));
@@ -197,7 +199,7 @@ class _FileScreenState extends State<FileScreen> {
               _path = full;
               _load();
             } else {
-              Nav.instance.push(FileScreen(path: full, computer: widget.computer));
+              Nav.instance.push(FileScreen(path: full, computer: widget.computer, session: widget.session));
             }
           },
         ),

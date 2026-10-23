@@ -82,20 +82,22 @@ class ArtifactCard extends StatelessWidget {
 }
 
 /// Opens the full-screen preview. [revisions] is the chat's write/edit count per path.
-Future<void> showArtifactSheet(BuildContext context, {required String path, String computer = 'mac', ValueListenable<Map<String, int>>? revisions}) {
+Future<void> showArtifactSheet(BuildContext context, {required String path, String computer = 'mac', String? session, ValueListenable<Map<String, int>>? revisions}) {
   final kind = artifactKindOf(path);
   if (kind == null) return Future.value();
   return Navigator.of(context, rootNavigator: true).push(MaterialPageRoute<void>(
     fullscreenDialog: true,
-    builder: (_) => ArtifactSheet(path: path, kind: kind, computer: computer, revisions: revisions),
+    builder: (_) => ArtifactSheet(path: path, kind: kind, computer: computer, session: session, revisions: revisions),
   ));
 }
 
 class ArtifactSheet extends StatefulWidget {
-  const ArtifactSheet({super.key, required this.path, required this.kind, this.computer = 'mac', this.revisions});
+  const ArtifactSheet({super.key, required this.path, required this.kind, this.computer = 'mac', this.session, this.revisions});
   final String path;
   final ArtifactKind kind;
   final String computer;
+  /// The chat that made the file; the server needs it for files outside Bridge's folders.
+  final String? session;
   final ValueListenable<Map<String, int>>? revisions;
   @override
   State<ArtifactSheet> createState() => _ArtifactSheetState();
@@ -112,7 +114,8 @@ class _ArtifactSheetState extends State<ArtifactSheet> {
 
   ArtifactKind get _kind => widget.kind;
   bool get _hasCode => artifactHasCode(_kind);
-  bool get _needsText => _kind == ArtifactKind.markdown || (_code && _hasCode);
+  // HTML previews render from the text too (see [_body]).
+  bool get _needsText => _kind == ArtifactKind.markdown || _kind == ArtifactKind.html || (_code && _hasCode);
 
   @override
   void initState() {
@@ -159,8 +162,8 @@ class _ArtifactSheetState extends State<ArtifactSheet> {
   }
 
   Future<String> _fetchText() async {
-    if (_kind == ArtifactKind.svg) return utf8.decode(await _store.api.rawBytes(widget.path, computer: widget.computer), allowMalformed: true);
-    final f = await _store.api.file(widget.path, computer: widget.computer);
+    if (_kind == ArtifactKind.svg) return utf8.decode(await _store.api.rawBytes(widget.path, computer: widget.computer, session: widget.session), allowMalformed: true);
+    final f = await _store.api.file(widget.path, computer: widget.computer, session: widget.session);
     if (f['blocked'] == true) throw (f['text'] ?? 'Protected file').toString();
     if (f['error'] != null) throw f['error'].toString();
     return (f['text'] ?? '').toString();
@@ -168,7 +171,7 @@ class _ArtifactSheetState extends State<ArtifactSheet> {
 
   /// The raw URL, with a version so the web view and image cache fetch it again after an edit.
   Uri get _url {
-    final u = _store.api.rawUrl(widget.path, computer: widget.computer);
+    final u = _store.api.rawUrl(widget.path, computer: widget.computer, session: widget.session);
     return u.replace(queryParameters: {...u.queryParameters, 'v': '$_rev.$_nonce'});
   }
 
@@ -176,7 +179,7 @@ class _ArtifactSheetState extends State<ArtifactSheet> {
     final box = btn.findRenderObject() as RenderBox?;
     final origin = box == null ? null : box.localToGlobal(Offset.zero) & box.size;
     try {
-      final bytes = await _store.api.rawBytes(widget.path, computer: widget.computer);
+      final bytes = await _store.api.rawBytes(widget.path, computer: widget.computer, session: widget.session);
       final name = _name(widget.path);
       await SharePlus.instance.share(ShareParams(files: [XFile.fromData(bytes, name: name, mimeType: _mime)], fileNameOverrides: [name], sharePositionOrigin: origin));
     } catch (e) {
@@ -268,6 +271,9 @@ class _ArtifactSheetState extends State<ArtifactSheet> {
       if (_error.isNotEmpty) return EmptyState(icon: Icons.block_rounded, title: 'Cannot open this file', body: _error, action: FilledButton(onPressed: _loadText, child: const Text('Retry')));
       if (_text == null || (_loading && _text == null)) return Center(child: CircularProgressIndicator(color: t.accent, strokeWidth: 2));
       if (_code) return _CodeView(_text!);
+      // From the text, not the raw URL: that URL carries the sign-in token, and the page's scripts
+      // could read it.
+      if (_kind == ArtifactKind.html) return ArtifactFrame(key: const ValueKey('artifact-frame'), html: _text!);
       return ListView(
         key: const ValueKey('artifact-markdown'),
         padding: const EdgeInsets.fromLTRB(18, 14, 18, 40),
@@ -276,13 +282,11 @@ class _ArtifactSheetState extends State<ArtifactSheet> {
     }
     final url = _url;
     switch (_kind) {
-      case ArtifactKind.html:
-        return ArtifactFrame(key: const ValueKey('artifact-frame'), url: url);
       case ArtifactKind.pdf:
         if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
           return EmptyState(icon: Icons.picture_as_pdf_outlined, title: 'PDF', body: 'Open it in your browser to read it.', action: FilledButton(onPressed: () => launchUrl(url, mode: LaunchMode.externalApplication), child: const Text('Open PDF')));
         }
-        return ArtifactFrame(key: const ValueKey('artifact-frame'), url: url, sandbox: false);
+        return ArtifactFrame(key: const ValueKey('artifact-frame'), url: url);
       case ArtifactKind.svg:
         return InteractiveViewer(
           maxScale: 8,
@@ -293,6 +297,7 @@ class _ArtifactSheetState extends State<ArtifactSheet> {
           maxScale: 8,
           child: Center(child: Image.network(url.toString(), errorBuilder: (_, _, _) => const EmptyState(icon: Icons.broken_image_outlined, title: 'Could not load the image'))),
         );
+      case ArtifactKind.html:
       case ArtifactKind.markdown:
         return const SizedBox.shrink();
     }

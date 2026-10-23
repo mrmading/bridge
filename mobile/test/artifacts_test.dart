@@ -52,6 +52,20 @@ void main() {
     expect(r['/p/b.md'], 1);
   });
 
+  test('same rules as the web: failed writes, ~/ paths, Artifact file_paths', () {
+    final failed = Msg(kind: 'tool', name: 'Write', input: {'file_path': '/p/bad.html'}, result: ToolResult(content: 'denied', isError: true));
+    final a = turnArtifacts([
+      failed,
+      tool('Artifact', {'file_paths': ['/p/a.png', '/p/b.svg']}),
+      say('Saved to ~/Downloads/report.pdf and **/tmp/x/page.html**.'),
+    ]);
+    expect(a.map((x) => x.path).toList(), ['/p/a.png', '/p/b.svg', '~/Downloads/report.pdf', '/tmp/x/page.html']);
+  });
+
+  test('side tools do not count as the turn using tools', () {
+    expect(turnHasTools([Msg(kind: 'tool', name: 'Bash', side: true), say('hi')]), false);
+  });
+
   test('a turn has tools only once a tool_use arrives', () {
     expect(turnHasTools([Msg(kind: 'thinking', text: 'hm'), say('hi')]), false);
     expect(turnHasTools([say('hi'), tool('Bash', {'command': 'ls'})]), true);

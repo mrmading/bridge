@@ -38,12 +38,15 @@ class ArtifactRef {
   final bool isNew;
 }
 
-const _writes = {'Write', 'Edit', 'MultiEdit'};
+const _writes = {'Write', 'Edit', 'MultiEdit', 'NotebookEdit'};
 
 String _pathOf(Msg m) => (m.input?['file_path'] ?? m.input?['path'] ?? '').toString();
 
-// An absolute path ending in a previewable extension, not part of a URL (no ':' or '/' before it).
-final _pathInText = RegExp(r'(?<![\w:/.~-])(/[^\s`"' "'" r'()<>\[\]]+\.(?:html?|md|markdown|svg|png|jpe?g|gif|webp|pdf))(?![\w/])', caseSensitive: false);
+// An absolute or ~/ path ending in a previewable extension, at the start or after a space, quote,
+// backtick, bracket or '*' (so never the tail of a URL). Same rule as the web client.
+final _pathInText = RegExp(r'(?:^|[\s`(\[*"' "'" r'])((?:/|~/)[^\s`)\]*"' "'" r'<>]+?\.(?:html?|md|markdown|svg|png|jpe?g|gif|webp|pdf))(?![\w/])', caseSensitive: false, multiLine: true);
+
+bool _failed(Msg m) => m.result?.isError ?? false;
 
 /// A turn's artifacts in first-seen order, one per path.
 List<ArtifactRef> turnArtifacts(List<Msg> msgs) {
@@ -55,7 +58,14 @@ List<ArtifactRef> turnArtifacts(List<Msg> msgs) {
   }
 
   for (final m in msgs) {
-    if (m.isTool && (_writes.contains(m.name) || m.name == 'Artifact')) add(_pathOf(m), isNew: m.name == 'Write');
+    if (!m.isTool || _failed(m)) continue;
+    if (_writes.contains(m.name)) add(_pathOf(m), isNew: m.name == 'Write');
+    if (m.name == 'Artifact') {
+      add(_pathOf(m));
+      for (final p in (m.input?['file_paths'] as List?) ?? const []) {
+        add(p.toString());
+      }
+    }
   }
   for (final m in msgs) {
     if (m.isAssistant && !m.side) {
@@ -82,4 +92,4 @@ Map<String, int> artifactRevisions(List<Msg> msgs) {
 }
 
 /// Tool UI (steps, work line, progress) shows only once the turn has made a tool call.
-bool turnHasTools(List<Msg> msgs) => msgs.any((m) => m.isTool);
+bool turnHasTools(List<Msg> msgs) => msgs.any((m) => m.isTool && !m.side);

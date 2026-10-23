@@ -277,16 +277,21 @@ class BridgeApi {
   Future<List<String>> setRoots(List<String> roots) async => List<String>.from((await _post('/api/roots', {'roots': roots})) as List? ?? const []);
   Future<DirListing> dir(String path, {bool hidden = false, String computer = 'mac'}) async =>
       DirListing.fromJson(_m(await _get('/api/dir', q: {'path': path, if (hidden) 'hidden': '1', ..._cq(computer)})));
-  Future<Map<String, dynamic>> file(String path, {String computer = 'mac'}) async => _m(await _get('/api/file', q: {'path': path, ..._cq(computer)}));
+  /// [session] is the chat that named the file: outside Bridge's folders the server opens only
+  /// files that chat's transcript mentions.
+  Future<Map<String, dynamic>> file(String path, {String computer = 'mac', String? session}) async =>
+      _m(await _get('/api/file', q: {'path': path, ..._cq(computer), 'session': ?session}));
   /// Images and raw files load by URL (no headers), so the token rides in the query.
-  Uri rawUrl(String path, {String computer = 'mac'}) {
+  Uri rawUrl(String path, {String computer = 'mac', String? session}) {
     final t = cachedToken?.call() ?? '';
-    return _u('/api/raw', {'path': path, ..._cq(computer), if (t.isNotEmpty) 'access_token': t});
+    return _u('/api/raw', {'path': path, ..._cq(computer), 'session': ?session, if (t.isNotEmpty) 'access_token': t});
   }
 
   /// The file's bytes (sharing an artifact, reading an SVG's source).
-  Future<Uint8List> rawBytes(String path, {String computer = 'mac'}) async {
-    final r = await _client.get(_u('/api/raw', {'path': path, ..._cq(computer)}), headers: await _auth()).timeout(const Duration(seconds: 40));
+  Future<Uint8List> rawBytes(String path, {String computer = 'mac', String? session}) async {
+    final r = await _client
+        .get(_u('/api/raw', {'path': path, ..._cq(computer), 'session': ?session}), headers: await _auth())
+        .timeout(const Duration(seconds: 40));
     if (r.statusCode == 401) onUnauthorized?.call();
     if (r.statusCode >= 400) throw ApiException(r.statusCode == 403 ? 'Bridge cannot open this file' : 'Could not load the file (${r.statusCode})', status: r.statusCode);
     return r.bodyBytes;
