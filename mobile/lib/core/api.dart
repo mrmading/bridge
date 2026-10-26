@@ -285,6 +285,22 @@ class BridgeApi {
   /// files that chat's transcript mentions.
   Future<Map<String, dynamic>> file(String path, {String computer = 'mac', String? session}) async =>
       _m(await _get('/api/file', q: {'path': path, ..._cq(computer), 'session': ?session}));
+  /// The cloud computer's screen (server desktop.ts): available, running, control, viewers. Null when it can't be read.
+  Future<Map<String, dynamic>?> desktopStatus() async {
+    try {
+      return _m(await _get('/api/desktop/status', timeout: const Duration(seconds: 8)));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The live screen page (public/computer.html, noVNC). The token rides in the fragment, which the page reads
+  /// and drops: it never goes to the server in a URL or into history.
+  Future<Uri> computerUrl() async {
+    final t = await token?.call() ?? '';
+    return Uri.parse('$base/computer.html${t.isNotEmpty ? '#t=${Uri.encodeComponent(t)}' : ''}');
+  }
+
   /// Images and raw files load by URL (no headers), so the token rides in the query.
   Uri rawUrl(String path, {String computer = 'mac', String? session}) {
     final t = cachedToken?.call() ?? '';
