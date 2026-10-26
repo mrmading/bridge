@@ -50,10 +50,13 @@ const server = spawn("bun", ["server.ts"], {
   cwd: BRIDGE,
   env: { ...process.env, BRIDGE_PORT: String(PORT), BRIDGE_DATA: data, BRIDGE_SCOPE: work, BRIDGE_QWEN_MODE: qwenMode },
   stdio: ["ignore", "ignore", "pipe"],
+  detached: true, // its own process group, so the turns it spawned die with it
 });
 let serverErr = "";
 server.stderr!.on("data", (c) => (serverErr += c.toString()));
-process.on("exit", () => server.kill());
+const stopServer = () => { try { process.kill(-server.pid!, "SIGTERM"); } catch {} };
+process.on("exit", stopServer);
+process.on("SIGINT", () => process.exit(130));
 for (let i = 0; ; i++) {
   try {
     if ((await fetch(`http://127.0.0.1:${PORT}/`)).ok) break;
@@ -239,5 +242,4 @@ mkdirSync(join(HERE, "results"), { recursive: true });
 writeFileSync(join(HERE, "results", `${label}.json`), JSON.stringify(summary, null, 2));
 console.log(`\n${label}: core ${summary.core}, context ${summary.context}, parity ${summary.parity}, infra ${summary.infra}, turn errors ${summary.turnErrors}, median ttft ${(summary.medianTtftMs / 1000).toFixed(0)}s;`, `${summary.passed}/${summary.total} passed, median ${(summary.medianMs / 1000).toFixed(0)}s, ${summary.jobs} RunPod jobs, ${(summary.gpuMs / 1000).toFixed(0)}s GPU`);
 console.log("report:", writeReport());
-server.kill();
 process.exit(0);
