@@ -66,6 +66,7 @@ qwen_key="$(grep -E '^(export )?RUNPOD_QWEN_API_KEY=' "$SECRETS" | tail -1 | sed
   printf 'BRIDGE_SUPABASE_KEY=%q\n' "$SUPABASE_KEY"
   printf 'BRIDGE_ALLOWED_EMAILS=%q\n' "$ALLOWED"
   printf 'RUNPOD_QWEN_ENDPOINT=%q\n' "$QWEN_ENDPOINT"
+  printf 'BRIDGE_SKIP_PERMISSIONS=1\n'
   [[ -n "$qwen_key" ]] && printf 'RUNPOD_QWEN_API_KEY=%q\n' "$qwen_key"
 } | "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -c 'umask 077; cat > ~/.bridge.env.new && chmod 600 ~/.bridge.env.new && mv ~/.bridge.env.new ~/.bridge.env && echo "env: $(cut -d= -f1 ~/.bridge.env | tr "\n" " ")($(stat -c %a ~/.bridge.env))"'
 unset qwen_key
