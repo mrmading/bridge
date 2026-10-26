@@ -70,6 +70,17 @@ which `wrangler deployments list` shows.
 3. Sprite code: `deploy/sprite.sh <previous-commit>`; or on the sprite `rm ~/.bridge.env` and restart to drop the env.
 4. Supabase: re-run `deploy/supabase/auth.sh` after editing it; the project holds no data but auth users.
 
+## Computer panel (the cloud computer's screen)
+
+- `deploy/desktop-install.sh` installs Xvfb, openbox, x11vnc, xdotool, scrot, Google Chrome and `@playwright/mcp` (pinned)
+  on the sprite. `sprite.sh` runs it on every ship. It is idempotent and takes about 1 s once installed. `SKIP_DESKTOP=1` skips it.
+- Nothing runs until it is needed. `desktop.ts` starts the desktop when a viewer opens `/api/desktop/ws` or a turn first
+  uses the browser or screen tools. It stops after `BRIDGE_DESKTOP_IDLE_MIN` (10) with no viewer and no desktop turn.
+- The VNC socket is bridged by Bridge itself (no websockify), behind the same gate (`?access_token=`). x11vnc and
+  Chrome's DevTools listen on 127.0.0.1 only. The Worker passes the WebSocket upgrade through untouched.
+- Knobs: `BRIDGE_DESKTOP=0` (off), `BRIDGE_DESKTOP_DISPLAY` (:99), `BRIDGE_DESKTOP_VNC_PORT` (5999),
+  `BRIDGE_DESKTOP_CDP_PORT` (9229), `BRIDGE_DESKTOP_WIDTH`/`HEIGHT` (1280x800), `BRIDGE_DESKTOP_HOME` (~/.bridge-desktop).
+
 ## Notes
 
 - SSE: the Worker passes the upstream body through untouched and sets `cache-control: no-cache, no-transform`.

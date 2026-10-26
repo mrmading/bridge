@@ -21,6 +21,7 @@ import '../../widgets/artifact.dart';
 import '../../widgets/bridge.dart';
 import '../../widgets/common.dart';
 import '../../widgets/composer.dart';
+import '../../widgets/computer.dart';
 import '../../widgets/transcript.dart';
 import '../../widgets/turn.dart';
 import '../connectors/connectors_screen.dart';
@@ -104,6 +105,27 @@ class _SessionScreenState extends State<SessionScreen> {
     _store.addListener(_onStore);
     Nav.instance.focusComposer.addListener(_onFocusAsk);
     _start();
+    _api.desktopStatus().then((s) {
+      if (mounted && s?['available'] == true) setState(() => _deskAvail = true);
+    });
+  }
+
+  /// The cloud computer's screen: the Computer button shows when this server has one, and the sheet opens by
+  /// itself the first time a live turn uses the browser or the screen tools. Closing it keeps it shut for that turn.
+  bool _deskAvail = false, _deskOpen = false, _deskShut = false;
+  void _autoComputer() {
+    _deskAvail = true;
+    if (!_busy || _deskOpen || _deskShut) return;
+    _deskOpen = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openComputer(auto: true));
+  }
+
+  Future<void> _openComputer({bool auto = false}) async {
+    if (!mounted) return;
+    _deskOpen = true;
+    await showComputerScreen(context);
+    _deskOpen = false;
+    if (auto) _deskShut = true;
   }
 
   void _onStore() {
@@ -312,6 +334,7 @@ class _SessionScreenState extends State<SessionScreen> {
   // ── sending ─────────────────────────────────────────────────────────
 
   Future<void> _send(String text) async {
+    _deskShut = false;
     if (_busy) {
       setState(() => _queue.add(text));
       _jumpToBottomSoon(force: true);
@@ -500,6 +523,8 @@ class _SessionScreenState extends State<SessionScreen> {
           _msgs.add(row);
           _gotOutput = true;
           _touch(newContent: true);
+        } else if (bt == 'tool_use' && cb is Map && isDesktopTool((cb['name'] ?? '').toString())) {
+          _autoComputer();
         }
       case 'content_block_delta':
         final row = _blocks[slot];
@@ -548,6 +573,7 @@ class _SessionScreenState extends State<SessionScreen> {
         _tools[id] = row;
         _msgs.add(row);
         _gotOutput = true;
+        if (isDesktopTool(row.name)) _autoComputer();
       } else if (!streamed && bt == 'text') {
         final text = (b['text'] ?? '').toString();
         if (text.trim().isEmpty) continue;
@@ -750,6 +776,7 @@ class _SessionScreenState extends State<SessionScreen> {
         ]),
         actions: [
           IconButton(tooltip: 'Talk', onPressed: () => openTalk(context), icon: Icon(Icons.graphic_eq_rounded, color: t.muted)),
+          if (_deskAvail) IconButton(tooltip: 'Computer', onPressed: _openComputer, icon: Icon(Icons.desktop_windows_outlined, color: t.muted)),
           IconButton(tooltip: 'Files & progress', onPressed: _openPanel, icon: Icon(Icons.view_agenda_outlined, color: t.muted)),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_horiz_rounded),
