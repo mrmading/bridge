@@ -63,6 +63,7 @@ const QWEN_FULL_NOTE = [
   "- A tool listed as deferred has no schema yet: load it first with ToolSearch (query \"select:<name>\"), then call it.",
   "- General questions: answer directly. Questions about files, code or the machine: look first, then answer from what you saw.",
   "- Be brief and concrete; after a command or tests, report the real output in a sentence. If a request is ambiguous, ask one short question.",
+  "- In plan mode nothing has been changed: write the plan in future tense under a markdown heading that starts with `## Plan`, and never claim you created, ran or verified anything.",
 ].join("\n");
 const QWEN_DIGEST_CHARS = 10_000; // ≈ 3k tokens
 async function qwenSystemPrompt(cwd: string, prompt: string): Promise<string> {

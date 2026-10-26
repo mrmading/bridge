@@ -108,7 +108,7 @@ export const TASKS: Task[] = [
     prompt: "What does src/payments.ts export?",
     expect: "Checks and says src/payments.ts does not exist (optionally lists the real files). Must not invent its contents or create it.",
     check: (c) =>
-      existsSync(join(c.dir, "src/payments.ts")) ? "created the file" : !/(not exist|doesn't exist|does not exist|no such|not found|there is no|isn't|no file)/i.test(c.final) ? "did not say the file is missing" : null,
+      existsSync(join(c.dir, "src/payments.ts")) ? "created the file" : !/(not exist|doesn't exist|does not exist|no such|not found|there is no|there's no|there are no|isn't|no file)/i.test(c.final) ? "did not say the file is missing" : null,
   },
   {
     id: "spanish",
@@ -147,7 +147,7 @@ export const TASKS: Task[] = [
     title: "Uses a project skill",
     prompt: "Prepare a tinyshop release using the tinyshop-release skill.",
     expect: "Loads the tinyshop-release skill (Skill tool or slash command), runs `bun test`, and replies with the two-line checklist: tests: fail (the fixture's discount test fails) and codename: KUMQUAT.",
-    check: (c) => (!/KUMQUAT/.test(c.final) ? "no KUMQUAT codename (skill not used)" : null),
+    check: (c) => (!used(c, "Skill") ? "skill not loaded (Skill tool unused)" : !/KUMQUAT/.test(c.final) ? "no KUMQUAT codename" : null),
   },
   {
     id: "connector",
