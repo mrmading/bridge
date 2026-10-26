@@ -536,9 +536,9 @@ function openMenu(kind, anchor) {
     m.innerHTML = mi('data-act="rename"', ic("edit") + lb("Rename")) +
       mi('data-act="rawtranscript"', ic("term") + lb("Open raw transcript")) +
       mi('data-act="copyid"', ic("copy") + lb("Copy session id")) +
+      mi('data-act="conn-scope"', ic("plug") + lb("Connectors", "Which connectors this chat uses")) +
       (c && c.computer !== "cloud" ? mi('data-act="revealfolder"', ic("folder") + lb("Open the folder", c ? short(c.path, 40) : "")) : "") +
       (c && c.id && c.computer !== "cloud" && !busy && cloudInfo().configured ? mi('data-act="movecloud"', ic("cloud") + lb("Move to cloud computer", cloudOn() ? "Continues there; keeps running with your Mac closed" : "The cloud computer is offline")) : "") +
-      mi('data-act="conn-scope"', ic("plug") + lb("Connectors", "Which connectors this chat uses")) +
       mi('data-act="tech"', ic("term") + lb(S.tech ? "Hide technical details" : "Show technical details", "Raw tool calls next to each step")) +
       (busy ? "<hr>" + mi('data-act="stop"', '<span style="color:var(--err)">' + ic("stop") + "</span>" + lb("Stop all running work")) : "");
   }
