@@ -172,6 +172,23 @@ describe("anthropicToOllama", () => {
     expect(anthropicToOllama({ messages: [{ role: "user", content: "x" }], temperature: 0 }, { sampling: true }).payload.options.temperature).toBe(0);
   });
 
+  test("deferred tools are offered once ToolSearch has loaded them (tool_reference or <function> text)", () => {
+    const deferred = (name: string) => ({ name, description: name + " tool.", input_schema: { type: "object", properties: { q: { type: "string" } } }, defer_loading: true });
+    const tools = [{ name: "ToolSearch", description: "Find tools.", input_schema: { type: "object", properties: { query: { type: "string" } } } }, deferred("mcp__shop__stock"), deferred("WebSearch"), deferred("TodoWrite")];
+    const before = anthropicToOllama({ messages: [{ role: "user", content: "x" }], tools });
+    expect(before.payload.tools!.map((t) => t.function.name)).toEqual(["ToolSearch"]);
+    const after = anthropicToOllama({
+      tools,
+      messages: [
+        { role: "user", content: "x" },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "ToolSearch", input: { query: "select:mcp__shop__stock,WebSearch" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "tool_reference", tool_name: "mcp__shop__stock" }, { type: "text", text: '<functions><function>{"description": "Search", "name": "WebSearch", "parameters": {}}</function></functions>' }] }] },
+      ],
+    });
+    expect(after.payload.tools!.map((t) => t.function.name)).toEqual(["ToolSearch", "mcp__shop__stock", "WebSearch"]);
+    expect(after.payload.messages.find((m) => m.role === "tool")!.content).toContain("Loaded tool mcp__shop__stock");
+  });
+
   test("nothing is trimmed when the prompt fits", () => {
     const { trimmed } = anthropicToOllama({ messages: [{ role: "user", content: "small" }] }, { numCtx: 65536, maxOutput: 8192 });
     expect(trimmed).toEqual([]);

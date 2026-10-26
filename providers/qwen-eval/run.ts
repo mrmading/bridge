@@ -4,7 +4,7 @@
  * task in tasks.ts through its /api/chat exactly as the app does, scores the transcript with the
  * task's deterministic check plus a haiku judge, and writes results/<label>.json + report.html.
  *
- *   bun providers/qwen-eval/run.ts --provider qwen --label qwen-v1 [--only grep,edit] [--concurrency 3]
+ *   bun providers/qwen-eval/run.ts --provider qwen --label qwen-v1 [--qwen-mode full|slim] [--only grep,edit] [--concurrency 3]
  *   bun providers/qwen-eval/run.ts --provider claude --model haiku --label haiku
  */
 import { spawn } from "node:child_process";
@@ -35,12 +35,20 @@ rmSync(work, { recursive: true, force: true });
 const data = join(work, ".bridge-data");
 mkdirSync(data, { recursive: true });
 writeFileSync(join(data, "roots.json"), JSON.stringify([work]));
+// a self-made connector every turn gets (enabled by default), as if added on the Connectors page
+const connDir = join(data, "connectors");
+mkdirSync(join(connDir, "shopdata"), { recursive: true });
+cpSync(join(HERE, "connector", "shopdata", "server.ts"), join(connDir, "shopdata", "server.ts"));
+writeFileSync(join(connDir, "connectors.json"), JSON.stringify({ connectors: [{ id: "shopdata", name: "shopdata", kind: "local", auth: "none",
+  local: { mode: "words", baseUrl: "", authKind: "none", description: "tinyshop warehouse stock" }, enabled: true, status: "connected", createdAt: Date.now() }],
+  scopes: { chats: {}, folders: {} } }));
+const qwenMode = arg("qwen-mode", "full");
 
 /* ───────────── private Bridge ───────────── */
 
 const server = spawn("bun", ["server.ts"], {
   cwd: BRIDGE,
-  env: { ...process.env, BRIDGE_PORT: String(PORT), BRIDGE_DATA: data, BRIDGE_SCOPE: work },
+  env: { ...process.env, BRIDGE_PORT: String(PORT), BRIDGE_DATA: data, BRIDGE_SCOPE: work, BRIDGE_QWEN_MODE: qwenMode },
   stdio: ["ignore", "ignore", "pipe"],
 });
 let serverErr = "";
@@ -144,6 +152,7 @@ async function judge(task: Task, ctx: Ctx): Promise<Verdict> {
     "Grade with these booleans:",
     "- correct: the final answer and any file changes accomplish the task accurately.",
     "- sensible: a user would find the reply coherent, on-topic and appropriately brief (no rambling, no describing tools or parameters).",
+    "House format: the user's own instructions ask every reply to open with a short bold header line and end with one line starting 🗣️ (spoken aloud). That format is NOT junk, chatter or a length violation; judge the substance around it.",
     "- junk: the user-facing answer contains junk such as raw JSON tool calls, XML/markup tags, echoed system text, or meta chatter.",
     "- tools_ok: tools were used when needed and not used needlessly (a couple of harmless extra reads is fine).",
     'Reply with ONLY a JSON object: {"correct":bool,"sensible":bool,"junk":bool,"tools_ok":bool,"note":"<one short sentence>"}',
@@ -218,6 +227,8 @@ const summary = {
   passed: results.filter((r) => r.pass).length, total: results.length,
   core: `${results.filter((r) => r.group === "core" && r.pass).length}/${results.filter((r) => r.group === "core").length}`,
   context: `${results.filter((r) => r.group === "context" && r.pass).length}/${results.filter((r) => r.group === "context").length}`,
+  parity: `${results.filter((r) => r.group === "parity" && r.pass).length}/${results.filter((r) => r.group === "parity").length}`,
+  qwenMode: provider === "qwen" ? qwenMode : undefined,
   infra: results.filter((r) => r.infra).length, turnErrors: results.reduce((n, r) => n + r.errors, 0),
   medianTtftMs: results.map((r) => r.ttftMs).sort((a, b) => a - b)[Math.floor(results.length / 2)] || 0,
   medianMs: results.map((r) => r.ms).sort((a, b) => a - b)[Math.floor(results.length / 2)] || 0,
@@ -226,7 +237,7 @@ const summary = {
 };
 mkdirSync(join(HERE, "results"), { recursive: true });
 writeFileSync(join(HERE, "results", `${label}.json`), JSON.stringify(summary, null, 2));
-console.log(`\n${label}: core ${summary.core}, context ${summary.context}, infra ${summary.infra}, turn errors ${summary.turnErrors}, median ttft ${(summary.medianTtftMs / 1000).toFixed(0)}s;`, `${summary.passed}/${summary.total} passed, median ${(summary.medianMs / 1000).toFixed(0)}s, ${summary.jobs} RunPod jobs, ${(summary.gpuMs / 1000).toFixed(0)}s GPU`);
+console.log(`\n${label}: core ${summary.core}, context ${summary.context}, parity ${summary.parity}, infra ${summary.infra}, turn errors ${summary.turnErrors}, median ttft ${(summary.medianTtftMs / 1000).toFixed(0)}s;`, `${summary.passed}/${summary.total} passed, median ${(summary.medianMs / 1000).toFixed(0)}s, ${summary.jobs} RunPod jobs, ${(summary.gpuMs / 1000).toFixed(0)}s GPU`);
 console.log("report:", writeReport());
 server.kill();
 process.exit(0);

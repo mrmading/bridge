@@ -50,6 +50,20 @@ const QWEN_RULES = [
   "User: What's the capital of Japan? → You: Tokyo.",
 ].join("\n");
 
+/** BRIDGE_QWEN_MODE: "full" (default) gives a Qwen turn the same session as a Claude turn: user settings,
+ *  CLAUDE.md, hooks, skills, the user's MCP servers + Connectors + the Computer panel, every tool. "slim" is the
+ *  earlier compact session (custom --system-prompt + digest, six tools), kept as a fallback. */
+const QWEN_MODE = process.env.BRIDGE_QWEN_MODE === "slim" ? "slim" : "full";
+/** what a full-mode Qwen turn is told on top of Bridge's protocol: which model it is, and the habits that keep a 27B model on task */
+const QWEN_FULL_NOTE = [
+  "",
+  "Model: this turn runs on Qwen (Qwen 3.8 27B, open weights) on the user's own RunPod GPU, not on Claude. You keep your name and",
+  "everything you know about the user; if asked which model you are, say Qwen. Work like this:",
+  "- Call tools through the tool interface only. Never write a tool call, JSON or XML tags as your answer.",
+  "- A tool listed as deferred has no schema yet: load it first with ToolSearch (query \"select:<name>\"), then call it.",
+  "- General questions: answer directly. Questions about files, code or the machine: look first, then answer from what you saw.",
+  "- Be brief and concrete; after a command or tests, report the real output in a sentence. If a request is ambiguous, ask one short question.",
+].join("\n");
 const QWEN_DIGEST_CHARS = 10_000; // ≈ 3k tokens
 async function qwenSystemPrompt(cwd: string, prompt: string): Promise<string> {
   const read = async (p: string) => { try { return await Bun.file(p).text(); } catch { return ""; } };
@@ -731,22 +745,29 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   // `--agent` does not reach a -p turn (see § agent routing), so the agent is asked for in the
   // system prompt, where the main loop can act on it with the Agent tool. The flag goes along
   // too: it costs nothing and starts working the day the CLI honours it.
-  const agent = provider === "claude" && typeof req.agent === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(req.agent) ? req.agent : "";
+  const agent = !(provider === "qwen" && QWEN_MODE === "slim") && typeof req.agent === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(req.agent) ? req.agent : "";
   const protocol = agent ? BRIDGE_PROTOCOL + "\n" + [
     "",
     "3. This turn belongs to the `" + agent + "` agent. Dispatch it with the Agent tool",
     "   (subagent_type: \"" + agent + "\"), give it the request in full with the context it needs, and answer",
     "   from what it returns. Handle the turn yourself only if that agent plainly cannot do this work.",
   ].join("\n") : BRIDGE_PROTOCOL;
-  const screen = provider === "claude" && desk.supported;
+  const slimQwen = provider === "qwen" && QWEN_MODE === "slim";
+  const screen = !slimQwen && desk.supported;
   const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-    ...(provider === "qwen" ? ["--system-prompt", await qwenSystemPrompt(guard(req.cwd || HOME) || HOME, String(req.prompt || ""))] : ["--append-system-prompt", protocol + (screen ? DESKTOP_PROTOCOL : "")])];
-  // Qwen gets a slim session: no user CLAUDE.md, memory, hooks, agents or skills, no MCP servers.
-  // Qwen gets the core tools only (no Agent, ToolSearch or deferred catalog) and no auto-memory instructions, which the
-  // small model otherwise imitates instead of answering
-  if (provider === "qwen") args.push("--setting-sources", "project,local", "--strict-mcp-config", "--disable-slash-commands",
-    "--tools", "Bash,Read,Edit,Write,Glob,Grep", "--settings", JSON.stringify({ autoMemoryEnabled: false }), "--exclude-dynamic-system-prompt-sections");
-  // Connectors (connectors/): the MCP servers this chat has switched on. Qwen's --strict-mcp-config then sees exactly these.
+    ...(slimQwen ? ["--system-prompt", await qwenSystemPrompt(guard(req.cwd || HOME) || HOME, String(req.prompt || ""))]
+      : ["--append-system-prompt", protocol + (screen ? DESKTOP_PROTOCOL : "") + (provider === "qwen" ? QWEN_FULL_NOTE : "")])];
+  // slim Qwen: no user CLAUDE.md, memory, hooks, agents or skills, no MCP servers, the six core tools
+  if (slimQwen) args.push("--setting-sources", "project,local", "--strict-mcp-config", "--disable-slash-commands",
+    "--tools", "Bash,Read,Edit,Write,Glob,Grep", "--exclude-dynamic-system-prompt-sections");
+  // Settings env beats the process env, and ~/.claude/settings.json points the CLI at the user's own gateway
+  // (ANTHROPIC_BASE_URL). That file is the *project* settings of a chat in ~ too, so even a slim turn there
+  // went to the gateway and on to Anthropic ("Invalid API key"). The adapter route goes in as flag settings,
+  // the one source above both. 64k is the model's window (num_ctx), so the CLI compacts before the adapter trims.
+  if (provider === "qwen") args.push("--settings", JSON.stringify({ ...(slimQwen ? { autoMemoryEnabled: false } : {}), env: {
+    ANTHROPIC_BASE_URL: "http://127.0.0.1:" + PORT + "/qwen", ANTHROPIC_SMALL_FAST_MODEL: "qwen", CLAUDE_CODE_MAX_CONTEXT_TOKENS: "65536",
+    CLAUDE_CODE_SUBAGENT_MODEL: "qwen", API_TIMEOUT_MS: "1800000", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" } }));
+  // Connectors (connectors/): the MCP servers this chat has switched on (slim Qwen's --strict-mcp-config sees exactly these).
   // Both flags take several values, so they go before another flag, never right before the prompt.
   const conn = await connectors.turnConfig({ sessionId: req.resume || req.sessionId || "", cwd: guard(req.cwd || HOME) || HOME, only: Array.isArray(req.connectors) ? req.connectors.map(String) : undefined });
   if (conn) args.push("--mcp-config", conn.file, "--allowedTools", conn.allowed.join(","));

@@ -11,8 +11,8 @@ export type Ctx = { dir: string; turns: Turn[]; final: string; tools: ToolCall[]
 export type Task = {
   id: string;
   title: string;
-  /** core = the 12 Bridge tasks; context = needs the principal's world (projects, people) */
-  group?: "core" | "context";
+  /** core = the 12 Bridge tasks; context = needs the principal's world; parity = needs a full Claude Code session */
+  group?: "core" | "context" | "parity";
   prompt: string;
   followup?: string;
   expect: string;
@@ -140,6 +140,34 @@ export const TASKS: Task[] = [
     prompt: "Where is the Setpoint repo on this machine?",
     expect: "Answers ~/setpoint (i.e. /Users/mrmading/setpoint), from the projects table. No invented paths.",
     check: (c) => (/(~|\/Users\/mrmading)\/setpoint\b/.test(c.final) ? null : "did not give ~/setpoint"),
+  },
+  {
+    id: "skill",
+    group: "parity",
+    title: "Uses a project skill",
+    prompt: "Prepare a tinyshop release using the tinyshop-release skill.",
+    expect: "Loads the tinyshop-release skill (Skill tool or slash command), runs `bun test`, and replies with the two-line checklist: tests: fail (the fixture's discount test fails) and codename: KUMQUAT.",
+    check: (c) => (!/KUMQUAT/.test(c.final) ? "no KUMQUAT codename (skill not used)" : null),
+  },
+  {
+    id: "connector",
+    group: "parity",
+    title: "Calls a connector tool",
+    prompt: "How many units of SKU TEA-01 are in stock? Check the shopdata connector.",
+    expect: "Calls the shopdata connector's stock_level tool (mcp__shopdata__stock_level, possibly after ToolSearch) and answers 37 units.",
+    check: (c) => (!used(c, "mcp__shopdata__stock_level") ? "connector tool not called" : !/\b37\b/.test(c.final) ? "missing 37" : null),
+  },
+  {
+    id: "subagent",
+    group: "parity",
+    title: "Delegates to a subagent",
+    prompt: "Use a subagent (the Agent tool) to count the lines of every .ts file under src/, then tell me the total.",
+    expect: "Dispatches a subagent with the Agent/Task tool, which counts lines (e.g. wc -l), and reports the total line count of the .ts files under src/.",
+    check: (c) => {
+      if (!used(c, "Agent", "Task")) return "no subagent";
+      const total = ["src/cart.ts", "src/format.ts", "src/greet.ts", "src/cart.test.ts"].reduce((n, p) => n + (read(c, p) || "").split("\n").filter((l, i, a) => i < a.length - 1 || l).length, 0);
+      return c.final.includes(String(total)) ? null : `total ${total} not in answer`;
+    },
   },
 ];
 
