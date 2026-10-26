@@ -83,6 +83,10 @@ class BridgeApi {
     return _decode(r);
   }
 
+  /// Plain JSON calls for feature screens that own their own shapes (Connectors).
+  Future<dynamic> getJson(String path, {Map<String, String>? q}) => _get(path, q: q);
+  Future<dynamic> postJson(String path, Map<String, dynamic> body, {Duration timeout = const Duration(seconds: 60)}) => _post(path, body, timeout: timeout);
+
   dynamic _decode(http.Response r) {
     dynamic j;
     try {

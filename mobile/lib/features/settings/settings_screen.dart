@@ -15,6 +15,7 @@ import '../../core/theme.dart';
 import '../../widgets/bridge.dart';
 import '../../widgets/common.dart';
 import '../../widgets/composer.dart';
+import '../connectors/connectors_screen.dart';
 import '../files/file_screen.dart';
 import '../session/session_utils.dart';
 
@@ -565,6 +566,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       Card2(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Column(children: [
+          ListTile(
+            minTileHeight: 52,
+            leading: Icon(Icons.extension_outlined, color: t.muted),
+            onTap: () => Nav.instance.push(const ConnectorsScreen()),
+            title: Text('Connectors', style: TextStyle(color: t.fg, fontSize: 16)),
+            subtitle: Text('GitHub, Linear, Notion, any MCP server, or build your own', style: TextStyle(color: t.muted, fontSize: 13)),
+            trailing: Icon(Icons.chevron_right_rounded, color: t.faint),
+          ),
+          Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
           SwitchListTile(
             value: store.showTech,
             onChanged: store.setShowTech,

@@ -23,6 +23,7 @@ import '../../widgets/common.dart';
 import '../../widgets/composer.dart';
 import '../../widgets/transcript.dart';
 import '../../widgets/turn.dart';
+import '../connectors/connectors_screen.dart';
 import '../files/file_screen.dart';
 import '../talk/talk_screen.dart';
 import 'chat_panel.dart';
@@ -765,12 +766,15 @@ class _SessionScreenState extends State<SessionScreen> {
                   _moveToCloud();
                 case 'folder':
                   Nav.instance.push(FileScreen(path: _cwd, isDir: true, computer: _computer));
+                case 'connectors':
+                  showChatConnectors(context, sessionId: _id, cwd: _cwd, computer: _computer);
               }
             },
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'rename', child: Text('Rename')),
               const PopupMenuItem(value: 'folder', child: Text('Browse project folder')),
               const PopupMenuItem(value: 'copy', child: Text('Copy chat id')),
+              const PopupMenuItem(value: 'connectors', child: Text('Connectors')),
               if (_computer == 'mac' && _store.hasCloud) const PopupMenuItem(value: 'cloud', child: Text('Move to cloud computer')),
               PopupMenuItem(value: 'stop', enabled: _busy, child: const Text('Stop all running work')),
             ],

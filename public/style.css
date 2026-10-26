@@ -656,3 +656,58 @@ body.tech .tdet.open{display:block}
   .arth .seg span{display:none}
   .artdoc{padding:18px 16px 50px}
 }
+
+/* ── Connectors (public/connectors.js) ─────────────────────────── */
+.tag.err{background:color-mix(in srgb,var(--err) 16%,transparent);color:var(--err)}
+.tag .spin-s{width:9px;height:9px;display:inline-block;vertical-align:-1px}
+.cn-g{--c:var(--accent);width:34px;height:34px;flex:none;border-radius:10px;display:inline-grid;place-items:center;font:700 12px/1 Orbitron,Menlo,monospace;letter-spacing:.02em;color:var(--c);background:color-mix(in srgb,var(--c) 14%,var(--bg-sunken));border:1px solid color-mix(in srgb,var(--c) 35%,var(--border))}
+.cn-list{border:1px solid var(--border);border-radius:14px;overflow:hidden;background:color-mix(in srgb,var(--bg-raised) 82%,transparent)}
+.cn-row{border-bottom:1px solid var(--border)}
+.cn-row:last-child{border-bottom:0}
+.cn-top{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;transition:.1s}
+.cn-top:hover{background:var(--bg-hover)}
+.cn-top .l{flex:1;min-width:0}
+.cn-top .l b{display:block;font-weight:600;font-size:13.5px}
+.cn-top .l span{display:block;font-size:12.5px;color:var(--fg-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cn-def{display:flex;align-items:center}
+.cn-more{padding:0 14px 14px 60px}
+.cn-tools{display:grid;gap:4px;max-height:260px;overflow:auto;padding:8px 10px;background:var(--bg-sunken);border:1px solid var(--border);border-radius:10px}
+.cn-tool{display:flex;gap:10px;font-size:12.5px;min-width:0}
+.cn-tool code{flex:none;color:var(--accent);font-size:12px}
+.cn-tool span{color:var(--fg-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cn-err{font-size:12.5px;color:var(--err);background:color-mix(in srgb,var(--err) 9%,transparent);border:1px solid color-mix(in srgb,var(--err) 30%,var(--border));border-radius:10px;padding:8px 10px;margin-bottom:8px;overflow-wrap:anywhere}
+.cn-cat .ch{margin-bottom:8px}
+.cn-cat p{min-height:36px}
+.cn-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:10px}
+.cn-new{border-style:dashed}
+.cn-sheet{padding:16px 18px 18px;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.cn-head{display:flex;align-items:center;gap:12px}
+.cn-head>div{flex:1;min-width:0}
+.cn-head b{display:block;font-size:15px}
+.cn-head span{display:block;font-size:13px;color:var(--fg-muted)}
+.cn-note{font-size:12.5px;color:var(--fg-muted);background:var(--warn-soft);border-radius:10px;padding:8px 10px}
+.cn-meta{font-size:12px;color:var(--fg-faint);overflow-wrap:anywhere}
+.cn-meta .ok{color:var(--ok)} .cn-meta .warn{color:var(--warn)}
+.cn-opt{border:1px solid var(--border);border-radius:12px;padding:12px;display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center}
+.cn-opt b{font-size:13.5px} .cn-opt span{font-size:12.5px;color:var(--fg-muted);grid-column:1}
+.cn-opt>.btn{grid-column:2;grid-row:1/span 2}
+.cn-opt>.row{grid-column:1/-1;gap:6px}
+.cn-opt .sheet-in,.cn-f .sheet-in{height:34px;flex:1;min-width:0}
+.cn-opt a,.cn-sheet a{color:var(--accent)}
+.cn-opt a svg{width:11px;height:11px;vertical-align:-1px}
+.cn-f{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+.cn-f>span{font-size:12.5px;font-weight:600;color:var(--fg-muted)}
+.cn-f small{font-size:11.5px;color:var(--fg-faint)}
+.cn-f select.sheet-in{height:34px}
+.cn-ta{height:96px;padding:8px 10px;resize:vertical;font:inherit;font-size:13px}
+.cn-wait{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--fg-muted)}
+.cn-code{font:700 26px/1 Menlo,monospace;letter-spacing:.18em;text-align:center;padding:16px;border-radius:12px;background:var(--bg-sunken);border:1px solid var(--border)}
+.cn-log{max-height:320px;min-height:140px;overflow:auto;font-size:11.5px;white-space:pre-wrap;margin:0;background:var(--bg-sunken);border:1px solid var(--border);border-radius:10px;padding:10px}
+.cn-code-ed{min-height:46vh;font-size:12px}
+.cn-scope{display:flex;align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--border)}
+.cn-scope:last-of-type{border-bottom:0}
+.cn-sh{font-size:11.5px;color:var(--fg-faint);font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding-bottom:4px}
+.cn-sn{flex:1;display:flex;align-items:center;gap:10px;min-width:0}
+.cn-sn b{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cn-sc{width:84px;display:flex;justify-content:center;flex:none;text-align:center}
+@media (max-width:640px){.cn-more{padding-left:14px}.cn-top .tag{display:none}.cn-sc{width:64px}}

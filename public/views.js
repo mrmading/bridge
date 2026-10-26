@@ -486,6 +486,7 @@ async function openSettings() {
     general: () => row("Appearance", "Dark is the Bridge default", '<div class="seg" style="width:170px"><button class="' + (theme === "light" ? "on" : "") + '" data-act="theme">Light</button><button class="' + (theme === "dark" ? "on" : "") + '" data-act="theme">Dark</button></div>') +
       (Auth.required ? row("Bridge account", "Signed in as " + esc(Auth.email || "you"), '<button class="btn" data-act="signout">Sign out</button>') : "") +
       row("Claude account", authed() ? "Signed in as " + esc(S.auth.email || (S.auth.keyAuth ? "an API key" : "Claude")) : "Not signed in", '<button class="btn" data-act="signin">' + (authed() ? "Manage" : "Sign in") + "</button>") +
+      row("Connectors", "GitHub, Linear, Notion, any MCP server, or one Bridge builds for your API", '<button class="btn" data-go="connectors">Open</button>') +
       row("Notifications", "A card, a voice line and a Mac notification when a chat finishes or needs you", tog(ls("bridgeNotify") !== "0", 'data-sv="notify"')) +
       row("LifeOS", L && L.installed ? esc(L.versions.slice(0, 2).join(" · ")) : "Not installed under ~/.claude", L && L.dims && L.dims.length ? "" : "") +
       (L && L.dims && L.dims.length ? '<div class="dims">' + L.dims.map((d) => '<div class="dim"><span>' + esc(d.name) + '</span><span class="dim-bar"><span style="width:' + Math.max(0, Math.min(100, d.pct)) + '%"></span></span><span class="mono">' + d.pct + "%</span></div>").join("") + "</div>" : ""),
