@@ -330,7 +330,7 @@ function runningList() {
   return out;
 }
 function renderSide() {
-  const nav = [["home", "Home", "home"], ["inbox", "Inbox", "inbox"], ["projects", "Projects", "folder"], ["files", "Files", "file"], ["agents", "Agents & skills", "agents"]];
+  const nav = [["home", "Home", "home"], ["inbox", "Inbox", "inbox"], ["projects", "Projects", "folder"], ["files", "Files", "file"], ["agents", "Agents & skills", "agents"], ["connectors", "Connectors", "plug"]];
   const runs = runningList(), needs = S.home.needs;
   const shown = new Set(runs.map((r) => r.id).concat(needs.map((n) => n.id)));
   const on = (id) => S.view === "chat" && S.chat && S.chat.id === id;
@@ -523,7 +523,8 @@ function openMenu(kind, anchor) {
     m.innerHTML = mi('data-act="attach"', ic("clip") + lb("Add photos & files", "Drop, paste or pick") + "<kbd>⌘U</kbd>") +
       mi('data-act="mention"', ic("at") + lb("Mention a file", "Point at something in the project") + "<kbd>@</kbd>") +
       mi('data-act="skill"', ic("spark") + lb("Use a skill", S.skills.slice(0, 3).map((s) => s.label).join(", ") + "…") + "<kbd>/</kbd>") +
-      mi('data-act="instructions"', ic("book") + lb("Project instructions", "View or edit CLAUDE.md"));
+      mi('data-act="instructions"', ic("book") + lb("Project instructions", "View or edit CLAUDE.md")) +
+      mi('data-act="conn-scope"', ic("plug") + lb("Connectors", "Tools this chat can use"));
   } else if (kind === "me") {
     m.innerHTML = '<div class="menu-h">' + esc(Auth.email || userName()) + "</div>" +
       mi('data-act="settings"', ic("gear") + lb("Settings")) + mi('data-act="signin"', ic("shield") + lb("Claude account", authed() ? S.auth.email || "Signed in" : "Not signed in")) +
@@ -535,6 +536,7 @@ function openMenu(kind, anchor) {
       mi('data-act="copyid"', ic("copy") + lb("Copy session id")) +
       (c && c.computer !== "cloud" ? mi('data-act="revealfolder"', ic("folder") + lb("Open the folder", c ? short(c.path, 40) : "")) : "") +
       (c && c.id && c.computer !== "cloud" && !busy && cloudInfo().configured ? mi('data-act="movecloud"', ic("cloud") + lb("Move to cloud computer", cloudOn() ? "Continues there; keeps running with your Mac closed" : "The cloud computer is offline")) : "") +
+      mi('data-act="conn-scope"', ic("plug") + lb("Connectors", "Which connectors this chat uses")) +
       mi('data-act="tech"', ic("term") + lb(S.tech ? "Hide technical details" : "Show technical details", "Raw tool calls next to each step")) +
       (busy ? "<hr>" + mi('data-act="stop"', '<span style="color:var(--err)">' + ic("stop") + "</span>" + lb("Stop all running work")) : "");
   }

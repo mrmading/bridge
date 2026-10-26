@@ -9,6 +9,7 @@ import '../../core/nav.dart';
 import '../../core/store.dart';
 import '../../core/theme.dart';
 import '../../widgets/bridge.dart';
+import '../connectors/connectors_screen.dart';
 import '../search/search_screen.dart';
 import '../session/session_utils.dart';
 import '../settings/settings_screen.dart';
@@ -48,6 +49,7 @@ class AppDrawer extends StatelessWidget {
             _NavItem(icon: Icons.folder_outlined, label: 'Projects', on: nav.view == RootView.projects, onTap: () => nav.go(RootView.projects)),
             _NavItem(icon: Icons.description_outlined, label: 'Files', on: nav.view == RootView.files, onTap: () => nav.go(RootView.files)),
             _NavItem(icon: Icons.groups_2_outlined, label: 'Agents & skills', on: nav.view == RootView.agents, onTap: () => nav.go(RootView.agents)),
+            _NavItem(icon: Icons.extension_outlined, label: 'Connectors', onTap: () => nav.push(const ConnectorsScreen())),
             const SizedBox(height: 4),
             Expanded(child: _Chats(store: store, current: nav.view == RootView.chat ? nav.chat?.id : null)),
             _Footer(store: store),

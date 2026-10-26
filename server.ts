@@ -10,6 +10,7 @@ import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { createConnectors } from "./connectors/routes.ts";
 
 const HOME = homedir();
 const CLAUDE_DIR = join(HOME, ".claude");
@@ -184,6 +185,10 @@ const CACHE_FILE = join(DATA_DIR, "session-meta.json");
 /** user-chosen session names. Claude Code owns the transcripts, so Bridge never rewrites
  *  them; a sidecar keyed by session id survives resume, compaction and cache eviction. */
 const TITLES_FILE = join(DATA_DIR, "titles.json");
+/** Connectors: MCP servers from a catalog, any URL, or self-made; state + secrets under DATA_DIR/connectors */
+const connectors = await createConnectors({ dataDir: join(DATA_DIR, "connectors"), claudeBin: CLAUDE_BIN,
+  proxy: (path, method, body, auth) => proxyCloud(path, method, body, auth),
+  log: (kind, msg) => logRow({ ts: Date.now(), kind, msg }) });
 const customTitles = new Map<string, string>();
 try {
   const disk = JSON.parse(await Bun.file(TITLES_FILE).text());
@@ -735,6 +740,10 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   // small model otherwise imitates instead of answering
   if (provider === "qwen") args.push("--setting-sources", "project,local", "--strict-mcp-config", "--disable-slash-commands",
     "--tools", "Bash,Read,Edit,Write,Glob,Grep", "--settings", JSON.stringify({ autoMemoryEnabled: false }), "--exclude-dynamic-system-prompt-sections");
+  // Connectors (connectors/): the MCP servers this chat has switched on. Qwen's --strict-mcp-config then sees exactly these.
+  // Both flags take several values, so they go before another flag, never right before the prompt.
+  const conn = await connectors.turnConfig({ sessionId: req.resume || req.sessionId || "", cwd: guard(req.cwd || HOME) || HOME, only: Array.isArray(req.connectors) ? req.connectors.map(String) : undefined });
+  if (conn) args.push("--mcp-config", conn.file, "--allowedTools", conn.allowed.join(","));
   if (req.resume) args.push("--resume", req.resume);
   else args.push("--session-id", sessionId);
   args.push("--permission-mode", req.permissionMode || "acceptEdits");
@@ -794,6 +803,7 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
     });
     delete env.ANTHROPIC_AUTH_TOKEN;
   }
+  if (conn) Object.assign(env, conn.env);
   const usageId = req.resume || sessionId;
   const qmod = provider === "qwen" ? await loadQwen().catch(() => null) : null;
   const usageBefore: QwenUsage | null = qmod?.qwenUsage ? qmod.qwenUsage(usageId) : null;
@@ -2208,6 +2218,7 @@ async function route(req: Request): Promise<Response> {
       if (p === "/api/authconfig") return json({ required: authRequired(), supabaseUrl: AUTH_URL, supabaseKey: AUTH_KEY });
       if (p.startsWith("/api/") && authRequired() && !(await checkToken(bearer(req, q))).ok) return json({ error: "auth" }, 401);
       if (!rootsReady) { ROOTS = await readRoots(); await ensureRoots(); }
+      if (p === "/api/connectors" || p.startsWith("/api/connectors/")) return (await connectors.route(req, url))!;
       if (q.get("computer") === "cloud" && req.method === "GET" && PROXY_GET.has(p)) {
         const fwd = new URLSearchParams(q); fwd.delete("computer");
         return proxyCloud(p + "?" + fwd.toString(), "GET", undefined, req.headers.get("authorization") || "");
