@@ -779,7 +779,9 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
     node: Bun.which("node") || "node", bun: process.execPath, repo: dirname(Bun.fileURLToPath(import.meta.url)) })), "--allowedTools=mcp__browser,mcp__computer");
   if (req.resume) args.push("--resume", req.resume);
   else args.push("--session-id", sessionId);
-  args.push("--permission-mode", req.permissionMode || "acceptEdits");
+  // the cloud computer is a throwaway sandbox, so its chats run unattended (BRIDGE_SKIP_PERMISSIONS=1, set by deploy/sprite.sh); plan mode still plans
+  if (SKIP_PERMISSIONS && req.permissionMode !== "plan") args.push("--dangerously-skip-permissions", "--permission-mode", "bypassPermissions");
+  else args.push("--permission-mode", req.permissionMode || "acceptEdits");
   if (provider === "qwen") args.push("--model", "qwen");
   else if (req.model) args.push("--model", req.model);
   if (agent) args.push("--agent", agent);
@@ -1189,12 +1191,14 @@ function softWaiting(v: TailState, idle: boolean): Waiting {
     const options = choices[1].split("\n").map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim()).filter(Boolean).slice(0, 6);
     return { kind: "question", text: plain(before, 300) || "wants you to pick an option", options };
   }
+  // an offer after finished work ("Want me to…?", "Anything else?") is optional, not something waiting on the person
+  const offer = /^(?:🗣️\s*)?(?:[^:]{0,40}:\s*)?(?:want me to|do you want|would you like|shall i|should i also|anything else|need anything|happy to|let me know|or should i|i can also)\b/i;
   const tail = v.last.trim().split("\n").map((l) => l.trim()).filter(Boolean).pop() || "";
   const clean = tail.replace(/[*_`#>]/g, "").trim();
-  if (/\?$/.test(clean) && clean.length > 8 && clean.length < 300) return { kind: "question", text: clean };
+  if (/\?$/.test(clean) && clean.length > 8 && clean.length < 300) return offer.test(clean) ? null : { kind: "question", text: clean };
   // a question asked mid-reply and followed by a short sign-off still waits on the person
   const q = v.last.replace(/```[\s\S]*?```/g, " ").split("\n").map((l) => l.replace(/[*_`#>]/g, "").trim()).filter((l) => /\?$/.test(l) && l.length > 12 && l.length < 300).pop();
-  if (q && v.last.length - v.last.lastIndexOf(q.slice(-20)) < 400) return { kind: "question", text: q };
+  if (q && !offer.test(q) && v.last.length - v.last.lastIndexOf(q.slice(-20)) < 400) return { kind: "question", text: q };
   return null;
 }
 const plain = (t: string, n = 240) => String(t || "").replace(/```[\s\S]*?```/g, " ").replace(/[═━─]{2,}[^═━─\n]*[═━─]{2,}/g, " ").replace(/<[^>]+>/g, " ").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -1364,11 +1368,14 @@ async function runView(r: Run) {
   };
 }
 
+const SKIP_PERMISSIONS = process.env.BRIDGE_SKIP_PERMISSIONS === "1";
 const NEEDS_WINDOW = 72 * 3600_000;
+// chats run in temp folders (eval suites, throwaway tests) never wait on anyone
+const isScratchProject = (key: string) => /^-(?:private-)?(?:var-folders|tmp)-/.test(key);
 async function needsList(runningIds: Set<string>) {
   const out: any[] = [];
   for (const s of await recentSessions(Date.now() - NEEDS_WINDOW)) {
-    if (runningIds.has(s.id) || isDeskId(s.id, s)) continue;
+    if (runningIds.has(s.id) || isDeskId(s.id, s) || isScratchProject(s.project)) continue;
     const file = join(PROJECTS_DIR, s.project, s.id + ".jsonl");
     const t = await tailState(file, true);
     if (!t.waiting) continue;
