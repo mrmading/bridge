@@ -17,6 +17,12 @@ async function proxy(req: Request, env: Env, url: URL): Promise<Response> {
   for (const h of DROP_UP) headers.delete(h);
   headers.set("x-forwarded-for", req.headers.get("cf-connecting-ip") || "");
   headers.set("x-forwarded-host", url.host);
+  // a WebSocket (the Computer panel's /api/desktop/ws): fetch() with the Upgrade header opens it to the sprite,
+  // and the 101 response, its webSocket attached, goes back untouched. Re-wrapping it would drop the socket.
+  if ((req.headers.get("upgrade") || "").toLowerCase() === "websocket") {
+    try { return await fetch(target, { method: "GET", headers }); }
+    catch (e) { return Response.json({ error: "backend unreachable", detail: String(e) }, { status: 502 }); }
+  }
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   let up: Response;
   try {

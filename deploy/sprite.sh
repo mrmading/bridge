@@ -5,6 +5,7 @@
 #   deploy/sprite.sh [commit]     # default HEAD; code AND the Flutter build come from that commit, never the working tree
 #   deploy/sprite.sh --check      # health check only
 #   SKIP_WEB=1 deploy/sprite.sh   # leave the sprite's Flutter build as it is
+#   SKIP_DESKTOP=1 deploy/sprite.sh  # skip deploy/desktop-install.sh (the Computer panel's packages)
 #
 # Going public is a separate, deliberate step (not done here):
 #   sprite config update -o nestor-280 -s bridge --url-auth public
@@ -68,6 +69,12 @@ qwen_key="$(grep -E '^(export )?RUNPOD_QWEN_API_KEY=' "$SECRETS" | tail -1 | sed
   [[ -n "$qwen_key" ]] && printf 'RUNPOD_QWEN_API_KEY=%q\n' "$qwen_key"
 } | "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -c 'umask 077; cat > ~/.bridge.env.new && chmod 600 ~/.bridge.env.new && mv ~/.bridge.env.new ~/.bridge.env && echo "env: $(cut -d= -f1 ~/.bridge.env | tr "\n" " ")($(stat -c %a ~/.bridge.env))"'
 unset qwen_key
+
+# 3b. the Computer panel's screen: packages for desktop.ts (Xvfb, openbox, x11vnc, xdotool, Chrome, Playwright MCP).
+#     Idempotent and instant once installed; nothing starts until a viewer or a turn needs it.
+if [[ "${SKIP_DESKTOP:-0}" != 1 ]] && git -C "$repo" cat-file -e "$commit:deploy/desktop-install.sh" 2>/dev/null; then
+  git -C "$repo" show "$commit:deploy/desktop-install.sh" | "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -s
+fi
 
 # 4. run.sh (the commit's own copy) that sources the env, then restart
 git -C "$repo" show "$commit:deploy/sprite-run.sh" | "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -c 'cat > ~/bridge/run.sh && chmod 755 ~/bridge/run.sh'

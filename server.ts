@@ -10,6 +10,7 @@ import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { Desktop, desktopConfig, mcpConfig, isDesktopTool, DESKTOP_PROTOCOL } from "./desktop.ts";
 import { createConnectors } from "./connectors/routes.ts";
 
 const HOME = homedir();
@@ -698,6 +699,10 @@ const live = new Map<string, ChildProcess>();
 /** a Bridge turn in flight. `key` is the transcript folder; `sid` is set when the CLI answers under another id */
 type Run = { id: string; key: string; sid?: string; cwd: string; model?: string; agent?: string; provider: string; started: number; prompt: string };
 const running = new Map<string, Run>();
+/** the cloud computer's screen (desktop.ts): on a Linux host set up by deploy/desktop-install.sh, started on demand,
+ *  stopped when idle. A run that used it (`desk`) keeps it awake. The key guards the loopback /desktop/ routes. */
+const desk = new Desktop(desktopConfig(), () => [...running.values()].some((r: any) => r.desk), (m) => logRow({ ts: Date.now(), kind: "desktop", msg: m }));
+const DESK_KEY = randomUUID();
 
 /** everything Bridge does, newest last — the Activity page reads this */
 type LogRow = { ts: number; kind: string; msg: string; outcome?: string; session?: string; cwd?: string; cost?: number; ms?: number; model?: string };
@@ -733,8 +738,9 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
     "   (subagent_type: \"" + agent + "\"), give it the request in full with the context it needs, and answer",
     "   from what it returns. Handle the turn yourself only if that agent plainly cannot do this work.",
   ].join("\n") : BRIDGE_PROTOCOL;
+  const screen = provider === "claude" && desk.supported;
   const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-    ...(provider === "qwen" ? ["--system-prompt", await qwenSystemPrompt(guard(req.cwd || HOME) || HOME, String(req.prompt || ""))] : ["--append-system-prompt", protocol])];
+    ...(provider === "qwen" ? ["--system-prompt", await qwenSystemPrompt(guard(req.cwd || HOME) || HOME, String(req.prompt || ""))] : ["--append-system-prompt", protocol + (screen ? DESKTOP_PROTOCOL : "")])];
   // Qwen gets a slim session: no user CLAUDE.md, memory, hooks, agents or skills, no MCP servers.
   // Qwen gets the core tools only (no Agent, ToolSearch or deferred catalog) and no auto-memory instructions, which the
   // small model otherwise imitates instead of answering
@@ -744,6 +750,9 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   // Both flags take several values, so they go before another flag, never right before the prompt.
   const conn = await connectors.turnConfig({ sessionId: req.resume || req.sessionId || "", cwd: guard(req.cwd || HOME) || HOME, only: Array.isArray(req.connectors) ? req.connectors.map(String) : undefined });
   if (conn) args.push("--mcp-config", conn.file, "--allowedTools", conn.allowed.join(","));
+  // the screen: Playwright MCP on the visible Chrome + the computer tools (desktop.ts); the `=` form keeps each flag to one value
+  if (screen) args.push("--mcp-config=" + JSON.stringify(mcpConfig(desk.cfg, { base: "http://127.0.0.1:" + PORT + "/desktop/" + DESK_KEY,
+    node: Bun.which("node") || "node", bun: process.execPath, repo: dirname(Bun.fileURLToPath(import.meta.url)) })), "--allowedTools=mcp__browser,mcp__computer");
   if (req.resume) args.push("--resume", req.resume);
   else args.push("--session-id", sessionId);
   args.push("--permission-mode", req.permissionMode || "acceptEdits");
@@ -795,6 +804,7 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   const cwd = guard(req.cwd || HOME) || HOME;
   const stdio = inputEnvelope ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"];
   const env: Record<string, string | undefined> = { ...process.env, ...settingsEnv, FORCE_COLOR: "0" };
+  if (desk.supported) env.DISPLAY = desk.cfg.display;   // a headed program started from Bash lands on the screen the user watches
   if (provider === "qwen") {
     Object.assign(env, {
       ANTHROPIC_BASE_URL: "http://127.0.0.1:" + PORT + "/qwen", ANTHROPIC_API_KEY: QWEN_KEY,
@@ -835,6 +845,7 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
       try {
         const parsed = JSON.parse(line);
         if (parsed?.type === "system" && parsed.subtype === "init" && parsed.session_id && parsed.session_id !== key) run.sid = parsed.session_id;
+        if (parsed?.type === "assistant" && Array.isArray(parsed.message?.content) && parsed.message.content.some((b: any) => b?.type === "tool_use" && isDesktopTool(b.name))) { (run as any).desk = true; desk.touch(); }
         if (parsed?.type === "result") {
           outcome = { error: !!parsed.is_error, text: String(parsed.result || "") };
           // the CLI prices an unknown model at made-up rates; a Qwen turn reports what its RunPod jobs really used
@@ -2167,9 +2178,13 @@ function corsHeaders(req: Request): Record<string, string> {
 const server = Bun.serve({
   port: PORT,
   idleTimeout: 255,
+  // WebSockets: only the Computer panel's screen (/api/desktop/ws) for now
+  websocket: { open: (ws: any) => desk.ws.open(ws), message: (ws: any, m) => desk.ws.message(ws, m), close: (ws: any) => desk.ws.close(ws) },
   async fetch(req, srv) {
     const u = new URL(req.url);
     if (u.pathname === "/qwen" || u.pathname.startsWith("/qwen/")) return qwenRoute(req, u, srv.requestIP(req)?.address || "");
+    if (u.pathname.startsWith("/desktop/")) return desktopLocal(req, u, srv.requestIP(req)?.address || "");
+    if (u.pathname === "/api/desktop/ws") return desktopSocket(req, u, srv);
     const res = await route(req);
     if (CORS) for (const [k, v] of Object.entries(corsHeaders(req))) res.headers.set(k, v);
     return res;
@@ -2200,6 +2215,38 @@ async function qwenRoute(req: Request, u: URL, ip: string): Promise<Response> {
   try { mod = await loadQwen(); } catch (e) { return json({ type: "error", error: { type: "api_error", message: "Qwen adapter missing: " + String(e) } }, 500); }
   return mod.handleQwen(req, u.pathname.replace(/^\/qwen\/?/, "") + u.search);
 }
+/* ── the Computer panel (desktop.ts) ── */
+/** /api/desktop/ws: the VNC stream, behind the same gate as every /api route (?access_token=, a WebSocket has no headers) */
+async function desktopSocket(req: Request, u: URL, srv: any): Promise<Response | undefined> {
+  if (authRequired() && !(await checkToken(bearer(req, u.searchParams))).ok) return json({ error: "auth" }, 401);
+  if (!desk.supported) return json({ error: "this computer has no screen" }, 404);
+  if ((req.headers.get("upgrade") || "").toLowerCase() !== "websocket") return json({ error: "websocket only" }, 426);
+  return desk.upgrade(req, srv) ? undefined : json({ error: "upgrade failed" }, 400);
+}
+async function desktopApi(req: Request, p: string): Promise<Response> {
+  if (p === "/api/desktop/status") return json(desk.status());
+  if (req.method !== "POST") return json({ error: "not found" }, 404);
+  if (!desk.supported) return json({ ...desk.status(), error: "this computer has no screen" }, 404);
+  if (p === "/api/desktop/start") {
+    try { await desk.ensure(true); } catch (e: any) { return json({ ...desk.status(), error: String(e?.message || e) }, 500); }
+    return json(desk.status());
+  }
+  if (p === "/api/desktop/stop") { desk.stop("stopped from Bridge"); return json(desk.status()); }
+  if (p === "/api/desktop/control") { const b: any = await req.json().catch(() => ({})); return json(desk.setControl(!!b.on)); }
+  return json({ error: "not found" }, 404);
+}
+/** /desktop/<key>/…: loopback only, for this boot's turns. `ensure` (the computer tools) and `cdp/json/version`, which
+ *  Playwright MCP reads as its --cdp-endpoint: answering it starts the desktop and Chrome, so the browser is lazy. */
+async function desktopLocal(req: Request, u: URL, ip: string): Promise<Response> {
+  const [, , key, ...rest] = u.pathname.split("/");
+  if (!/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(ip) || key !== DESK_KEY) return json({ error: "not found" }, 404);
+  const sub = rest.join("/").replace(/\/+$/, "");
+  try {
+    if (sub === "ensure" && req.method === "POST") { await desk.ensure(false); return json(desk.status()); }
+    if (sub === "cdp/json/version") { const r = await desk.cdpVersion(); return new Response(r.body, { status: r.status, headers: { "content-type": "application/json" } }); }
+  } catch (e: any) { return json({ error: String(e?.message || e) }, 503); }
+  return json({ error: "not found" }, 404);
+}
 async function qwenAvailable() { return !!((process.env.RUNPOD_QWEN_API_KEY || (await dotenvKey("RUNPOD_QWEN_API_KEY"))) && existsSync(join(dirname(Bun.fileURLToPath(import.meta.url)), "providers", "qwen.ts"))); }
 /** the CLI's version, asked once every ten minutes rather than on every page load */
 let cliVer: { at: number; v: string } | null = null;
@@ -2218,6 +2265,7 @@ async function route(req: Request): Promise<Response> {
       if (p === "/api/authconfig") return json({ required: authRequired(), supabaseUrl: AUTH_URL, supabaseKey: AUTH_KEY });
       if (p.startsWith("/api/") && authRequired() && !(await checkToken(bearer(req, q))).ok) return json({ error: "auth" }, 401);
       if (!rootsReady) { ROOTS = await readRoots(); await ensureRoots(); }
+      if (p.startsWith("/api/desktop/")) return desktopApi(req, p);
       if (p === "/api/connectors" || p.startsWith("/api/connectors/")) return (await connectors.route(req, url))!;
       if (q.get("computer") === "cloud" && req.method === "GET" && PROXY_GET.has(p)) {
         const fwd = new URLSearchParams(q); fwd.delete("computer");
