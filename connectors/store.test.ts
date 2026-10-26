@@ -24,7 +24,7 @@ describe("secrets", () => {
     await store.setToken(c.id, "tok_fixture_SECRETSECRET_1234");
     const pub = JSON.stringify(store.publicList());
     expect(pub).not.toContain("SECRETSECRET");
-    expect(pub).toContain("gith…1234");
+    expect(pub).toContain("tok_…1234");
     const st = statSync(join(dir, "secrets.json"));
     expect(st.mode & 0o777).toBe(0o600);
     expect(readFileSync(join(dir, "connectors.json"), "utf8")).not.toContain("SECRET");
@@ -65,7 +65,7 @@ describe("adding", () => {
 describe("turn config", () => {
   test("enabled connectors become --mcp-config entries whose secrets are env references", async () => {
     const gh = await store.add({ catalogId: "github" });
-    await store.setToken(gh.id, "github_pat_TOPSECRET99");
+    await store.setToken(gh.id, "tok_fixture_TOPSECRET99");
     const dw = await store.add({ catalogId: "deepwiki" });
     const t = await store.turnConfig({ sessionId: "s1", cwd: "/w" });
     expect(t).not.toBeNull();
@@ -74,7 +74,7 @@ describe("turn config", () => {
     const cfg = JSON.parse(file).mcpServers;
     expect(cfg.github).toEqual({ type: "http", url: "https://api.githubcopilot.com/mcp/", headers: { Authorization: "Bearer ${BRIDGE_CONN_GITHUB}" } });
     expect(cfg.deepwiki).toEqual({ type: "http", url: "https://mcp.deepwiki.com/mcp" });
-    expect(t!.env.BRIDGE_CONN_GITHUB).toBe("github_pat_TOPSECRET99");
+    expect(t!.env.BRIDGE_CONN_GITHUB).toBe("tok_fixture_TOPSECRET99");
     expect(t!.allowed).toEqual(["mcp__github", "mcp__deepwiki"]);
     expect(dw.enabled).toBe(true);
   });
@@ -86,10 +86,10 @@ describe("turn config", () => {
 
   test("a token the server refused is left out until it is replaced", async () => {
     const gh = await store.add({ catalogId: "github" });
-    await store.setToken(gh.id, "github_pat_REFUSED000000");
+    await store.setToken(gh.id, "tok_fixture_REFUSED000000");
     await store.update(gh.id, { status: "needs-auth" });
     expect(await store.turnConfig({ sessionId: "s", cwd: "/w" })).toBeNull();
-    await store.setToken(gh.id, "github_pat_NEWONE00000000");
+    await store.setToken(gh.id, "tok_fixture_NEWONE00000000");
     expect((await store.turnConfig({ sessionId: "s", cwd: "/w" }))!.names).toEqual(["github"]);
   });
 
