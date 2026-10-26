@@ -21,10 +21,10 @@ describe("secrets", () => {
 
   test("tokens live in secrets.json, mode 600, and never in connectors.json or the public view", async () => {
     const c = await store.add({ catalogId: "github" });
-    await store.setToken(c.id, "tok_fixture_SECRETSECRETSECRET1234");
+    await store.setToken(c.id, "tok_fixture_SECRETSECRET_1234");
     const pub = JSON.stringify(store.publicList());
     expect(pub).not.toContain("SECRETSECRET");
-    expect(pub).toContain("gith…1234");
+    expect(pub).toContain("tok_…1234");
     const st = statSync(join(dir, "secrets.json"));
     expect(st.mode & 0o777).toBe(0o600);
     expect(readFileSync(join(dir, "connectors.json"), "utf8")).not.toContain("SECRET");
