@@ -767,7 +767,9 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   // the one source above both. 64k is the model's window (num_ctx), so the CLI compacts before the adapter trims.
   if (provider === "qwen") args.push("--settings", JSON.stringify({ ...(slimQwen ? { autoMemoryEnabled: false } : {}), env: {
     ANTHROPIC_BASE_URL: "http://127.0.0.1:" + PORT + "/qwen", ANTHROPIC_SMALL_FAST_MODEL: "qwen", CLAUDE_CODE_MAX_CONTEXT_TOKENS: "65536",
-    CLAUDE_CODE_SUBAGENT_MODEL: "qwen", API_TIMEOUT_MS: "1800000", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" } }));
+    CLAUDE_CODE_SUBAGENT_MODEL: "qwen", API_TIMEOUT_MS: "1800000", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    // subagents run in the foreground: a backgrounded one let Qwen end the turn with "the agent is still running"
+    CLAUDE_CODE_FORK_SUBAGENT: "0", CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" } }));
   // Connectors (connectors/): the MCP servers this chat has switched on (slim Qwen's --strict-mcp-config sees exactly these).
   // Both flags take several values, so they go before another flag, never right before the prompt.
   const conn = await connectors.turnConfig({ sessionId: req.resume || req.sessionId || "", cwd: guard(req.cwd || HOME) || HOME, only: Array.isArray(req.connectors) ? req.connectors.map(String) : undefined });
