@@ -110,6 +110,7 @@ function blockText(content: unknown): string {
       if (b?.type === "text" && typeof b.text === "string") return b.text;
       if (b?.type === "image") return "[image omitted: this model cannot see images]";
       if (b?.type === "document") return "[document omitted: this model cannot read attachments]";
+      if (b?.type === "tool_reference") return `Loaded tool ${b.tool_name}: it can be called now.`;
       return typeof b?.text === "string" ? b.text : "";
     })
     .filter(Boolean)
@@ -215,10 +216,33 @@ function profiled(name: string, description: string, schema: Json, on: boolean) 
   return { name, description: p.description, parameters: { type: "object", properties, required, additionalProperties: false } };
 }
 
+/**
+ * Deferred tools (defer_loading) stay hidden until ToolSearch loads them; Anthropic's server expands the
+ * load itself, so here a deferred tool is offered once a tool result references it, as a tool_reference
+ * block or as the <function>{…"name": "X"…}</function> text ToolSearch prints.
+ */
+function loadedTools(body: Json): Set<string> {
+  const names = new Set<string>();
+  const scan = (c: unknown) => {
+    if (typeof c === "string") {
+      for (const m of c.matchAll(/<function>[\s\S]*?"name"\s*:\s*"([^"]+)"/g)) names.add(m[1]);
+    } else if (Array.isArray(c)) {
+      for (const b of c as Json[]) {
+        if (b?.type === "tool_reference" && b.tool_name) names.add(b.tool_name);
+        else if (b?.type === "tool_result") scan(b.content);
+        else if (typeof b?.text === "string") scan(b.text);
+      }
+    }
+  };
+  for (const m of body.messages || []) if (m.role === "user") scan(m.content);
+  return names;
+}
+
 function convertTools(body: Json, toolProfile = false): NonNullable<OllamaPayload["tools"]> {
   if (body.tool_choice?.type === "none") return [];
+  const loaded = (body.tools || []).some((t: Json) => t?.defer_loading) ? loadedTools(body) : new Set<string>();
   return (body.tools || [])
-    .filter((t: Json) => t?.input_schema && !t.defer_loading)
+    .filter((t: Json) => t?.input_schema && (!t.defer_loading || loaded.has(t.name)))
     .map((t: Json) => ({ type: "function" as const, function: profiled(t.name, t.description || "", t.input_schema, toolProfile) }));
 }
 

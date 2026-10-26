@@ -16,7 +16,7 @@ export function writeReport(): string {
 
   const board = runs
     .map((r) => `<tr><td><b>${esc(r.label)}</b><div class="dim">${esc(r.notes)}</div></td><td>${esc(r.provider)}/${esc(r.model)}</td>
-      <td class="score ${parseInt(r.core ?? r.passed) >= 10 ? "ok" : "bad"}">${esc(r.core ?? `${r.passed}/${r.total}`)}</td><td>${esc(r.context ?? "—")}</td>
+      <td class="score ${parseInt(r.core ?? r.passed) >= 10 ? "ok" : "bad"}">${esc(r.core ?? `${r.passed}/${r.total}`)}</td><td>${esc(r.context ?? "—")}</td><td>${esc(r.parity ?? "—")}</td>
       <td>${secs(r.medianMs)}${r.medianTtftMs ? `<div class=dim>ttft ${secs(r.medianTtftMs)}</div>` : ""}</td><td>${r.turnErrors ?? "—"}${r.infra ? `<div class=dim>${r.infra} infra</div>` : ""}</td>
       <td>${r.provider === "qwen" ? `${r.jobs} jobs · ${secs(r.gpuMs)} GPU` : "—"}</td></tr>`)
     .join("");
@@ -51,7 +51,7 @@ details{background:var(--card);border:1px solid var(--line);border-radius:8px;ma
 .task{border-top:1px solid var(--line);padding:8px 0}.head{font-weight:600}.q{margin-top:4px}.tool{font:12px ui-monospace,monospace;color:var(--dim)}
 pre{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;margin:4px 0;font:12px/1.45 ui-monospace,monospace}
 </style></head><body><h1>Qwen vs Claude in Bridge</h1><div class="dim">12 Bridge tasks via /api/chat · deterministic checks + haiku judge · pass = check ok, no junk, judged correct and sensible · generated ${new Date().toISOString()}</div>
-<h2>Scoreboard</h2><div class="wrap"><table><tr><th>Run</th><th>Provider</th><th>Core (≥10/12)</th><th>Context</th><th>Median task</th><th>Turn errors</th><th>RunPod</th></tr>${board}</table></div>
+<h2>Scoreboard</h2><div class="wrap"><table><tr><th>Run</th><th>Provider</th><th>Core (≥10/12)</th><th>Context</th><th>Parity</th><th>Median task</th><th>Turn errors</th><th>RunPod</th></tr>${board}</table></div>
 <h2>Task × run</h2><div class="wrap"><table><tr><th>Task</th>${runs.map((r) => `<th>${esc(r.label)}</th>`).join("")}</tr>${matrix}</table></div>
 <h2>Answers</h2>${details}</body></html>`;
   const out = join(HERE, "report.html");
