@@ -42,6 +42,7 @@ const I = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
   side: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
   panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
+  screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
@@ -372,7 +373,8 @@ function renderTop() {
   if (S.view === "chat" && c && (c.id || c.msgs.length)) {
     title = projIco(projectName(c.path), 22) + '<span class="t" data-act="rename" title="Double-click to rename">' + esc(chatTitle(c)) + "</span>";
     right = '<span class="pill hide-sm" title="' + esc(c.path) + '">' + hostLabel(c.computer) + "</span>" +
-      '<button class="pill ' + (S.panel ? "on" : "") + '" data-act="panel" title="Files & progress (⌘I)">' + ic("panel") + '<span class="hide-sm">Files &amp; progress</span></button>' +
+      (S.deskAvail ? '<button class="pill ' + (S.desk && S.panel ? "on" : "") + '" data-act="desk" title="Watch the computer the agent uses">' + ic("screen") + '<span class="hide-sm">Computer</span></button>' : "") +
+      '<button class="pill ' + (S.panel && !S.desk ? "on" : "") + '" data-act="panel" title="Files & progress (⌘I)">' + ic("panel") + '<span class="hide-sm">Files &amp; progress</span></button>' +
       '<button class="icon-btn" data-menu="chatmenu" title="More">' + ic("more") + "</button>";
   } else if (S.view === "chat") title = '<span class="t">New chat</span>';
   else if (S.view === "doc" && S.doc) title = '<span class="t">' + esc(S.doc.title) + "</span>";
@@ -860,6 +862,31 @@ async function loadArt(c, a, el) {
     el.innerHTML = '<iframe class="artframe pdf" src="' + a.blob + '"></iframe>';
   } else el.innerHTML = '<div class="artimg"><img alt="' + esc(base(a.path)) + '" src="' + esc(Auth.withToken(artUrl(c, a.path, "&v=" + Date.now()))) + '"></div>';
 }
+/* ── the Computer panel: the cloud computer's screen, live (public/computer.html in a frame, noVNC inside).
+ * It opens by itself when a turn starts using the browser or the screen tools; closing it keeps it shut for that turn. ── */
+const isDeskTool = (n) => /^mcp__(browser|computer)__/.test(String(n || ""));
+function openDesk(c) {
+  if (!c) return;
+  S.desk = { chat: c }; S.art = null; S.panel = true; c.deskShut = false;
+  render();
+}
+function autoDesk(c) {
+  S.deskAvail = true;
+  if (S.chat !== c || S.view !== "chat" || c.deskShut || (S.desk && S.panel)) return;
+  openDesk(c);
+}
+function closeDesk() {
+  if (S.chat) S.chat.deskShut = true;
+  S.desk = null; S.panel = false;
+  render();
+}
+function paintDesk(box) {
+  if (box.dataset.desk === "1" && $("#deskFrame", box)) return;   // the frame holds a live connection: never repaint it
+  box.dataset.desk = "1";
+  box.innerHTML = '<div class="arth"><span class="desk-ic">' + ic("screen") + '</span><div class="l"><b>Computer</b><span>' + esc((S.boot && S.boot.host && S.boot.host.name) || "Cloud computer") + ' · live screen</span></div>' +
+    '<button class="icon-btn" data-act="deskpop" title="Open in a new tab">' + ic("ext") + '</button><button class="icon-btn" data-act="deskclose" title="Close">' + ic("x") + "</button></div>" +
+    '<div class="artb deskb"><iframe id="deskFrame" class="artframe deskframe" src="/computer.html" allow="clipboard-read; clipboard-write" title="The computer\'s screen"></iframe></div>';
+}
 function fileCard(p, sub) {
   const e = extOf(p);
   return '<button class="fcard" data-file="' + esc(p) + '"><span class="fi" style="background:' + extColor(e) + '">' + esc((e || "file").toUpperCase().slice(0, 4)) + '</span><span class="l"><b>' + esc(base(p)) + "</b><span>" + esc(sub || short(p, 50)) + "</span></span>" + ic("ext") + "</button>";
@@ -881,7 +908,7 @@ function renderChatView() {
       '<div class="suggest">' + projs.map((p) => '<button class="chipx" data-set="proj:' + esc(p.path) + '">' + esc(p.name) + "</button>").join("") + "</div></div></div></div>";
     return;
   }
-  host.innerHTML = '<div class="chatgrid ' + (S.panel ? "side-open" : "") + (S.panel && S.art ? " art" : "") + '"><div class="chatcol">' +
+  host.innerHTML = '<div class="chatgrid ' + (S.panel ? "side-open" : "") + (S.panel && (S.art || S.desk) ? " art" : "") + '"><div class="chatcol">' +
     '<div class="msgs view" id="msgs"><div class="wrap" id="turns">' + (c.loading || (!c.loaded && !c.msgs.length) ? '<div class="empty-big"><span class="spin-s" style="display:inline-block"></span></div>' : "") + "</div></div>" +
     '<div class="chat-composer"><div id="tray"></div>' + composer(chatBusy(c) ? "Add to the work, or ask anything meanwhile…" : "Reply…", { chat: true }) + "</div></div>" +
     '<aside class="cpanel" id="cpanel"></aside></div>';
@@ -977,7 +1004,10 @@ function paintPanel() {
   if (!box || !S.chat) return;
   const c = S.chat;
   if (S.art && S.art.chat !== c) S.art = null;
-  box.classList.toggle("art", !!S.art);
+  if (S.desk && S.desk.chat !== c) S.desk = null;
+  box.classList.toggle("art", !!S.art || !!S.desk);
+  if (S.desk) return paintDesk(box);
+  delete box.dataset.desk;
   if (S.art) return paintArt(box, c);
   delete box.dataset.artsig;
   const tabs = [["files", "Files"], ["progress", "Progress"], ["details", "Details"]];
@@ -1096,6 +1126,7 @@ async function runTurn(c, msg) {
   function onEvent(p) {
     if (p.t === "start") {
       const fresh = !c.id;
+      c.deskShut = false;
       c.live = c.live || p.sessionId; c.id = c.id || p.sessionId; c.key = c.key || projKey(p.cwd || c.path);
       if (p.cwd) c.path = p.cwd;
       S.chats.set(c.id, c);
@@ -1117,6 +1148,7 @@ async function runTurn(c, msg) {
         const cb = ev.content_block || {};
         if (cb.type === "text") blocks[ev.index] = push({ kind: side ? "agent_text" : "assistant", text: "", ts: Date.now(), live: true, model: c.model });
         else if (cb.type === "thinking") blocks[ev.index] = push({ kind: "thinking", text: "", ts: Date.now(), live: true, side });
+        else if (cb.type === "tool_use" && isDeskTool(cb.name)) autoDesk(c);
       } else if (ev.type === "content_block_delta") {
         const idx = blocks[ev.index]; if (idx === undefined) return;
         const m = c.msgs[idx];
@@ -1136,6 +1168,7 @@ async function runTurn(c, msg) {
         if (x.type === "tool_use") {
           if (x.name === "Write" && x.input && /\/Plans\/[^/]+\.md$/.test(String(x.input.file_path || ""))) planFile = x.input.file_path;
           c.step = stepText(x.name, x.input, false);
+          if (isDeskTool(x.name)) autoDesk(c);
           push({ kind: "tool", name: x.name, input: x.input, id: x.id, ts: Date.now(), side, result: null });
         } else if (x.type === "text" && !streamed && x.text && x.text.trim()) push({ kind: side ? "agent_text" : "assistant", text: x.text, ts: Date.now(), model: d.message.model });
       });
@@ -1390,7 +1423,10 @@ function act(a, t, e) {
   else if (a === "palette") openPalette();
   else if (a === "theme") toggleTheme();
   else if (a === "settings") openSettings();
-  else if (a === "panel") { S.panel = !S.panel; if (!S.panel) S.art = null; render(); }
+  else if (a === "panel") { if (S.desk) { S.desk = null; S.panel = true; } else S.panel = !S.panel; if (!S.panel) S.art = null; render(); }
+  else if (a === "desk") { if (S.desk && S.panel) closeDesk(); else openDesk(S.chat); }
+  else if (a === "deskclose") closeDesk();
+  else if (a === "deskpop") window.open("/computer.html#t=" + encodeURIComponent(Auth.token || ""), "_blank", "noopener");
   else if (a === "artclose") { S.art = null; S.panel = false; render(); }
   else if (a === "artback") { S.pfile = S.art && S.art.path; S.art = null; S.ptab = "files"; render(); }
   else if (a === "artcopy") { if (S.art && S.art.text != null) { navigator.clipboard.writeText(S.art.text); toast("Copied"); } }
@@ -1521,6 +1557,7 @@ async function boot() {
   const q = new URLSearchParams(location.search);
   if (q.get("v")) S.view = q.get("v");
   refreshComputers();
+  getJ("/api/desktop/status").then((d) => { if (d && d.available) { S.deskAvail = true; renderTop(); } }).catch(() => {});
   render();
   window._bridgeBooted();
   if (!authed()) openSignin();
