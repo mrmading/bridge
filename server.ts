@@ -2071,6 +2071,12 @@ const STT_CANDIDATES: [string, string][] = (() => {
 async function pyHas(py: string, mod: string): Promise<boolean> {
   try { const p = Bun.spawn([py, "-c", "import " + mod], { stdout: "ignore", stderr: "ignore" }); return (await p.exited) === 0; } catch { return false; }
 }
+/** Kokoro on a CPU (Linux sprite): kokoro-onnx importable plus the model files deploy/voice-install.sh fetches */
+const KOKORO_DIR = (process.env.BRIDGE_TTS_KOKORO_DIR || join(HOME, ".local", "share", "kokoro")).replace(/^~(?=\/|$)/, HOME);
+async function kokoroOnnxReady(py: string): Promise<boolean> {
+  if (!existsSync(join(KOKORO_DIR, "kokoro-v1.0.onnx")) || !existsSync(join(KOKORO_DIR, "voices-v1.0.bin"))) return false;
+  return pyHas(py, "kokoro_onnx");
+}
 /** which engines this machine can run, without starting the worker; cached two minutes */
 async function voiceProbe(): Promise<VoiceEngines> {
   if (voice) return { py: voice.py, stt: voice.stt, tts: voice.tts };
@@ -2080,12 +2086,12 @@ async function voiceProbe(): Promise<VoiceEngines> {
     if (py.includes("/") && !existsSync(py)) continue;
     let stt = "none";
     for (const [mod, name] of STT_CANDIDATES) { if (await pyHas(py, mod)) { stt = name; break; } }
-    if (stt === "none") continue;
-    const tts = process.env.BRIDGE_TTS_ENGINE === "none" ? "none" : (await pyHas(py, "mlx_audio")) ? "kokoro" : "none";
+    const tts = process.env.BRIDGE_TTS_ENGINE === "none" ? "none" : (await pyHas(py, "mlx_audio")) || (await kokoroOnnxReady(py)) ? "kokoro" : "none";
+    if (stt === "none" && tts === "none") continue;   // a speak-only worker is still worth running
     v = { py, stt, tts };
     break;
   }
-  if (v.stt === "none" && Bun.which("whisper")) v = { py: "", stt: "whisper-cli", tts: "none" };
+  if (v.stt === "none" && Bun.which("whisper")) v = { ...v, stt: "whisper-cli" };
   voiceProbeCache = { at: Date.now(), v };
   return v;
 }
@@ -2146,7 +2152,7 @@ async function localSpeech(text: string, speed: number): Promise<{ bytes?: Uint8
 async function transcribe(path: string): Promise<{ text?: string; error?: string; ms?: number }> {
   const t0 = Date.now();
   const e = await voiceProbe();
-  if (e.py) {
+  if (e.py && e.stt !== "none" && e.stt !== "whisper-cli") {
     const r = await voiceAsk({ op: "stt", path }, 90_000);
     return { text: r.text, error: r.error, ms: Date.now() - t0 };
   }

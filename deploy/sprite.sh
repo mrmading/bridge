@@ -6,6 +6,7 @@
 #   deploy/sprite.sh --check      # health check only
 #   SKIP_WEB=1 deploy/sprite.sh   # leave the sprite's Flutter build as it is
 #   SKIP_DESKTOP=1 deploy/sprite.sh  # skip deploy/desktop-install.sh (the Computer panel's packages)
+#   SKIP_VOICE=1 deploy/sprite.sh    # skip deploy/voice-install.sh (Kokoro TTS for /api/tts)
 #
 # Going public is a separate, deliberate step (not done here):
 #   sprite config update -o nestor-280 -s bridge --url-auth public
@@ -75,6 +76,11 @@ unset qwen_key
 #     Idempotent and instant once installed; nothing starts until a viewer or a turn needs it.
 if [[ "${SKIP_DESKTOP:-0}" != 1 ]] && git -C "$repo" cat-file -e "$commit:deploy/desktop-install.sh" 2>/dev/null; then
   git -C "$repo" show "$commit:deploy/desktop-install.sh" | "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -s
+fi
+
+# 3c. Paquito's voice: kokoro-onnx + the Kokoro model files, so /api/tts speaks on Linux. Idempotent.
+if [[ "${SKIP_VOICE:-0}" != 1 ]] && git -C "$repo" cat-file -e "$commit:deploy/voice-install.sh" 2>/dev/null; then
+  git -C "$repo" show "$commit:deploy/voice-install.sh" | "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -s
 fi
 
 # 4. run.sh (the commit's own copy) that sources the env, then restart
