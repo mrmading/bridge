@@ -323,6 +323,8 @@ class BridgeApi {
     try {
       final r = await _client.get(_u('/api/authconfig')).timeout(const Duration(seconds: 15));
       if (r.statusCode == 404) return AuthConfig.open;
+      // Still booting (a proxy's 502/503 page): not an answer about sign-in.
+      if (r.statusCode >= 500) throw ApiException('HTTP ${r.statusCode}', status: r.statusCode);
       return AuthConfig.fromJson(_m(jsonDecode(utf8.decode(r.bodyBytes))));
     } on FormatException {
       return AuthConfig.open;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -14,12 +16,14 @@ import 'features/onboarding/onboarding_screen.dart';
 import 'features/projects/projects_screen.dart';
 import 'features/session/session_screen.dart';
 import 'features/session/session_utils.dart';
+import 'features/starting/starting_screen.dart';
 import 'features/shell/drawer.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await AppStore.instance.init();
+  await AppStore.instance.load();
   runApp(const BridgeApp());
+  unawaited(AppStore.instance.connectSaved());
 }
 
 class BridgeApp extends StatelessWidget {
@@ -36,8 +40,11 @@ class BridgeApp extends StatelessWidget {
         theme: buildTheme(Brightness.light),
         darkTheme: buildTheme(Brightness.dark),
         themeMode: store.themeMode,
+        // Before the first answer from the server (boot == null); later reconnects keep the Shell.
         home: store.conn == ConnState.login
             ? const LoginScreen()
+            : store.conn == ConnState.connecting && store.boot == null
+            ? const StartingScreen()
             : (store.hasServer && store.conn != ConnState.failed ? const Shell() : const OnboardingScreen()),
       ),
     );
