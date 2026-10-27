@@ -15,6 +15,7 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api.dart';
+import '../../core/cues.dart';
 import '../../core/models.dart';
 import '../../core/store.dart';
 import '../../core/nav.dart';
@@ -98,6 +99,18 @@ class _TalkScreenState extends State<TalkScreen> {
     super.initState();
     store.addListener(_onStore);
     _ftts.awaitSpeakCompletion(true).catchError((_) => null);
+    unawaited(VoiceCues.configureAudio());
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      // The default session is muted by the silent switch and left on the earpiece after listening.
+      _ftts.setSharedInstance(true).catchError((_) => null);
+      _ftts
+          .setIosAudioCategory(
+            IosTextToSpeechAudioCategory.playAndRecord,
+            [IosTextToSpeechAudioCategoryOptions.defaultToSpeaker, IosTextToSpeechAudioCategoryOptions.allowBluetooth, IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP, IosTextToSpeechAudioCategoryOptions.mixWithOthers],
+            IosTextToSpeechAudioMode.voicePrompt,
+          )
+          .catchError((_) => null);
+    }
     _onStore();
   }
 
@@ -111,6 +124,7 @@ class _TalkScreenState extends State<TalkScreen> {
     _playerDone?.cancel();
     _playerState?.cancel();
     _player?.dispose();
+    VoiceCues.instance.stop();
     _ftts.stop().catchError((_) => null);
     _stt.cancel().catchError((_) => null);
     _input.dispose();
@@ -243,6 +257,7 @@ class _TalkScreenState extends State<TalkScreen> {
       case 'result':
         _closeLive();
         _pending = false;
+        VoiceCues.instance.stop(quiet: false);
         final reply = _turnReply;
         _turnReply = null;
         // Only speak turns that just finished, not ones replayed after a reconnect.
@@ -333,12 +348,15 @@ class _TalkScreenState extends State<TalkScreen> {
       _daCaption = '';
       _pending = true;
     });
+    // Instant, local: "Sure, let me process this." now, a "still on it" now and then until the reply speaks.
+    if (store.speakReplies && !_textMode) VoiceCues.instance.sent();
     try {
       final r = await store.api.daSend(text);
       if (!mounted) return;
       if (r == 'queued') {
         toast(context, 'Queued: it goes in after the current reply');
       } else if (r != 'ok') {
+        VoiceCues.instance.stop();
         setState(() {
           _pending = false;
           _echoSkip = null;
@@ -346,6 +364,7 @@ class _TalkScreenState extends State<TalkScreen> {
         toast(context, r);
       }
     } catch (e) {
+      VoiceCues.instance.stop();
       if (!mounted) return;
       setState(() {
         _pending = false;
@@ -535,6 +554,7 @@ class _TalkScreenState extends State<TalkScreen> {
   }
 
   Future<void> _stopSpeaking() async {
+    VoiceCues.instance.stop();
     _speechGen++;
     _speakTimer?.cancel();
     _levelTimer?.cancel();

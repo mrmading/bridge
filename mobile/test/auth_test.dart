@@ -99,7 +99,7 @@ void main() {
   Widget host(Widget w) => MaterialApp(theme: buildTheme(Brightness.dark), home: w);
 
   testWidgets('login: email step, then "Check your email"', (tester) async {
-    SharedPreferences.setMockInitialValues({'server': ''}); // no server: the default would be the real sprite
+    SharedPreferences.setMockInitialValues({'serverOverride': ''}); // no server: the default would be the real sprite
     await AppStore.instance.init();
     await tester.binding.setSurfaceSize(const Size(402, 874));
     await tester.pumpWidget(host(const LoginScreen()));
@@ -114,7 +114,7 @@ void main() {
   });
 
   testWidgets('model sheet: Claude | Open models tabs; unavailable open models are greyed with the reason', (tester) async {
-    SharedPreferences.setMockInitialValues({'server': ''}); // no server: the default would be the real sprite
+    SharedPreferences.setMockInitialValues({'serverOverride': ''}); // no server: the default would be the real sprite
     final s = AppStore.instance;
     await s.init();
     s.boot = Bootstrap.fromJson({

@@ -41,6 +41,13 @@ button{font:inherit;color:inherit;cursor:pointer}
 .veil{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:24px;color:var(--muted);background:var(--screen);z-index:2}
 .veil b{color:var(--fg);font-size:14px}
 .veil[hidden]{display:none}
+.btn.kb{padding:6px 9px}
+.btn.kb[hidden]{display:none}
+.btn.kb.on{background:rgba(74,168,255,.16);border-color:color-mix(in srgb,var(--acc) 55%,transparent);color:var(--acc)}
+.btn.kb.hint{box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 55%,transparent)}
+.btn.kb svg{width:18px;height:18px}
+/* the phone's keyboard types into this; it never shows. 16px stops iOS zooming in on focus */
+#keys{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;margin:0;resize:none;font-size:16px;color:transparent;background:transparent;caret-color:transparent;pointer-events:none}
 .spin{width:22px;height:22px;border-radius:50%;border:2px solid rgba(255,255,255,.12);border-top-color:var(--acc);animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
@@ -51,7 +58,9 @@ button{font:inherit;color:inherit;cursor:pointer}
     <span class="pill state" id="state"><span class="dot"></span><svg class="eye" id="eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span id="stateText">Connecting</span></span>
     <span class="sub" id="sub"></span>
     <span class="sp"></span>
+    <button class="btn kb" id="kb" hidden title="Keyboard" aria-label="Keyboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M6.5 13.5h.01M17 13.5h.01M9.5 14h5"/></svg></button>
     <button class="btn take" id="toggle" disabled>Take control</button>
+  <textarea id="keys" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
   </div>
   <div class="screen">
     <div id="vnc"></div>
@@ -85,6 +94,8 @@ function paint(mode, text) {
   b.disabled = !connected;
   b.textContent = control ? "Give back" : "Take control";
   b.className = "btn " + (control ? "give" : "take");
+  $("kb").hidden = !(touch && connected && control);
+  if (!(connected && control)) closeKeys();
   $("sub").textContent = connected ? (control ? "Your keys and clicks reach the computer. The agent waits." : viewers > 1 ? viewers + " watching · read-only" : "Read-only. The agent is driving.") : "";
   tell(mode);
 }
@@ -105,6 +116,7 @@ function connect() {
   rfb.scaleViewport = true;
   rfb.resizeSession = false;
   rfb.background = "#0b0d12";
+  if (touch) rfb.focusOnClick = false;    // the canvas taking focus on each tap would close the phone's keyboard
   rfb.addEventListener("connect", () => { connected = true; retry = 0; veil(false); sync(); });
   rfb.addEventListener("disconnect", (e) => {
     connected = false; rfb = null;
@@ -132,8 +144,90 @@ function setControl(on, sendIt = true) {
   if (rfb) { rfb.viewOnly = !on; if (on) rfb.focus(); }
   if (sendIt) api("/api/desktop/control", { on }).then((r) => { if (r.ok) { viewers = r.j.viewers || viewers; control = !!r.j.control; if (rfb) rfb.viewOnly = !control; } sync(); });
   if (connected) paint(on ? "ctrl" : "live", on ? "You're in control" : "Viewing");
+  if (on && touch) pollFocus();
 }
 $("toggle").addEventListener("click", () => setControl(!control));
+
+/* ── typing from a phone. A canvas never brings up a touch keyboard, so a hidden textarea takes the keys and each one
+   goes to the computer as a keysym. iOS opens a keyboard only from a tap, so the tap itself decides: if it lands on a
+   text field of the visible Chrome tab (/api/desktop/focus, polled while in control), the keyboard opens with it.
+   The keyboard button opens it anywhere (a terminal, a field the probe cannot see), and closes it. ── */
+const touch = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
+const keys = $("keys");
+const SENTINEL = "\u00a0".repeat(32);           // something for Backspace to delete, so it always shows up as an edit
+let focusInfo = { editable: null, fields: [] }, kbOpen = false, kbAuto = false, polling = null, offEditable = 0;
+const KS = { BackSpace: 0xff08, Tab: 0xff09, Return: 0xff0d, Escape: 0xff1b, Left: 0xff51, Up: 0xff52, Right: 0xff53, Down: 0xff54, Delete: 0xffff };
+function keysym(ch) { const c = ch.codePointAt(0); return c < 0x100 ? c : 0x01000000 + c; }
+function tap(sym, code) { if (rfb && control) { rfb.sendKey(sym, code, true); rfb.sendKey(sym, code, false); } }
+function typeText(t) { for (const ch of t) ch === "\n" ? tap(KS.Return, "Enter") : ch === "\t" ? tap(KS.Tab, "Tab") : tap(keysym(ch === "\u00a0" ? " " : ch)); }
+function resetKeys() { keys.value = SENTINEL; keys.setSelectionRange(SENTINEL.length, SENTINEL.length); }
+function openKeys(auto) {
+  if (!control || !rfb) return;
+  kbAuto = auto; offEditable = 0;
+  resetKeys();
+  keys.style.pointerEvents = "auto";
+  keys.focus({ preventScroll: true });
+  kbOpen = document.activeElement === keys;
+  paintKb();
+}
+function closeKeys() {
+  if (!kbOpen && document.activeElement !== keys) return;
+  kbOpen = false; kbAuto = false;
+  keys.blur(); keys.style.pointerEvents = "none";
+  paintKb();
+}
+function paintKb() {
+  const b = $("kb");
+  b.classList.toggle("on", kbOpen);
+  b.classList.toggle("hint", !kbOpen && focusInfo.editable === true);   // a field has focus but no tap opened the keys
+}
+// a diff against the last value: works for typed keys, autocorrect-free swipes, dictation and pastes alike
+let last = "";
+keys.addEventListener("focus", () => { last = keys.value; });
+keys.addEventListener("input", () => {
+  const v = keys.value;
+  let i = 0;
+  while (i < v.length && i < last.length && v[i] === last[i]) i++;
+  for (let n = last.length - i; n > 0; n--) tap(KS.BackSpace, "Backspace");
+  typeText(v.slice(i));
+  if (v.length < 8 || v.length > 400) resetKeys();
+  last = keys.value;
+});
+// keys that never become text (a hardware keyboard on a tablet, or Return on some keyboards)
+keys.addEventListener("keydown", (e) => {
+  const k = { ArrowLeft: "Left", ArrowUp: "Up", ArrowRight: "Right", ArrowDown: "Down", Escape: "Escape", Tab: "Tab", Delete: "Delete" }[e.key];
+  if (k) { e.preventDefault(); tap(KS[k], e.code); }
+});
+keys.addEventListener("blur", () => { if (kbOpen) { kbOpen = false; kbAuto = false; keys.style.pointerEvents = "none"; paintKb(); } });
+$("kb").addEventListener("pointerdown", (e) => e.preventDefault());   // keep the textarea focused through the tap
+$("kb").addEventListener("click", () => kbOpen ? closeKeys() : openKeys(false));
+
+/** a tap's screen pixel on the computer, through noVNC's scaling */
+function toScreen(x, y) {
+  const c = $("vnc").querySelector("canvas");
+  if (!c || !c.width) return null;
+  const r = c.getBoundingClientRect();
+  if (x < r.left || y < r.top || x > r.right || y > r.bottom) return null;
+  return [(x - r.left) * c.width / r.width, (y - r.top) * c.height / r.height];
+}
+function onField(p) { return !!p && focusInfo.fields.some(([x, y, w, h]) => p[0] >= x - 6 && p[0] <= x + w + 6 && p[1] >= y - 6 && p[1] <= y + h + 6); }
+$("vnc").addEventListener("touchend", (e) => {
+  if (!control || !touch || e.touches.length || e.changedTouches.length !== 1) return;
+  const t = e.changedTouches[0];
+  if (onField(toScreen(t.clientX, t.clientY))) { if (!kbOpen) openKeys(true); else offEditable = 0; }
+  setTimeout(pollFocus, 250);            // the tap has reached Chrome by then: refresh what has focus
+}, { capture: true, passive: true });
+async function pollFocus() {
+  if (!(control && connected && touch)) return;
+  const r = await api("/api/desktop/focus").catch(() => null);
+  if (!r || !r.ok) return;
+  focusInfo = { editable: r.j.editable ?? null, fields: Array.isArray(r.j.fields) ? r.j.fields : [] };
+  // a field the tap opened the keys for lost focus (the form was sent, or a tap elsewhere): put the keys away
+  if (kbOpen && kbAuto && focusInfo.editable === false && ++offEditable >= 2) closeKeys();
+  else if (focusInfo.editable !== false) offEditable = 0;
+  paintKb();
+}
+setInterval(() => { if (control && connected && touch && !document.hidden) pollFocus(); }, 700);
 // the parent (web panel / phone app) can toggle and ask for state
 window.addEventListener("message", (e) => {
   if (e.origin !== location.origin || !e.data || e.data.type !== "bridge-desktop-cmd") return;

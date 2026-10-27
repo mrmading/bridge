@@ -3,7 +3,6 @@
 /// global instructions) · About.
 library;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -27,12 +26,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final store = AppStore.instance;
-  late final TextEditingController _url = TextEditingController(text: store.serverUrl);
   final TextEditingController _code = TextEditingController();
 
-  bool _testing = false;
-  String _testMsg = '';
-  bool _testOk = false;
 
   // sign-in flow
   bool _starting = false;
@@ -57,7 +52,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     store.removeListener(_onStore);
-    _url.dispose();
     _code.dispose();
     super.dispose();
   }
@@ -80,28 +74,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ── server ──
-
-  Future<void> _testAndSave() async {
-    final url = _url.text.trim();
-    if (url.isEmpty) return;
-    FocusScope.of(context).unfocus();
-    setState(() {
-      _testing = true;
-      _testMsg = '';
-    });
-    final ok = await store.connect(url);
-    if (!mounted) return;
-    setState(() {
-      _testing = false;
-      _testOk = ok;
-      _testMsg = ok ? 'Connected to ${store.boot?.assistant ?? 'Bridge'} · Claude Code ${store.boot?.version ?? ''}'.trim() : store.connError;
-    });
-  }
-
-  Future<void> _forget() async {
-    final yes = await _confirm('Forget this server?', 'You will need to enter the address again to reconnect.', 'Forget');
-    if (yes) await store.forgetServer();
-  }
 
   // ── account ──
 
@@ -296,40 +268,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: Text('Same chats everywhere', style: TextStyle(color: t.fg, fontSize: 16)),
             subtitle: Text('Desktop, phone and web are one Bridge. Every chat starts here; no terminal, no syncing.', style: TextStyle(color: t.muted, fontSize: 13)),
           ),
-        ]),
-      ),
-      // On the web the app is served by its server (same origin): nothing to point at.
-      if (!kIsWeb)
-      Card2(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          TextField(
-            controller: _url,
-            keyboardType: TextInputType.url,
-            autocorrect: false,
-            textInputAction: TextInputAction.go,
-            onSubmitted: (_) => _testAndSave(),
-            style: TextStyle(color: t.fg, fontSize: 16),
-            decoration: const InputDecoration(hintText: 'http://your-mac.local:4270', labelText: 'Bridge address'),
-          ),
-          const SizedBox(height: 10),
-          Row(children: [
-            if (ready) ...[StatusPill('connected', kind: 'running'), const SizedBox(width: 8)] else if (store.conn == ConnState.connecting) ...[const StatusPill('connecting'), const SizedBox(width: 8)],
-            const Spacer(),
-            if (store.hasServer) TextButton(onPressed: _forget, style: TextButton.styleFrom(foregroundColor: t.err, minimumSize: const Size(44, 44)), child: const Text('Forget server')),
-            const SizedBox(width: 4),
-            FilledButton(
-              onPressed: _testing ? null : _testAndSave,
-              style: FilledButton.styleFrom(minimumSize: const Size(44, 44)),
-              child: _testing ? SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2, color: t.accentFg)) : const Text('Test & save'),
-            ),
-          ]),
-          if (_testMsg.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(_testMsg, style: TextStyle(color: _testOk ? t.ok : t.err, fontSize: 13)),
-          ] else if (ready && store.boot != null) ...[
-            const SizedBox(height: 8),
-            Text('${store.boot!.assistant} · ${store.boot!.user}@${Uri.tryParse(store.api.base)?.host ?? ''}', style: TextStyle(color: t.muted, fontSize: 13)),
-          ],
         ]),
       ),
     ];

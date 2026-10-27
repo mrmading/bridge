@@ -1398,7 +1398,7 @@ async function madeList() {
       out.push({ path, name: basename(path), ext: extname(path).slice(1).toLowerCase(), sessionId: s.id, key: s.project, sessionTitle: s.title, mtime: Math.max(ts, 0) || st.mtimeMs });
     }
   }
-  return out.sort((a, b) => b.mtime - a.mtime).slice(0, 24);
+  return out.sort((a, b) => b.mtime - a.mtime).slice(0, 150);
 }
 let homeCache: { at: number; v: any } | null = null;
 let homeBusy: Promise<any> | null = null;
@@ -1570,7 +1570,7 @@ async function mergedHome() {
   const cloudIds = new Set<string>([...c.running, ...c.needs].map((x: any) => x.id));
   out.running = out.running.filter((x: any) => !cloudIds.has(x.id)).concat(c.running.map(tag("cloud")));
   out.needs = out.needs.filter((x: any) => !cloudIds.has(x.id) && notMoved(x)).concat(c.needs.map(tag("cloud"))).sort((a: any, b: any) => b.since - a.since);
-  out.made = out.made.concat((c.made || []).map(tag("cloud"))).sort((a: any, b: any) => b.mtime - a.mtime).slice(0, 24);
+  out.made = out.made.concat((c.made || []).map(tag("cloud"))).sort((a: any, b: any) => b.mtime - a.mtime).slice(0, 150);
   out.projects = out.projects.concat((c.projects || []).filter((p: any) => p.path !== health.home && !/\/\.claude(\/|$)/.test(p.path)).map(tag("cloud")));
   out.cloudOffline = false;
   return out;
@@ -2256,6 +2256,7 @@ async function desktopSocket(req: Request, u: URL, srv: any): Promise<Response |
 }
 async function desktopApi(req: Request, p: string): Promise<Response> {
   if (p === "/api/desktop/status") return json(desk.status());
+  if (p === "/api/desktop/focus") return json(await desk.focus());
   if (req.method !== "POST") return json({ error: "not found" }, 404);
   if (!desk.supported) return json({ ...desk.status(), error: "this computer has no screen" }, 404);
   if (p === "/api/desktop/start") {
