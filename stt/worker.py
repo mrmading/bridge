@@ -8,7 +8,9 @@ is a reply carrying the same id: {"id", "text"} for stt, {"id", "out", "seconds"
 
 Listening prefers NVIDIA Parakeet TDT 0.6B v3 on MLX (streaming transducer, ~1.9% WER on
 clean English, ~300 ms per utterance on an M2), then mlx_whisper large-v3-turbo, then
-openai-whisper on the CPU. Speaking uses Kokoro-82M on MLX when mlx_audio is installed.
+openai-whisper on the CPU. Speaking uses Kokoro-82M: on MLX when mlx_audio is installed (Apple
+Silicon), else kokoro-onnx on the CPU (Linux; model files from deploy/voice-install.sh). Either
+half may be missing: a speak-only worker answers stt with an error, and the reverse.
 Fully offline: nothing leaves the machine.
 """
 import json
@@ -25,6 +27,10 @@ TTS_ENGINE = os.environ.get("BRIDGE_TTS_ENGINE", "auto")           # auto | koko
 KOKORO_REPO = os.environ.get("BRIDGE_TTS_KOKORO_REPO", "mlx-community/Kokoro-82M-bf16")
 KOKORO_VOICE = os.environ.get("BRIDGE_TTS_VOICE", "af_heart")
 KOKORO_LANG = os.environ.get("BRIDGE_TTS_LANG", "a")               # 'a' American, 'b' British
+KOKORO_DIR = os.path.expanduser(os.environ.get("BRIDGE_TTS_KOKORO_DIR", "~/.local/share/kokoro"))
+KOKORO_ONNX_MODEL = os.path.join(KOKORO_DIR, "kokoro-v1.0.onnx")
+KOKORO_ONNX_VOICES = os.path.join(KOKORO_DIR, "voices-v1.0.bin")
+ONNX_LANG = {"a": "en-us", "b": "en-gb"}.get(KOKORO_LANG, KOKORO_LANG)   # mlx_audio lang codes -> espeak's
 
 # whisper hallucinates on silence; parakeet mostly returns nothing, but the same phantoms are
 # dropped for both so a quiet clip never sends "Thank you." to the assistant
@@ -78,17 +84,21 @@ if stt_engine is None and STT_ENGINE in ("auto", "faster"):
             sys.exit(1)
         warn("faster-whisper unavailable, falling back: %s" % e)
 
-if stt_engine is None:
+if stt_engine is None and STT_ENGINE in ("auto", "whisper"):
     try:
         import whisper  # type: ignore
         stt_model = whisper.load_model(CPU_MODEL)
         stt_engine = "whisper"
     except Exception as e:
-        out({"error": "no transcriber available: %s" % e})
-        sys.exit(1)
+        warn("no transcriber available: %s" % e)
+
+if stt_engine is None:
+    stt_engine = "none"   # still worth running as a mouth; exits below only if it cannot speak either
 
 
 def transcribe(path: str) -> str:
+    if stt_engine == "none":
+        raise RuntimeError("no transcriber on this machine")
     if stt_engine == "parakeet":
         text = stt_model.transcribe(path).text
     elif stt_engine == "mlx":
@@ -121,25 +131,56 @@ except Exception as e:
 
 # ───────────────────────── speaking ─────────────────────────
 tts_engine = "none"
+tts_backend = None   # "mlx" (mlx_audio, Apple Silicon) | "onnx" (kokoro-onnx, any CPU)
 tts_model = None
 if TTS_ENGINE in ("auto", "kokoro"):
+    tts_errors = []
     try:
         from mlx_audio.tts.utils import load_model  # type: ignore
         tts_model = load_model(KOKORO_REPO)
         # load_model does not touch the G2P pipeline; one short line does, and surfaces a missing
         # misaki install here instead of on the first real sentence
         list(tts_model.generate(text="Ready.", voice=KOKORO_VOICE, speed=1.0, lang_code=KOKORO_LANG))
-        tts_engine = "kokoro"
+        tts_engine, tts_backend = "kokoro", "mlx"
     except Exception as e:
+        tts_model = None
+        tts_errors.append("mlx_audio: %s" % e)
+    if tts_backend is None:
+        # the same Kokoro-82M weights as ONNX on onnxruntime's CPU provider (espeak-ng comes in a
+        # wheel). On the 8-core sprite: ~18 s to load once, then ~1.8 s for a 15-word line
+        try:
+            from kokoro_onnx import Kokoro  # type: ignore
+            for f in (KOKORO_ONNX_MODEL, KOKORO_ONNX_VOICES):
+                if not os.path.exists(f):
+                    raise FileNotFoundError("%s missing (deploy/voice-install.sh fetches it)" % f)
+            tts_model = Kokoro(KOKORO_ONNX_MODEL, KOKORO_ONNX_VOICES)
+            if KOKORO_VOICE not in tts_model.get_voices():
+                raise ValueError("voice %s not in %s" % (KOKORO_VOICE, KOKORO_ONNX_VOICES))
+            tts_model.create("Ready.", voice=KOKORO_VOICE, speed=1.0, lang=ONNX_LANG)
+            tts_engine, tts_backend = "kokoro", "onnx"
+        except Exception as e:
+            tts_model = None
+            tts_errors.append("kokoro_onnx: %s" % e)
+    if tts_backend is None:
         if TTS_ENGINE == "kokoro":
-            out({"error": "kokoro unavailable: %s" % e})
+            out({"error": "kokoro unavailable: %s" % "; ".join(tts_errors)})
             sys.exit(1)
-        warn("kokoro unavailable, speaking falls back to the server's other voices: %s" % e)
+        warn("kokoro unavailable, speaking falls back to the server's other voices: %s" % "; ".join(tts_errors))
+
+if stt_engine == "none" and tts_engine == "none":
+    out({"error": "no transcriber and no voice available on this machine"})
+    sys.exit(1)
 
 
 def synthesize(text: str, path: str, speed: float) -> float:
     import numpy as np  # type: ignore
     import soundfile as sf  # type: ignore
+    if tts_backend == "onnx":
+        audio, rate = tts_model.create(text, voice=KOKORO_VOICE, speed=speed, lang=ONNX_LANG)
+        if audio is None or len(audio) == 0:
+            raise RuntimeError("kokoro produced no audio")
+        sf.write(path, np.asarray(audio, dtype=np.float32), int(rate))
+        return round(len(audio) / rate, 2)
     chunks = list(tts_model.generate(text=text, voice=KOKORO_VOICE, speed=speed, lang_code=KOKORO_LANG))
     if not chunks:
         raise RuntimeError("kokoro produced no audio")
@@ -171,7 +212,7 @@ for line in sys.stdin:
             out({"id": rid, "text": transcribe(path), "ms": int((time.time() - started) * 1000)})
         elif op == "tts":
             if tts_engine == "none":
-                raise RuntimeError("no local voice: install mlx_audio and misaki[en]")
+                raise RuntimeError("no local voice: install mlx_audio and misaki[en] (Mac) or run deploy/voice-install.sh (Linux)")
             text = str(req.get("text") or "").strip()
             path = req.get("out") or ""
             if not text or not path:
