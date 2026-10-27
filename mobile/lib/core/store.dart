@@ -280,7 +280,7 @@ class AppStore extends ChangeNotifier {
 
   /// On the web the app is served by the Bridge server itself, so the page origin is the server.
   String _defaultServer() {
-    // Dev builds: `flutter run --dart-define=BRIDGE_SERVER=http://localhost:4291` skips onboarding.
+    // Dev builds: `flutter run --dart-define=BRIDGE_SERVER=http://localhost:4291` points elsewhere.
     const dev = String.fromEnvironment('BRIDGE_SERVER');
     if (dev.isNotEmpty) return dev;
     if (kIsWeb) {
@@ -288,8 +288,11 @@ class AppStore extends ChangeNotifier {
       // Served by Bridge itself at /m/ (any port), or from a real host: the origin is the server.
       if (u.path.startsWith('/m/') || (u.host.isNotEmpty && u.host != 'localhost') || u.port == 4270 || u.port == 4271) return '${u.scheme}://${u.host}${u.hasPort ? ':${u.port}' : ''}';
     }
-    return '';
+    // Self-use build: always the Fly sprite, so there is no server step on first launch.
+    return _homeServer;
   }
+
+  static const _homeServer = 'https://bridge-x2x6.sprites.app';
 
   Future<bool> connect(String url) async {
     serverUrl = url.trim();
