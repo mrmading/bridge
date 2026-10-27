@@ -25,6 +25,7 @@ cp -R "$ROOT/stt" "$APP/Contents/Resources/app/stt"
 cp -R "$ROOT/providers" "$APP/Contents/Resources/app/providers"
 cp -R "$ROOT/connectors" "$APP/Contents/Resources/app/connectors"
 cp "$ROOT/desktop.ts" "$ROOT/desktop-mcp.ts" "$APP/Contents/Resources/app/"
+mkdir -p "$APP/Contents/Resources/app/deploy" && cp "$ROOT/deploy/files-sync.sh" "$APP/Contents/Resources/app/deploy/"   # the Mac → sprite file sync timer
 cp "$HERE/assets/Bridge.icns" "$APP/Contents/Resources/Bridge.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
