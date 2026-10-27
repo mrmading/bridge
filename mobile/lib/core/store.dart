@@ -161,6 +161,13 @@ class AppStore extends ChangeNotifier {
   void changed() => notifyListeners();
 
   Future<void> init() async {
+    await load();
+    await connectSaved();
+  }
+
+  /// Reads saved settings without touching the network, so main() can draw the first frame
+  /// (and the "Starting …" screen) before the server answers.
+  Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
     serverUrl = _prefs.getString('server') ?? _defaultServer();
     speakReplies = _prefs.getBool('speak') ?? true;
@@ -179,6 +186,11 @@ class AppStore extends ChangeNotifier {
       if (raw != null) session = AuthSession.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
     } catch (_) {}
     if (kIsWeb) _takeRedirect(Uri.base);
+    // Shown from the first frame: the launch connect starts right after runApp.
+    if (serverUrl.isNotEmpty) conn = ConnState.connecting;
+  }
+
+  Future<void> connectSaved() async {
     if (serverUrl.isNotEmpty) await connect(serverUrl);
   }
 
@@ -294,7 +306,29 @@ class AppStore extends ChangeNotifier {
 
   static const _homeServer = 'https://bridge-x2x6.sprites.app';
 
+  /// When the current connect attempt began; the starting screen counts up from it.
+  DateTime connectStarted = DateTime.now();
+
+  /// A sleeping sprite answers once it has booted. Keep asking for about 90 s before giving up;
+  /// a real HTTP error (the server answered) fails at once, and so does anything not on Fly.
+  Future<AuthConfig> _authConfigWaking() async {
+    if (!isCloud) return api.authConfig();
+    final until = DateTime.now().add(const Duration(seconds: 90));
+    while (true) {
+      try {
+        return await api.authConfig();
+      } on ApiException catch (e) {
+        if (e.status != 0 && e.status < 500) rethrow;
+        if (DateTime.now().isAfter(until)) rethrow;
+      } catch (_) {
+        if (DateTime.now().isAfter(until)) rethrow;
+      }
+      await Future<void>.delayed(const Duration(seconds: 3));
+    }
+  }
+
   Future<bool> connect(String url) async {
+    connectStarted = DateTime.now();
     serverUrl = url.trim();
     _homeMissing = false;
     _api?.close();
@@ -303,7 +337,7 @@ class AppStore extends ChangeNotifier {
     connError = '';
     notifyListeners();
     try {
-      authCfg = await api.authConfig();
+      authCfg = await _authConfigWaking();
       if (authCfg.required && session == null) {
         conn = ConnState.login;
         await _prefs.setString('server', serverUrl);
