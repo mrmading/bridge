@@ -13,7 +13,7 @@ final mac = Computer(id: 'mac', name: 'Mac', kind: 'local', online: true);
 Computer cloud({bool online = true}) => Computer(id: 'cloud', name: 'Cloud computer', kind: 'remote', online: online, url: 'https://bridge-x2x6.sprites.app', reason: online ? '' : 'Sprite is asleep');
 
 Future<AppStore> fresh() async {
-  SharedPreferences.setMockInitialValues({'server': ''}); // no server: the default would be the real sprite
+  SharedPreferences.setMockInitialValues({'serverOverride': ''}); // no server: the default would be the real sprite
   final s = AppStore.instance;
   await s.init();
   s.auth = AuthStatus(loggedIn: true, email: 'nestor@example.com');

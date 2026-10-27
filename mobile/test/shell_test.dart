@@ -9,7 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// The store with no server, seeded the way /api/home and /api/recent would fill it.
 Future<void> seed() async {
-  SharedPreferences.setMockInitialValues({'server': ''}); // no server: the default would be the real sprite
+  SharedPreferences.setMockInitialValues({'serverOverride': ''}); // no server: the default would be the real sprite
   final s = AppStore.instance;
   await s.init();
   final now = DateTime.now().millisecondsSinceEpoch;

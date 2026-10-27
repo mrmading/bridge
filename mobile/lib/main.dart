@@ -12,7 +12,6 @@ import 'features/files/files_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/home/new_chat_screen.dart';
 import 'features/inbox/inbox_screen.dart';
-import 'features/onboarding/onboarding_screen.dart';
 import 'features/projects/projects_screen.dart';
 import 'features/session/session_screen.dart';
 import 'features/session/session_utils.dart';
@@ -43,9 +42,10 @@ class BridgeApp extends StatelessWidget {
         // Before the first answer from the server (boot == null); later reconnects keep the Shell.
         home: store.conn == ConnState.login
             ? const LoginScreen()
-            : store.conn == ConnState.connecting && store.boot == null
+            // Until the first answer (and if it never comes) the Starting screen stays: it retries, never asks for a server.
+            : store.boot == null
             ? const StartingScreen()
-            : (store.hasServer && store.conn != ConnState.failed ? const Shell() : const OnboardingScreen()),
+            : const Shell(),
       ),
     );
   }

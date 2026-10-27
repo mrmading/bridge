@@ -141,6 +141,40 @@ async function until(test: () => Promise<boolean> | boolean, ms: number, step = 
 }
 const alive = (p: Proc) => !!p && p.exitCode === null && !p.killed;
 
+/** runs in each Chrome tab: null unless it is the visible one. Fields are [x, y, w, h] in screen pixels: the viewport
+ *  sits at the window's origin plus its frame (the tab strip and toolbar above, any border at the sides). */
+const FOCUS_PROBE = `(() => {
+  if (document.visibilityState !== "visible") return null;
+  const NOTEXT = /^(button|submit|reset|checkbox|radio|range|color|file|image|hidden)$/i;
+  const ed = (e) => !!e && !e.disabled && !e.readOnly && (e.isContentEditable || e.tagName === "TEXTAREA" || (e.tagName === "INPUT" && !NOTEXT.test(e.type)) || /^(textbox|searchbox|combobox)$/.test(e.getAttribute && e.getAttribute("role") || ""));
+  let a = document.activeElement;
+  while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+  const dpr = devicePixelRatio || 1, side = Math.max(0, (outerWidth - innerWidth) / 2), top = Math.max(0, outerHeight - innerHeight - side);
+  const ox = screenX + side, oy = screenY + top, fields = [];
+  for (const e of document.querySelectorAll("input,textarea,[contenteditable]:not([contenteditable=false]),[role=textbox],[role=searchbox],[role=combobox]")) {
+    if (!ed(e)) continue;
+    const r = e.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) continue;
+    fields.push([ox + r.left, oy + r.top, r.width, r.height].map((v) => Math.round(v * dpr)));
+    if (fields.length >= 150) break;
+  }
+  return { editable: ed(a), fields };
+})()`;
+/** one Runtime.evaluate over a tab's DevTools socket, then closed */
+function cdpEval(url: string, expression: string, ms = 1200): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    const done = (f: () => void) => { clearTimeout(t); try { ws.close(); } catch {} f(); };
+    const t = setTimeout(() => done(() => reject(new Error("cdp timeout"))), ms);
+    ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
+    ws.onmessage = (m) => {
+      const j = JSON.parse(String(m.data));
+      if (j.id === 1) done(() => j.error ? reject(new Error(j.error.message)) : resolve(j.result?.result?.value ?? null));
+    };
+    ws.onerror = () => done(() => reject(new Error("cdp socket")));
+  });
+}
+
 export class Desktop {
   private xvfb: Proc = null; private wm: Proc = null; private vnc: Proc = null; private chrome: Proc = null;
   private starting: Promise<void> | null = null;
@@ -224,6 +258,16 @@ export class Desktop {
   async cdpVersion(): Promise<Response> {
     await this.ensure(true);
     return fetch(`http://127.0.0.1:${this.cfg.cdpPort}/json/version`);
+  }
+
+  /** what has keyboard focus in the visible Chrome tab, plus where its text fields sit on the screen (screen px), so a
+   *  phone can open its keyboard when a tap lands on one. `editable: null` = no Chrome page to ask (another app, or asleep). */
+  async focus(): Promise<{ editable: boolean | null; fields: number[][] }> {
+    if (!this.running || !(await this.cdpUp())) return { editable: null, fields: [] };
+    let pages: any[] = [];
+    try { pages = ((await (await fetch(`http://127.0.0.1:${this.cfg.cdpPort}/json/list`, { signal: AbortSignal.timeout(800) })).json()) as any[]).filter((t) => t.type === "page" && t.webSocketDebuggerUrl); } catch {}
+    const found = (await Promise.all(pages.slice(0, 8).map((t) => cdpEval(t.webSocketDebuggerUrl, FOCUS_PROBE).catch(() => null)))).find((r) => r && typeof r === "object");
+    return found ? { editable: !!found.editable, fields: Array.isArray(found.fields) ? found.fields : [] } : { editable: null, fields: [] };
   }
 
   stop(why = "stopped") {

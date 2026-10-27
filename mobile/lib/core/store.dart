@@ -169,7 +169,9 @@ class AppStore extends ChangeNotifier {
   /// (and the "Starting …" screen) before the server answers.
   Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
-    serverUrl = _prefs.getString('server') ?? _defaultServer();
+    // One server, built in: the cloud computer (or, on the web, the Bridge that served this page).
+    // `serverOverride` is for tests and dev builds only; the old saved `server` (from the removed server page) is ignored.
+    serverUrl = _prefs.getString('serverOverride') ?? _defaultServer();
     speakReplies = _prefs.getBool('speak') ?? true;
     handsFree = _prefs.getBool('handsFree') ?? false;
     showTech = _prefs.getBool('showTech') ?? false;
