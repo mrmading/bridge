@@ -22,7 +22,8 @@ SPRITE="${SPRITE_BIN:-$HOME/.local/bin/sprite}"
 STATE="${FILES_SYNC_DIR:-$HOME/.claude/bridge}"
 STAMP="$STATE/files-sync.stamp"; LOCK="$STATE/files-sync.lock"
 FIRST="${FILES_SYNC_SINCE:-202610200000}"            # touch -t format, used when no stamp yet
-BATCH_MB="${FILES_SYNC_BATCH_MB:-200}"; BATCH_FILES="${FILES_SYNC_BATCH_FILES:-6000}"
+BATCH_MB="${FILES_SYNC_BATCH_MB:-50}"; BATCH_FILES="${FILES_SYNC_BATCH_FILES:-2000}"
+BATCH_TIMEOUT="${FILES_SYNC_BATCH_TIMEOUT:-90}"      # base seconds (+4 s/MB) before a stalled batch is killed and retried
 MAX_FILE_MB="${FILES_SYNC_MAX_FILE_MB:-1024}"        # a single file larger than this is skipped (logged)
 DRY=0; [[ "${1:-}" == "--dry-run" ]] && DRY=1
 if [[ -n "${FILES_SYNC_ROOTS:-}" ]]; then read -r -a ROOTS <<< "$FILES_SYNC_ROOTS"
@@ -36,7 +37,9 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   rm -rf "$LOCK"; mkdir "$LOCK" || { echo "files-sync: cannot take lock $LOCK"; exit 1; }
 fi
 echo $$ > "$LOCK/pid"
-work="$(mktemp -d)"; trap 'rm -rf "$work" "$LOCK"' EXIT
+work="$(mktemp -d)"; trap 'pkill -9 -P $$ 2>/dev/null; rm -rf "$work" "$LOCK"' EXIT; trap 'exit 143' TERM INT HUP
+# keep the Mac from idle-sleeping mid-transfer (a sleep drops the sprite connection and stalls the batch)
+[[ $DRY == 0 ]] && command -v caffeinate >/dev/null && ( caffeinate -i -w $$ & )
 
 [[ -f "$STAMP" ]] || touch -t "$FIRST" "$STAMP"
 touch "$work/start"                       # becomes the stamp when every batch lands
@@ -69,12 +72,15 @@ awk -F'\t' -v home="$HOME" -v max="$max" -v bmb="$BATCH_MB" -v bfiles="$BATCH_FI
   { path = $3; for (i = 4; i <= NF; i++) path = path "\t" $i }
   $2 > max { print path > (dir "/skipped"); skipped++; next }
   {
-    if (n == 0 || bytes + $2 > bmb * 1048576 || cnt >= bfiles) { n++; bytes = 0; cnt = 0 }
-    bytes += $2; cnt++; tot += $2; files++
+    big = ($2 >= 20 * 1048576)   # big files (pack files, videos) travel alone
+    if (n == 0 || big || bytes + $2 > bmb * 1048576 || cnt >= bfiles) { n++; bytes = 0; cnt = 0 }
+    bytes += $2; cnt++; tot += $2; files++; bb[n] = bytes
+    if (big) cnt = bfiles
     path = substr(path, length(home) + 2); print path > (dir "/b" n ".list")
-    if (!(n in firstm)) { firstm[n] = $1; print n "\t" $1 > (dir "/batches") }
+    if (!(n in firstm)) firstm[n] = $1
   }
-  END { printf "%d %d %d %d\n", files, tot, n, skipped > (dir "/totals") }' "$work/all"
+  END { for (i = 1; i <= n; i++) print i "\t" firstm[i] "\t" bb[i] > (dir "/batches")
+        printf "%d %d %d %d\n", files, tot, n, skipped > (dir "/totals") }' "$work/all"
 read -r files bytes nb skipped < "$work/totals"
 mb=$(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1048576 }')
 [[ $skipped -gt 0 ]] && echo "files-sync: skipped $skipped file(s) over ${MAX_FILE_MB} MB: $(head -3 "$work/skipped" | tr '\n' ' ')" >&2
@@ -87,23 +93,38 @@ if [[ $files -eq 0 ]]; then
   mv "$work/start" "$STAMP"; echo "files-sync: 0 files, 0.0 MB, $(( $(date +%s) - t0 ))s (since $since)"; exit 0
 fi
 
-# Extract on the sprite. --keep-newer-files: never clobber a sprite copy newer than ours.
+# Extract on the sprite. --keep-newer-files: never clobber a sprite copy newer than ours. A retry drops
+# it: a broken stream leaves its last file half-written with a fresh mtime, which would otherwise stick.
 # A whole stream that unpacked with a few per-file errors (e.g. a path that is a folder there) counts as
 # landed, errors reported; a broken stream (truncated, bad gzip) does not, and is retried.
-REMOTE='e=$(mktemp); tar -xzf - -C "$HOME" --keep-newer-files --no-same-owner --warning=no-unknown-keyword --warning=no-ignore-newer 2>"$e"; c=$?
+REMOTE='e=$(mktemp); tar -xzf - -C "$HOME" KEEP --no-same-owner --warning=no-unknown-keyword --warning=no-ignore-newer 2>"$e"; c=$?
 if grep -qE "Unexpected EOF|not in gzip format|invalid compressed data|not recoverable|Archive is compressed|Cannot stat" "$e"; then tail -5 "$e" >&2
 elif [ $c = 0 ]; then echo LANDED
 else echo "LANDED with $(wc -l < "$e") file error(s)"; tail -3 "$e" >&2; fi; rm -f "$e"'
-send() { # $1 = batch list file; prints LANDED on success
-  tar -czf - --no-xattrs --no-mac-metadata --no-fflags -C "$HOME" -T "$1" 2>>"$work/tar.err" \
-    | "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -c "$REMOTE" 2>>"$work/remote.err"
+send() { # $1 = batch list, $2 = keep flag, $3 = timeout s; the sprite's answer (LANDED…) lands in $work/out.
+  # tar and sprite run as two tracked pids joined by a fifo, so the watchdog kills both: the sprite
+  # connection can drop (TCP read timeout) and a tar left behind would block on the pipe forever.
+  : > "$work/out"; rm -f "$work/fifo"; mkfifo "$work/fifo"
+  "$SPRITE" exec -o "$ORG" -s "$NAME" -- bash -c "${REMOTE/KEEP/$2}" < "$work/fifo" > "$work/out" 2>>"$work/remote.err" &
+  local sp=$!
+  tar -czf - --no-xattrs --no-mac-metadata --no-fflags -C "$HOME" -T "$1" > "$work/fifo" 2>>"$work/tar.err" &
+  local tp=$! t=$(date +%s) s=0
+  while kill -0 $sp 2>/dev/null; do
+    sleep 1; s=$(( $(date +%s) - t ))   # wall clock: after a Mac sleep the dead stream is killed at once
+    if [[ $s -ge $3 ]]; then echo "batch timed out after ${s}s" >> "$work/remote.err"; kill -9 $sp 2>/dev/null; break; fi
+  done
+  kill -9 $tp 2>/dev/null   # finished already, or writing to a reader that is gone
+  wait $sp $tp 2>/dev/null
 }
 
 done_files=0; errs=0; failed=0
-while IFS=$'\t' read -r n firstm <&3; do
+while IFS=$'\t' read -r n firstm bb <&3; do
   list="$work/b$n.list"; ok=0
-  for attempt in 1 2; do
-    out="$(send "$list")"
+  limit=$(( BATCH_TIMEOUT + bb / 262144 ))   # base + 4 s per MB (well under the ~2-4 MB/s link)
+  for attempt in 1 2 3; do
+    keep=--keep-newer-files; [[ $attempt -gt 1 ]] && keep=--overwrite
+    bt=$(date +%s); send "$list" "$keep" "$limit"; out="$(cat "$work/out")"   # not $(send): keeps tar+sprite children of this shell, so the exit trap reaps them
+    echo "files-sync: batch $n/$nb attempt $attempt: $(wc -l < "$list" | tr -d ' ') files, $(( $(date +%s) - bt ))s, ${out:-no answer}" >&2
     if [[ "$out" == LANDED* ]]; then ok=1
       [[ "$out" =~ with\ ([0-9]+) ]] && errs=$((errs + BASH_REMATCH[1])); break; fi
     sleep 5
