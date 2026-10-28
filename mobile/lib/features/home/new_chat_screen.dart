@@ -58,7 +58,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
       const Bloom(),
       Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: const RootAppBar(title: 'New chat'),
+        appBar: const RootAppBar(title: 'Paquito'),
         body: ListView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           padding: EdgeInsets.fromLTRB(16, MediaQuery.sizeOf(context).height * .08, 16, 32),

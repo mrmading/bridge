@@ -64,7 +64,7 @@ void main() {
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
-    for (final l in ['New chat', 'Search', 'Home', 'Inbox', 'Projects', 'Files', 'Agents & skills']) {
+    for (final l in ['Paquito', 'Chief of Staff', 'Search', 'Home', 'Inbox', 'Projects', 'Files', 'Agents & skills']) {
       expect(find.text(l), findsWidgets, reason: l);
     }
     expect(find.descendant(of: find.byType(Drawer), matching: find.text('1')), findsOneWidget); // inbox badge = needs count

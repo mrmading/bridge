@@ -1,4 +1,4 @@
-/// The sidebar, Claude-style: New chat, Search, the five places, then chats (working now with a
+/// The sidebar, Claude-style: Paquito (new chat), Search, the five places, then chats (working now with a
 /// pulse and a live timer, waiting ones flagged, the rest by day) and the account footer.
 library;
 
@@ -42,7 +42,7 @@ class AppDrawer extends StatelessWidget {
                 IconButton(tooltip: 'Close', onPressed: () => Navigator.of(context).pop(), icon: Icon(Icons.close_rounded, color: t.muted, size: 20)),
               ]),
             ),
-            Padding(padding: const EdgeInsets.fromLTRB(12, 2, 12, 8), child: _NewChatButton(onTap: () => nav.newChat())),
+            Padding(padding: const EdgeInsets.fromLTRB(12, 2, 12, 8), child: PaquitoButton(onTap: () => nav.newChat())),
             _NavItem(icon: Icons.search_rounded, label: 'Search', onTap: () => nav.push(const SearchScreen())),
             _NavItem(icon: Icons.home_outlined, label: 'Home', on: nav.view == RootView.home, onTap: () => nav.go(RootView.home)),
             _NavItem(icon: Icons.inbox_outlined, label: 'Inbox', on: nav.view == RootView.inbox, badge: store.waitingCount, onTap: () => nav.go(RootView.inbox)),
@@ -60,12 +60,15 @@ class AppDrawer extends StatelessWidget {
   }
 }
 
-class _NewChatButton extends StatelessWidget {
-  const _NewChatButton({required this.onTap});
+/// Starts a chat with the assistant: "Paquito", labelled Chief of Staff (the name comes from the server).
+class PaquitoButton extends StatelessWidget {
+  const PaquitoButton({super.key, required this.onTap, this.label = 'Chief of Staff'});
   final VoidCallback onTap;
+  final String label;
   @override
   Widget build(BuildContext context) {
     final t = context.t;
+    final name = AppStore.instance.boot?.assistant ?? '';
     return DecoratedBox(
       decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: t.accent.withValues(alpha: .28), blurRadius: 22, offset: const Offset(0, 6))]),
       child: Material(
@@ -75,12 +78,24 @@ class _NewChatButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           onTap: onTap,
           child: SizedBox(
-            height: 46,
+            height: 52,
             child: Row(children: [
+              const SizedBox(width: 12),
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: t.accentFg.withValues(alpha: .16)),
+                child: Icon(Icons.auto_awesome_rounded, color: t.accentFg, size: 16),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(name.isEmpty ? 'Paquito' : name, style: TextStyle(color: t.accentFg, fontSize: 15.5, fontWeight: FontWeight.w700, height: 1.15)),
+                  Text(label, style: TextStyle(color: t.accentFg.withValues(alpha: .78), fontSize: 12, fontWeight: FontWeight.w500, height: 1.2)),
+                ]),
+              ),
+              Icon(Icons.edit_square, color: t.accentFg.withValues(alpha: .85), size: 18),
               const SizedBox(width: 14),
-              Icon(Icons.add_rounded, color: t.accentFg, size: 20),
-              const SizedBox(width: 9),
-              Text('New chat', style: TextStyle(color: t.accentFg, fontSize: 15, fontWeight: FontWeight.w700)),
             ]),
           ),
         ),

@@ -177,7 +177,7 @@ class _FileScreenState extends State<FileScreen> {
     final entries = l?.entries ?? const <DirEntry>[];
     return ListView(padding: const EdgeInsets.only(bottom: 16), children: [
       if (l?.parent != null)
-        _EntryRow(
+        EntryRow(
           icon: Icons.arrow_upward_rounded,
           name: 'Up one level',
           sub: baseName(l!.parent!),
@@ -188,11 +188,11 @@ class _FileScreenState extends State<FileScreen> {
         ),
       if (entries.isEmpty) const EmptyState(icon: Icons.folder_open_outlined, title: 'Empty folder'),
       for (final e in entries)
-        _EntryRow(
+        EntryRow(
           icon: e.dir ? Icons.folder_rounded : null,
           badge: e.dir ? null : extOf(e.name),
           name: e.name,
-          sub: e.dir ? null : [_size(e.size), if (e.mtime > 0) relTime(e.mtime)].join(' · '),
+          sub: e.dir ? null : [fileSize(e.size), if (e.mtime > 0) relTime(e.mtime)].join(' · '),
           onTap: () {
             final full = _path.endsWith('/') ? '$_path${e.name}' : '$_path/${e.name}';
             if (e.dir) {
@@ -207,10 +207,10 @@ class _FileScreenState extends State<FileScreen> {
   }
 }
 
-String _size(int b) => b >= 1 << 20 ? '${(b / (1 << 20)).toStringAsFixed(1)} MB' : (b >= 1024 ? '${(b / 1024).round()} KB' : '$b B');
+String fileSize(int b) => b >= 1 << 20 ? '${(b / (1 << 20)).toStringAsFixed(1)} MB' : (b >= 1024 ? '${(b / 1024).round()} KB' : '$b B');
 
-class _EntryRow extends StatelessWidget {
-  const _EntryRow({this.icon, this.badge, required this.name, this.sub, required this.onTap});
+class EntryRow extends StatelessWidget {
+  const EntryRow({super.key, this.icon, this.badge, required this.name, this.sub, required this.onTap});
   final IconData? icon;
   final String? badge;
   final String name;
