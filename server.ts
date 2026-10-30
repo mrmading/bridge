@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { Desktop, desktopConfig, mcpConfig, isDesktopTool, DESKTOP_PROTOCOL } from "./desktop.ts";
 import { createConnectors } from "./connectors/routes.ts";
+import { createReorganize } from "./reorganize.ts";
 
 const HOME = homedir();
 const CLAUDE_DIR = join(HOME, ".claude");
@@ -1622,8 +1623,10 @@ async function setComputers(body: any) {
 }
 
 /* the cloud's chats, proxied: same requests, sent on to the cloud's Bridge */
-const PROXY_GET = new Set(["/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw"]);
-const PROXY_POST = new Set(["/api/chat", "/api/abort", "/api/rename", "/api/save"]);
+const PROXY_GET = new Set(["/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw", "/api/reorganize", "/api/reorganize/plan"]);
+const PROXY_POST = new Set(["/api/chat", "/api/abort", "/api/rename", "/api/save", ...["decide", "undecide", "project", "apply", "undo"].map((x) => "/api/reorganize/" + x)]);
+/** sorting the work folder into projects, by hand, one folder at a time (reorganize.ts) */
+const reorganize = createReorganize({ home: HOME, claudeDir: CLAUDE_DIR });
 /** which cloud chats have a page attached right now: those announce their own end */
 const cloudWatched = new Map<string, number>();
 function passThrough(src: ReadableStream<Uint8Array>, onText: (s: string) => void, onEnd: () => void) {
@@ -2313,6 +2316,7 @@ async function route(req: Request): Promise<Response> {
         const body = await req.clone().json().catch(() => null);
         if (body?.computer === "cloud") { delete body.computer; return proxyCloud(p, "POST", body, req.headers.get("authorization") || ""); }
       }
+      if (p === "/api/reorganize" || p.startsWith("/api/reorganize/")) { projectsCache = null; return reorganize.route(req, p); }
       if (p === "/api/computers") return json(req.method === "POST" ? await setComputers(await req.json().catch(() => ({}))) : await computersList());
       if (p === "/api/move" && req.method === "POST") {
         const { key, id } = await req.json().catch(() => ({}) as any);

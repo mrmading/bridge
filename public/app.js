@@ -349,7 +349,7 @@ function renderSide() {
     '<button class="icon-btn show-sm" data-act="mnav" title="Close">' + ic("x") + "</button></div>" +
     '<button class="newchat" data-act="new">' + ic("plus", 2.2) + "New chat<kbd>⌘T</kbd></button>" +
     '<div class="nav"><button class="nav-i" data-act="palette">' + ic("search") + "Search<kbd>⌘K</kbd></button>" +
-    nav.map(([id, l, i]) => '<button class="nav-i ' + (S.view === id || (id === "projects" && S.view === "project") ? "on" : "") + '" data-go="' + id + '">' + ic(i) + l +
+    nav.map(([id, l, i]) => '<button class="nav-i ' + (S.view === id || (id === "projects" && (S.view === "project" || S.view === "reorganize")) ? "on" : "") + '" data-go="' + id + '">' + ic(i) + l +
       (id === "inbox" && needs.length ? '<span class="badge warn">' + needs.length + "</span>" : "") + "</button>").join("") + "</div>" +
     '<div class="side-scroll">' +
     (runs.length || needs.length ? '<div class="side-h"><span class="dot run" style="width:6px;height:6px"></span>Working now</div>' +

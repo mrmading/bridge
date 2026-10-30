@@ -88,7 +88,7 @@ const VIEWS = {
   },
 
   projects() {
-    return '<div class="view"><div class="wrap wide"><div class="row"><h1 class="big" style="flex:1">Projects</h1><button class="btn pri" data-act="choosefolder">' + ic("plus", 2) + "New project</button></div>" +
+    return '<div class="view"><div class="wrap wide"><div class="row"><h1 class="big" style="flex:1">Projects</h1><button class="btn" data-go="reorganize" style="margin-right:8px">' + ic("folder") + 'Reorganize</button><button class="btn pri" data-act="choosefolder">' + ic("plus", 2) + "New project</button></div>" +
       '<p class="sub mt8">A project is a folder your team works in. Its instructions, chats and files live together.</p>' +
       '<div class="search">' + ic("search") + '<input id="pq" placeholder="Find a project…" value="' + esc(S.projQ) + '" autocomplete="off"></div>' +
       '<div class="grid" id="plist" style="margin-top:18px">' + projList() + "</div></div></div>";
