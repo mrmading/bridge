@@ -246,7 +246,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 [
                   if (!c.online && c.reason.isNotEmpty) c.reason else (c.isCloud ? 'Keeps working when your Mac sleeps or the app is closed' : 'Fast, uses your local tools and simulators'),
                   if (c.url.isNotEmpty) Uri.tryParse(c.url)?.host ?? c.url,
-                  if (store.computer == c.id) 'New chats run here',
+                  if (store.computer == c.id) 'New threads run here',
                 ].join(' · '),
                 style: TextStyle(color: t.muted, fontSize: 13),
               ),
@@ -258,15 +258,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ListTile(
               leading: Icon(store.isLocalHost ? Icons.laptop_mac_rounded : Icons.cloud_outlined, color: ready ? t.accent : t.faint),
               title: Text(store.isLocalHost ? store.computerName : 'Bridge server', style: TextStyle(color: t.fg, fontSize: 16)),
-              subtitle: Text('${store.serverHost} · every chat runs here, and keeps running when this app is closed', style: TextStyle(color: t.muted, fontSize: 13)),
+              subtitle: Text('${store.serverHost} · every thread runs here, and keeps running when this app is closed', style: TextStyle(color: t.muted, fontSize: 13)),
               trailing: ready ? const Tag('Online', kind: 'ok') : const Tag('Offline', kind: 'warn'),
             ),
             Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
           ],
           ListTile(
             leading: Icon(Icons.devices_rounded, color: t.muted),
-            title: Text('Same chats everywhere', style: TextStyle(color: t.fg, fontSize: 16)),
-            subtitle: Text('Desktop, phone and web are one Bridge. Every chat starts here; no terminal, no syncing.', style: TextStyle(color: t.muted, fontSize: 13)),
+            title: Text('Same threads everywhere', style: TextStyle(color: t.fg, fontSize: 16)),
+            subtitle: Text('Desktop, phone and web are one Bridge. Every thread starts here; no terminal, no syncing.', style: TextStyle(color: t.muted, fontSize: 13)),
           ),
         ]),
       ),
@@ -517,7 +517,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: store.showTech,
             onChanged: store.setShowTech,
             title: Text('Show technical details', style: TextStyle(color: t.fg, fontSize: 16)),
-            subtitle: Text('Raw tool calls, thinking and hooks in every chat', style: TextStyle(color: t.muted, fontSize: 13)),
+            subtitle: Text('Raw tool calls, thinking and hooks in every thread', style: TextStyle(color: t.muted, fontSize: 13)),
           ),
           if (home.isNotEmpty) ...[
             Divider(height: 1, color: t.border, indent: 16, endIndent: 16),

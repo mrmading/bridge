@@ -584,7 +584,7 @@ class ComputerRow extends StatelessWidget {
 Future<void> showComputerSheet(BuildContext context) => _sheet(context, (c) {
       final store = AppStore.instance;
       return ListView(shrinkWrap: true, padding: const EdgeInsets.only(bottom: 16), children: [
-        const SheetTitle('Run new chats on', sub: 'Every chat stays on the computer it started on.'),
+        const SheetTitle('Run new threads on', sub: 'Every thread stays on the computer it started on.'),
         for (final x in store.computers) ComputerRow(x, onPicked: () => Navigator.pop(c)),
       ]);
     });

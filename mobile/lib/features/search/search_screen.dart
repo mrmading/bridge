@@ -65,7 +65,7 @@ class _SearchScreenState extends State<SearchScreen> {
     final agents = _store.agents.where((a) => _q.isNotEmpty && _has('${a.name} ${a.description}')).toList();
     final files = _store.home.made.where((m) => _q.isNotEmpty && _has('${m.name} ${m.sessionTitle}')).toList();
     final actions = <(String, IconData, VoidCallback)>[
-      ('New chat', Icons.add_rounded, () => Nav.instance.newChat()),
+      ('New thread', Icons.add_rounded, () => Nav.instance.newChat()),
       ('Talk to ${_store.assistantName}', Icons.graphic_eq_rounded, () {
         Navigator.of(context).pop();
         openTalk(context);
@@ -100,11 +100,11 @@ class _SearchScreenState extends State<SearchScreen> {
           onChanged: _onQuery,
           textInputAction: TextInputAction.search,
           style: TextStyle(color: t.fg, fontSize: 17),
-          decoration: const InputDecoration(hintText: 'Search chats, projects, files, agents…', filled: false, border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none),
+          decoration: const InputDecoration(hintText: 'Search threads, projects, files, agents…', filled: false, border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none),
         ),
       ),
       body: ListView(keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag, padding: const EdgeInsets.only(bottom: 32), children: [
-        if (chats.isNotEmpty) header(_q.isEmpty ? 'Recent chats' : 'Chats'),
+        if (chats.isNotEmpty) header(_q.isEmpty ? 'Recent threads' : 'Threads'),
         for (final s in chats.take(_q.isEmpty ? 8 : 30))
           row(Icons.chat_bubble_outline_rounded, s.title, [s.projectName.isNotEmpty ? s.projectName : s.folder, relTimeShort(s.mtime)].where((x) => x.isNotEmpty).join(' · '),
               () => openSession(key: s.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, computer: s.computer)),

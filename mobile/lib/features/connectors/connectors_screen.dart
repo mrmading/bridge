@@ -125,7 +125,7 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
               child: ListView(padding: const EdgeInsets.only(bottom: 40), children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: Text('Give your chats tools: GitHub, Linear, Notion, any MCP server, or one Bridge builds for you.', style: TextStyle(color: t.muted, fontSize: 14)),
+                  child: Text('Give your threads tools: GitHub, Linear, Notion, any MCP server, or one Bridge builds for you.', style: TextStyle(color: t.muted, fontSize: 14)),
                 ),
                 if (_err.isNotEmpty) Padding(padding: const EdgeInsets.all(16), child: Text(_err, style: TextStyle(color: t.err))),
                 SectionHeader('Your connectors', count: _conns.length),
@@ -180,7 +180,7 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
         ),
         Column(children: [
           Switch(value: c['enabled'] == true, onChanged: (v) => _post('/api/connectors/update', {'id': c['id'], 'enabled': v})),
-          Text('New chats', style: TextStyle(color: t.faint, fontSize: 10.5)),
+          Text('New threads', style: TextStyle(color: t.faint, fontSize: 10.5)),
         ]),
       ]),
     );
@@ -605,7 +605,7 @@ Future<void> showChatConnectors(BuildContext context, {required String sessionId
       final t = ctx.t;
       return SafeArea(
         child: ListView(shrinkWrap: true, padding: const EdgeInsets.fromLTRB(8, 14, 8, 14), children: [
-          Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text('Connectors in this chat', style: TextStyle(color: t.fg, fontSize: 18, fontWeight: FontWeight.w700))),
+          Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text('Connectors in this thread', style: TextStyle(color: t.fg, fontSize: 18, fontWeight: FontWeight.w700))),
           Padding(padding: const EdgeInsets.fromLTRB(12, 4, 12, 8), child: Text('Applies from the next message.', style: TextStyle(color: t.muted, fontSize: 13))),
           if (err.isNotEmpty) Padding(padding: const EdgeInsets.all(12), child: Text(err, style: TextStyle(color: t.err))),
           if (scopes.isEmpty && err.isEmpty) Padding(padding: const EdgeInsets.all(12), child: Text('No connectors yet. Add them in Settings › Connectors.', style: TextStyle(color: t.muted))),
@@ -615,7 +615,7 @@ Future<void> showChatConnectors(BuildContext context, {required String sessionId
               return SwitchListTile(
                 secondary: Glyph(c, size: 30),
                 title: Text((c['name'] ?? '').toString(), style: TextStyle(color: t.fg)),
-                subtitle: Text(s['ready'] == true ? '${c['tools'] ?? 0} tools${s['chat'] != null ? ' · set for this chat' : ''}' : 'Not ready: sign in first', style: TextStyle(color: t.muted, fontSize: 12.5)),
+                subtitle: Text(s['ready'] == true ? '${c['tools'] ?? 0} tools${s['chat'] != null ? ' · set for this thread' : ''}' : 'Not ready: sign in first', style: TextStyle(color: t.muted, fontSize: 12.5)),
                 value: s['on'] == true,
                 onChanged: (v) async {
                   try {

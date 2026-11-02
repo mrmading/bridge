@@ -232,7 +232,7 @@ class BridgeApi {
   /// or throws with the server's reason (not connected, offline, still running…).
   Future<({String id, String key, String cwd})> moveToCloud(String key, String id) async {
     final j = _m(await _post('/api/move', {'key': key, 'id': id}, timeout: const Duration(seconds: 120)));
-    if (j['ok'] != true || j['error'] != null) throw ApiException((j['error'] ?? 'could not move the chat').toString());
+    if (j['ok'] != true || j['error'] != null) throw ApiException((j['error'] ?? 'could not move the thread').toString());
     return (id: (j['id'] ?? id).toString(), key: (j['key'] ?? key).toString(), cwd: (j['cwd'] ?? '').toString());
   }
 

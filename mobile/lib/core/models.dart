@@ -300,7 +300,7 @@ class Run {
   factory Run.fromJson(Map<String, dynamic> j) => Run(
         id: _s(j['id']),
         key: _s(j['key']),
-        title: _s(j['title']).isNotEmpty ? _s(j['title']) : (_s(j['prompt']).isNotEmpty ? _s(j['prompt']) : 'Untitled chat'),
+        title: _s(j['title']).isNotEmpty ? _s(j['title']) : (_s(j['prompt']).isNotEmpty ? _s(j['prompt']) : 'Untitled thread'),
         projectName: _s(j['projectName']),
         cwd: _s(j['cwd']),
         // Prefer `started`; fall back to now - elapsed when only a duration is sent.
@@ -319,7 +319,7 @@ class Need {
   final String id, key, title, projectName, ask, computer;
   final int since;
   factory Need.fromJson(Map<String, dynamic> j) =>
-      Need(id: _s(j['id']), key: _s(j['key']), title: _s(j['title']).isEmpty ? 'Untitled chat' : _s(j['title']), projectName: _s(j['projectName']), ask: _s(j['ask']), since: _i(j['since']), computer: _computer(j['computer']));
+      Need(id: _s(j['id']), key: _s(j['key']), title: _s(j['title']).isEmpty ? 'Untitled thread' : _s(j['title']), projectName: _s(j['projectName']), ask: _s(j['ask']), since: _i(j['since']), computer: _computer(j['computer']));
 }
 
 /// A file a chat wrote.

@@ -173,9 +173,9 @@ class _ChatPanel extends StatelessWidget {
         kv('Folder', prettyPath(cwd)),
         kv('Runs on', store.computerName),
         if (qwenUsage != null && (qwenUsage!['jobs'] is num) && (qwenUsage!['jobs'] as num) > 0)
-          kv('GPU, this chat', '${gpuCost(qwenUsage!)} · ${qwenUsage!['jobs']} ${qwenUsage!['jobs'] == 1 ? 'job' : 'jobs'}'),
+          kv('GPU, this thread', '${gpuCost(qwenUsage!)} · ${qwenUsage!['jobs']} ${qwenUsage!['jobs'] == 1 ? 'job' : 'jobs'}'),
         if (tokens > 0) kv('Tokens', '${n(tokens)} (${n(usage.output)} written)'),
-        kv('Chat id', id, copy: true),
+        kv('Thread id', id, copy: true),
         const SizedBox(height: 12),
         Text('POWER TOOLS', style: TextStyle(color: t.faint, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 1.1)),
         SwitchListTile(
@@ -183,7 +183,7 @@ class _ChatPanel extends StatelessWidget {
           value: store.showTech,
           onChanged: store.setShowTech,
           title: Text('Show technical details', style: TextStyle(color: t.fg, fontSize: 15.5)),
-          subtitle: Text('Raw tool calls, thinking and hooks in every chat', style: TextStyle(color: t.muted, fontSize: 13)),
+          subtitle: Text('Raw tool calls, thinking and hooks in every thread', style: TextStyle(color: t.muted, fontSize: 13)),
         ),
       ]),
     );
