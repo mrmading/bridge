@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { Desktop, desktopConfig, mcpConfig, isDesktopTool, DESKTOP_PROTOCOL } from "./desktop.ts";
 import { createConnectors } from "./connectors/routes.ts";
@@ -217,6 +217,51 @@ async function setTitle(id: string, title: string) {
   await Bun.write(TITLES_FILE, JSON.stringify(Object.fromEntries(customTitles), null, 2));
   return t;
 }
+/** Bridge's own short thread names. Claude Code writes an `ai-title` a few seconds into the first
+ *  turn and it runs long ("Upload active sessions to bridge app computer"), so until then a thread was
+ *  named by its raw prompt. Bridge names it twice instead: a cleaned-up first few words the moment the
+ *  message is sent, then a 2-4 word title from a one-shot haiku call (~2 s). A name the user typed
+ *  (titles.json) always wins; this sidecar is below it and above Claude Code's ai-title. */
+const AUTO_TITLES_FILE = join(DATA_DIR, "auto-titles.json");
+const autoTitles = new Map<string, { title: string; at: number }>();
+try {
+  const disk = JSON.parse(await Bun.file(AUTO_TITLES_FILE).text());
+  for (const [k, v] of Object.entries(disk) as any) if (v && typeof v.title === "string") autoTitles.set(k, v);
+} catch {}
+let autoSaveTimer: any = null;
+function setAutoTitle(id: string, title: string) {
+  autoTitles.set(id, { title, at: Date.now() });
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => Bun.write(AUTO_TITLES_FILE, JSON.stringify(Object.fromEntries(autoTitles))).catch(() => {}), 500);
+}
+const FILLER = /^(?:(?:hey|hi|hello|ok(?:ay)?|so|now|also|then|and|but|yes|yeah|great|cool|thanks|thank you|pl+e?a?se?|pls|plz|can|could|would|will|you|we|i|u|kindly|just|quickly|go ahead and|let'?s|lets|want|wanna|need|to|me|us|help|try|would like|like|tell|show|give|explain|check|what'?s|whats|what|is|are|the|a|an|about|me|do|does)\b[\s,!.?:;-]*)+/i;
+/** the instant name: the request minus greetings and "please can you", first five words, capitalised */
+function quickTitle(prompt: string) {
+  let s = String(prompt || "").replace(/```[\s\S]*?```/g, " ").replace(/https?:\/\/\S+/g, " ").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  const stripped = s.replace(FILLER, "").trim();
+  if (stripped.split(" ").length >= 2) s = stripped;
+  const w = s.split(" ").slice(0, 5).join(" ").replace(/[\s,.;:!?-]+$/, "");
+  return w ? w[0].toUpperCase() + w.slice(1) : "New thread";
+}
+/** the real name: one haiku turn with no hooks, tools, MCP or saved session, so it neither costs a
+ *  LifeOS start-up nor leaves a stray thread behind. Empty on any failure — the quick title stays. */
+async function aiThreadTitle(prompt: string): Promise<string> {
+  const text = String(prompt || "").slice(0, 1500);
+  if (!text.trim()) return "";
+  try {
+    const proc = Bun.spawn([CLAUDE_BIN, "-p", "--model", "haiku", "--no-session-persistence", "--setting-sources", "",
+      "--strict-mcp-config", "--disable-slash-commands", "--tools", "",
+      "--system-prompt", "You name chat threads. Reply with ONLY a 2-4 word title in Title Case for the user's request. " +
+        "Name the subject, not the action word 'help'. Fix typos, keep product and proper names, no quotes, no trailing punctuation."],
+      { cwd: tmpdir(), stdin: new Blob([text]), stdout: "pipe", stderr: "ignore", env: { ...process.env, ...settingsEnv } as any });
+    const timer = setTimeout(() => proc.kill(), 20_000);
+    const out = (await new Response(proc.stdout).text()).trim().split("\n").pop() || "";
+    clearTimeout(timer);
+    if ((await proc.exited) !== 0) return "";
+    const t = out.replace(/^["'`*#\s]+|["'`*.\s]+$/g, "").replace(/^title:\s*/i, "");
+    return t && t.split(/\s+/).length <= 6 && t.length <= 48 ? t : "";
+  } catch { return ""; }
+}
 const metaCache = new Map<string, { m: number; v: SessionMeta }>();
 try {
   const disk = JSON.parse(await Bun.file(CACHE_FILE).text());
@@ -257,9 +302,9 @@ function persistCache() {
 async function sessionMeta(key: string, file: string): Promise<SessionMeta | null> {
   const m = await computeMeta(key, file);
   if (!m) return null;
-  const custom = customTitles.get(m.id);
+  const custom = customTitles.get(m.id), auto = autoTitles.get(m.id);
   const provider = providerOf(m.model);
-  return custom ? { ...m, title: custom, named: true, provider } : { ...m, provider };
+  return custom ? { ...m, title: custom, named: true, provider } : auto ? { ...m, title: auto.title, titledAt: auto.at, provider } : { ...m, provider };
 }
 /** a chat is on Qwen when its transcript says the model was qwen; everything else is Claude */
 const providerOf = (model?: string) => (/qwen/i.test(String(model || "")) ? "qwen" : "claude");
@@ -852,9 +897,21 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   running.set(key, run);
   homeCache = null; recentAll = null;
   logRow({ ts: Date.now(), kind: "turn.start", msg: prompt, session: key, cwd, model: req.model });
-  emitEvent({ kind: "started", at: Date.now(), id: key, key: run.key, folder: basename(cwd), cwd, title: prompt.slice(0, 60), text: prompt });
+  // a new thread is named at once (quick title), then properly when haiku answers; a resumed one keeps its name
+  const fresh = !req.resume && !customTitles.has(key) && !autoTitles.has(key);
+  const quick = quickTitle(String(req.prompt || ""));
+  if (fresh) setAutoTitle(key, quick);
+  emitEvent({ kind: "started", at: Date.now(), id: key, key: run.key, folder: basename(cwd), cwd, title: autoTitles.get(key)?.title || quick, text: prompt });
   let outcome: { error: boolean; text: string } | null = null;
-  send({ t: "start", sessionId: key, cwd, args });
+  send({ t: "start", sessionId: key, cwd, args, title: fresh ? quick : undefined });
+  if (fresh) aiThreadTitle(String(req.prompt || "")).then((t) => {
+    if (!t || customTitles.has(key)) return;                     // the user renamed it in the meantime
+    setAutoTitle(key, t);
+    homeCache = null; recentAll = null;
+    send({ t: "title", title: t, at: Date.now() });
+    emitEvent({ kind: "titled", at: Date.now(), id: key, key: run.key, folder: basename(cwd), cwd, title: t, text: quick });
+    logRow({ ts: Date.now(), kind: "thread.titled", msg: quick + " → " + t, session: key, cwd });
+  });
 
   if (inputEnvelope && child.stdin) {
     child.stdin.write(JSON.stringify(inputEnvelope) + "\n");
@@ -1363,7 +1420,7 @@ async function runView(r: Run) {
   const meta = file && existsSync(file) ? await sessionMeta(r.key, file) : null;
   const t = file ? await turnTail(file) : { step: "Starting", jobs: [], last: 0 };
   return {
-    id: r.sid || r.id, key: r.key, title: meta?.title || r.prompt.slice(0, 60) || "New chat",
+    id: r.sid || r.id, key: r.key, title: meta?.title || customTitles.get(r.id) || autoTitles.get(r.id)?.title || quickTitle(r.prompt),
     projectName: folderName(r.cwd), cwd: r.cwd, started: r.started, elapsed: Date.now() - r.started,
     prompt: r.prompt, model: r.model || meta?.model || "", step: t.step, jobs: t.jobs, agent: r.agent || "", provider: r.provider,
   };
@@ -1431,7 +1488,7 @@ const isDeskId = (id: string, meta?: { desk?: boolean; oneshot?: boolean }) => {
 
 /** Moments worth telling the principal about, for the Copilot and the open pages: a chat
  *  started, finished, failed, or stopped on a question. */
-type LiveEvent = { kind: "started" | "done" | "error" | "waiting"; at: number; id: string; key: string; folder: string; cwd: string; title: string; text: string; options?: string[]; computer?: string };
+type LiveEvent = { kind: "started" | "titled" | "done" | "error" | "waiting"; at: number; id: string; key: string; folder: string; cwd: string; title: string; text: string; options?: string[]; computer?: string };
 const EVENTS: LiveEvent[] = [];
 function emitEvent(ev: LiveEvent) {
   ev.computer ||= "mac";
@@ -1929,7 +1986,7 @@ async function bridgeBlock(): Promise<string> {
     lines.push("waiting on " + DA.user + " (" + needs.length + "):");
     for (const n of needs.slice(0, 8)) lines.push("- " + n.title + " · " + n.projectName + " · asks: " + n.ask + "\n  transcript: " + sessionFile(n.id, n.key));
   }
-  const recent = EVENTS.filter((e) => e.kind !== "started").slice(-8);
+  const recent = EVENTS.filter((e) => e.kind !== "started" && e.kind !== "titled").slice(-8);
   if (recent.length) {
     lines.push("recent events:");
     for (const e of recent) lines.push("- " + new Date(e.at).toISOString().slice(11, 16) + " " + e.kind + " · " + e.title + " · " + e.folder + (e.text ? " · " + e.text.slice(0, 160) : ""));
@@ -2381,8 +2438,9 @@ async function route(req: Request): Promise<Response> {
         const raw = await readFile(file, "utf8");
         const lines = raw.split("\n").filter(Boolean);
         const out = normalizeTranscript(lines);
-        const custom = customTitles.get(q.get("id") || "");
+        const custom = customTitles.get(q.get("id") || ""), auto = autoTitles.get(q.get("id") || "");
         if (custom) { out.meta.title = custom; (out.meta as any).named = true; }
+        else if (auto) { out.meta.title = auto.title; (out.meta as any).titledAt = auto.at; }
         (out.meta as any).provider = providerOf(out.meta.model);
         (out.meta as any).qwenUsage = qwenSpend.get(q.get("id") || "") || null;
         // where a follower should start: the bytes up to the last complete line

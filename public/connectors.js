@@ -50,7 +50,7 @@
     const sub = c.kind === "local" ? "Made by Bridge · " + (c.local.baseUrl || "from your description") : String(c.url || "").replace(/^https?:\/\//, "");
     return '<div class="cn-row' + (open ? " open" : "") + '"><div class="cn-top" data-cn="toggle-open" data-id="' + esc(c.id) + '">' + glyph(c.glyph, c.color) +
       '<div class="l"><b>' + esc(c.name) + "</b><span>" + esc(sub) + (c.secret ? " · " + esc(c.secret.kind === "oauth" ? "signed in" : "token " + c.secret.hint) : "") + "</span></div>" + status(c) +
-      '<label class="cn-def" title="On for every chat unless a folder or chat turns it off">' + tog(c.enabled, 'data-cn="enabled" data-id="' + esc(c.id) + '"') + "</label></div>" +
+      '<label class="cn-def" title="On for every thread unless a folder or thread turns it off">' + tog(c.enabled, 'data-cn="enabled" data-id="' + esc(c.id) + '"') + "</label></div>" +
       (open ? '<div class="cn-more">' + (c.error ? '<div class="cn-err">' + esc(c.error) + "</div>" : "") +
         ((c.tools || []).length ? '<div class="cn-tools">' + c.tools.map((t) => '<div class="cn-tool"><code>' + esc(t.name) + "</code><span>" + esc(String(t.description || "").split("\n")[0].slice(0, 140)) + "</span></div>").join("") + "</div>" : "") +
         '<div class="row mt8" style="flex-wrap:wrap;gap:6px">' + acts.join("") + "</div></div>" : "") + "</div>";
@@ -66,18 +66,18 @@
     const cloud = cloudInfo().configured;
     const list = C.list;
     return '<div class="view" id="cnView"><div class="wrap wide"><div class="row" style="align-items:flex-end;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:240px"><h1 class="big">Connectors</h1>' +
-      '<p class="sub mt8">Give every chat real tools: GitHub, Linear, Notion, any MCP server, or one Bridge writes for your API.</p></div>' +
+      '<p class="sub mt8">Give every thread real tools: GitHub, Linear, Notion, any MCP server, or one Bridge writes for your API.</p></div>' +
       (cloud ? '<div class="seg" style="width:220px;margin:0"><button class="' + (C.comp === "mac" ? "on" : "") + '" data-cn="comp" data-v="mac">This Mac</button><button class="' + (C.comp === "cloud" ? "on" : "") + '" data-cn="comp" data-v="cloud">Cloud computer</button></div>' : "") + "</div>" +
       (C.err ? '<div class="cn-err mt12">' + esc(C.err) + "</div>" : "") +
       sec("plug", "Your connectors", '<span class="tag">' + list.length + "</span>") +
-      (list.length ? '<div class="cn-list">' + list.map(mine).join("") + "</div>" : empty("Nothing connected yet.", "Pick one below. A connector is an MCP server; every chat you start gets its tools.")) +
+      (list.length ? '<div class="cn-list">' + list.map(mine).join("") + "</div>" : empty("Nothing connected yet.", "Pick one below. A connector is an MCP server; every thread you start gets its tools.")) +
       sec("wand", "Make your own") +
       '<div class="grid two"><button class="card cn-cat" data-cn="url"><div class="ch">' + glyph("//", "#8b93a7", 30) + '<span class="ct">Any MCP server</span></div><p>Paste the URL of a remote MCP server, with a token or OAuth if it needs one.</p></button>' +
       '<button class="card cn-cat cn-new" data-cn="new"><div class="ch">' + glyph("+", "var(--accent)", 30) + '<span class="ct">New connector</span></div><p>Give an API URL (and an OpenAPI spec if there is one), or describe it in words. Bridge writes a small MCP server and tests it.</p></button></div>' +
       sec("globe", "Catalog", '<span class="tag">' + C.catalog.length + "</span>") +
       '<div class="grid">' + C.catalog.filter((e) => e.availability === "available").map(catCard).join("") + "</div>" +
       '<h2 class="sec" style="margin-top:22px">' + ic("hand") + 'Limited by the vendor</h2><div class="grid">' + C.catalog.filter((e) => e.availability !== "available").map(catCard).join("") + "</div>" +
-      '<p class="faint mt12" style="font-size:12px">Tokens stay on the computer that runs the chats, in a file only Bridge can read. Turn a connector off for one folder or one chat from the chat’s ⋯ menu or the composer’s + menu.</p></div></div>';
+      '<p class="faint mt12" style="font-size:12px">Tokens stay on the computer that runs the threads, in a file only Bridge can read. Turn a connector off for one folder or one thread from the thread’s ⋯ menu or the composer’s + menu.</p></div></div>';
   };
   function paint() { if (S.view !== "connectors") return; const v = $("#cnView"), y = v ? v.scrollTop : 0; $("#viewHost").innerHTML = VIEWS.connectors(); const n = $("#cnView"); if (n) n.scrollTop = y; }
 
@@ -108,7 +108,7 @@
     C.busy[c.id] = "oauth";
     const render = () => {
       const cur = byId(c.id) || c;
-      if (cur.status === "connected") { delete C.busy[c.id]; sheet("Connected", '<div class="cn-head">' + glyph(cur.glyph, cur.color, 40) + "<div><b>" + esc(cur.name) + "</b><span>" + (cur.tools || []).length + ' tools ready for your chats.</span></div></div><div class="row mt12"><button class="btn pri" data-act="close">Done</button></div>'); C.sheet = null; return; }
+      if (cur.status === "connected") { delete C.busy[c.id]; sheet("Connected", '<div class="cn-head">' + glyph(cur.glyph, cur.color, 40) + "<div><b>" + esc(cur.name) + "</b><span>" + (cur.tools || []).length + ' tools ready for your threads.</span></div></div><div class="row mt12"><button class="btn pri" data-act="close">Done</button></div>'); C.sheet = null; return; }
       sheet("Sign in to " + c.name, '<p class="sub">Finish signing in on the ' + esc(c.name) + ' page that just opened. ' + (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">Open it again</a>.' : "") + "</p>" +
         '<div class="cn-wait"><span class="spin-s"></span> Waiting for ' + esc(c.name) + "…</div>" +
         field("Ended up on a page that said “Almost there”? Paste its address", '<div class="row">' + inp("cnBack", "http…/connectors-callback.html?code=…") + '<button class="btn" data-cn="oauth-paste" data-id="' + esc(c.id) + '">Finish</button></div>') +
@@ -159,7 +159,7 @@
   }
   function urlSheet() {
     sheet("Any MCP server",
-      field("Name", inp("cnName", "My server")) + field("Server URL", inp("cnUrl", "https://example.com/mcp"), "Streamable HTTP. Claude Code connects to it on every chat turn.") +
+      field("Name", inp("cnName", "My server")) + field("Server URL", inp("cnUrl", "https://example.com/mcp"), "Streamable HTTP. Claude Code connects to it on every thread turn.") +
       field("Sign-in", '<div class="seg" id="cnAuth" style="margin:0"><button class="on" data-v="none">None</button><button data-v="token">Token</button><button data-v="oauth">OAuth</button></div>') +
       '<div id="cnTokBox" style="display:none">' + field("Header", '<div class="row">' + inp("cnHdr", "Authorization", "text", "Authorization") + inp("cnPre", "Bearer ", "text", "Bearer ") + "</div>") + field("Token", inp("cnTok", "paste here", "password")) + "</div>" +
       '<div class="row mt12"><button class="btn pri" data-cn="add-url">Connect</button></div>');
@@ -201,7 +201,7 @@
       '<input class="sheet-in" id="cnRe" style="flex:1;min-width:200px;height:32px" placeholder="Or tell Claude what to change…"><button class="btn" data-cn="regen" data-id="' + esc(id) + '">' + ic("wand") + "Rebuild</button></div>");
   }
 
-  /* ── per chat / folder ────────────────────────────────────────── */
+  /* ── per thread / folder ────────────────────────────────────────── */
   async function scopeSheet() {
     const c = S.view === "chat" && S.chat ? S.chat : null;
     const sid = c ? c.live || c.id || "" : "";
@@ -217,7 +217,7 @@
         '<span class="cn-sc">' + tog(s.folder !== undefined ? s.folder : s.default, 'data-cn="scope" data-kind="folder" data-key="' + esc(cwd) + '" data-id="' + esc(s.id) + '" data-on="' + (s.folder !== undefined ? s.folder : s.default) + '" data-comp="' + comp + '"') + "</span></div>";
     };
     sheet("Connectors for this " + (sid ? "chat" : "folder"),
-      (r.scopes.length ? '<div class="cn-scope cn-sh"><span class="cn-sn"></span>' + (sid ? '<span class="cn-sc">This chat</span>' : "") + '<span class="cn-sc">' + esc(projectName(cwd)) + "</span></div>" + r.scopes.map(row).join("") : empty("No connectors yet.", "Add one in Connectors.")) +
+      (r.scopes.length ? '<div class="cn-scope cn-sh"><span class="cn-sn"></span>' + (sid ? '<span class="cn-sc">This thread</span>' : "") + '<span class="cn-sc">' + esc(projectName(cwd)) + "</span></div>" + r.scopes.map(row).join("") : empty("No connectors yet.", "Add one in Connectors.")) +
       '<div class="row mt12" style="gap:6px"><button class="btn" data-go="connectors">' + ic("plug") + 'Manage connectors</button><span class="faint" style="font-size:12px">Switches apply from the next message.</span></div>');
   }
 

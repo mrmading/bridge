@@ -52,7 +52,7 @@
   function planView() {
     const p = R.plan;
     return sec("folder", "Moves", '<span class="tag">' + p.moves.length + "</span>", ' <button class="more" data-ro="close-plan">Back to sorting</button>') +
-      '<p class="sub">From <code>' + esc(short(p.root)) + "</code> into <code>" + esc(short(p.target)) + "</code>. Each folder leaves a link at its old path, its chats follow it, and git worktrees are repaired. Undo reverses the whole batch.</p>" +
+      '<p class="sub">From <code>' + esc(short(p.root)) + "</code> into <code>" + esc(short(p.target)) + "</code>. Each folder leaves a link at its old path, its threads follow it, and git worktrees are repaired. Undo reverses the whole batch.</p>" +
       (p.problems.length ? '<div class="cn-err mt12">' + p.problems.map(esc).join("<br>") + "</div>" : "") +
       '<div class="list mt12">' + p.moves.map((m) => '<div class="li"><span class="tag ' + (m.type === "project" ? "acc" : "") + '">' + esc(kindLabel(m.type)) + '</span><div class="l"><b style="font-weight:500">' + esc(m.folder) + "</b><span>" + esc(short(m.to)) + (m.exclude ? " · kept out of the project's git" : "") + "</span></div></div>").join("") + "</div>" +
       '<p class="faint mt12" style="font-size:12px">' + p.skipped.length + " skipped · " + p.undecided.length + " not sorted yet (they stay put)</p>" +
@@ -115,7 +115,7 @@
       R.busy = false;
       if (!ok(r)) { paint(); return; }
       R.plan = null; R.v = r.view;
-      R.result = "Moved " + r.moved + " folders and " + r.chats + " chat histories." + (r.errors.length ? " Problems: " + r.errors.join("; ") : "") + (r.blocked.length ? " Not moved (target exists): " + r.blocked.join(", ") : "");
+      R.result = "Moved " + r.moved + " folders and " + r.chats + " thread histories." + (r.errors.length ? " Problems: " + r.errors.join("; ") : "") + (r.blocked.length ? " Not moved (target exists): " + r.blocked.join(", ") : "");
       paint();
     }
     else if (a === "undo-apply") {
