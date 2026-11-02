@@ -13,6 +13,7 @@ import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { Desktop, desktopConfig, mcpConfig, isDesktopTool, DESKTOP_PROTOCOL } from "./desktop.ts";
 import { createConnectors } from "./connectors/routes.ts";
 import { createReorganize } from "./reorganize.ts";
+import { createSecrets, type Scope } from "./secrets.ts";
 
 const HOME = homedir();
 const CLAUDE_DIR = join(HOME, ".claude");
@@ -107,6 +108,12 @@ const BRIDGE_PROTOCOL = [
   "   `choices`, one short option per line (2-6 lines). Bridge renders them as buttons; the click becomes the next message.",
   "2. In plan mode, finish your reply with the complete plan as markdown under a heading that starts with `Plan`.",
   "   Bridge renders it as a plan card with Approve / Revise buttons; Approve sends the next message with edits enabled.",
+  "3. When you need a token, API key or password, never ask for it in chat and never tell the user to edit an env file.",
+  "   End your reply with a fenced block whose info string is `secret`, one line per secret: `NAME scope where-to-get-it`",
+  "   (NAME in CAPS_SNAKE; scope `global` for a key used everywhere, `project` for one that belongs to this codebase only).",
+  "   Bridge shows a masked field and saves the value straight to its store (global: ~/.claude/.env; project: Bridge's",
+  "   per-folder store, outside the repo). From the next turn on it is in your environment as $NAME; you never see the value",
+  "   and must never print or echo it. The user's next message says it is saved. If a token is pasted in chat anyway, say so.",
 ].join("\n");
 
 /* ────────────────────────────── helpers ────────────────────────────── */
@@ -117,7 +124,7 @@ const json = (data: unknown, status = 200) =>
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
   });
 
-const SENSITIVE = [/\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\.credentials/, /id_rsa/, /\/\.env/, /\.pem$/, /keychain/i];
+const SENSITIVE = [/\/bridge\/secrets\//, /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\.credentials/, /id_rsa/, /\/\.env/, /\.pem$/, /keychain/i];
 /** Bridge only ever touches the folders you have added — not the whole machine. */
 let ROOTS: string[] = [];
 function guard(p: string): string | null {
@@ -875,7 +882,9 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
 
   const cwd = guard(req.cwd || HOME) || HOME;
   const stdio = inputEnvelope ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"];
-  const env: Record<string, string | undefined> = { ...process.env, ...settingsEnv, FORCE_COLOR: "0" };
+  // tokens saved through Bridge's masked field: global ones, then this folder's (secrets.ts)
+  const secretEnv = await secrets.envFor(cwd).catch(() => ({}));
+  const env: Record<string, string | undefined> = { ...process.env, ...settingsEnv, ...secretEnv, FORCE_COLOR: "0" };
   if (desk.supported) env.DISPLAY = desk.cfg.display;   // a headed program started from Bash lands on the screen the user watches
   if (provider === "qwen") {
     Object.assign(env, {
@@ -1243,6 +1252,12 @@ async function tailState(file: string, idle: boolean): Promise<TailState> {
 function softWaiting(v: TailState, idle: boolean): Waiting {
   if (v.waiting) return v.waiting;
   if (!idle || !v.last) return null;
+  // a token asked for through a ```secret card: the thread cannot go on until it is typed in
+  const secret = /```secret\s*\n([\s\S]*?)```/.exec(v.last);
+  if (secret) {
+    const names = secret[1].split("\n").map((l) => (l.trim().split(/\s+/)[0] || "").replace(/^\$/, "")).filter((n) => /^[A-Z][A-Z0-9_]{1,63}$/.test(n));
+    if (names.length) return { kind: "question", text: "needs a token: " + names.join(", "), options: [] };
+  }
   const choices = /```choices\s*\n([\s\S]*?)```/.exec(v.last);
   if (choices) {
     const before = v.last.slice(0, choices.index).trim().split("\n").map((l) => l.trim()).filter(Boolean).pop() || "";
@@ -1679,9 +1694,11 @@ async function setComputers(body: any) {
   return { ok: true, computers: await computersList() };
 }
 
+/** tokens & keys typed into a masked field (secrets.ts): global → ~/.claude/.env, project → DATA_DIR/secrets */
+const secrets = createSecrets({ globalFile: join(CLAUDE_DIR, ".env"), dataDir: DATA_DIR });
 /* the cloud's chats, proxied: same requests, sent on to the cloud's Bridge */
-const PROXY_GET = new Set(["/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw", "/api/reorganize", "/api/reorganize/plan"]);
-const PROXY_POST = new Set(["/api/chat", "/api/abort", "/api/rename", "/api/save", ...["decide", "undecide", "project", "apply", "undo"].map((x) => "/api/reorganize/" + x)]);
+const PROXY_GET = new Set(["/api/secrets", "/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw", "/api/reorganize", "/api/reorganize/plan"]);
+const PROXY_POST = new Set(["/api/secrets", "/api/secrets/remove", "/api/chat", "/api/abort", "/api/rename", "/api/save", ...["decide", "undecide", "project", "apply", "undo"].map((x) => "/api/reorganize/" + x)]);
 /** sorting the work folder into projects, by hand, one folder at a time (reorganize.ts) */
 const reorganize = createReorganize({ home: HOME, claudeDir: CLAUDE_DIR });
 /** which cloud chats have a page attached right now: those announce their own end */
@@ -2701,6 +2718,26 @@ async function route(req: Request): Promise<Response> {
         return json(hits.sort((a, b) => b.mtime - a.mtime));
       }
 
+      if (p === "/api/secrets" && req.method === "GET") {
+        return json({ secrets: await secrets.list(q.get("cwd") || "") });
+      }
+      if (p === "/api/secrets" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}) as any);
+        const name = String(b.name || "").trim(), scope: Scope = b.scope === "project" ? "project" : "global";
+        try {
+          const r = await secrets.set(name, String(b.value ?? ""), scope, (String(b.cwd || "").startsWith("/") ? resolve(String(b.cwd)) : ""));
+          logRow({ ts: Date.now(), kind: "secret.set", msg: name + " (" + scope + ") " + r.hint, cwd: scope === "project" ? String(b.cwd || "") : undefined });
+          return json({ ok: true, ...r });
+        } catch (e: any) { return json({ error: String(e?.message || e) }, 400); }
+      }
+      if (p === "/api/secrets/remove" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}) as any);
+        const name = String(b.name || "").trim(), scope: Scope = b.scope === "project" ? "project" : "global";
+        if (secrets.check(name)) return json({ error: "bad name" }, 400);
+        await secrets.remove(name, scope, (String(b.cwd || "").startsWith("/") ? resolve(String(b.cwd)) : ""), b.project ? String(b.project) : undefined);
+        logRow({ ts: Date.now(), kind: "secret.remove", msg: name + " (" + scope + ")" });
+        return json({ ok: true });
+      }
       if (p === "/api/rename" && req.method === "POST") {
         const { id, title } = await req.json();
         if (!id || typeof id !== "string") return json({ error: "id required" }, 400);

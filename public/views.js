@@ -475,7 +475,7 @@ $("#finderBody").addEventListener("click", (e) => { if (e.target.closest(".fres"
 async function openSettings() {
   // a Bridge that is itself the cloud box has no second computer to connect
   const solo = S.boot && S.boot.host && S.boot.host.kind === "cloud" && !cloudInfo().configured;
-  const tabs = [["general", "General"], ["voice", "Voice"], ["defaults", "Defaults"]].concat(solo ? [] : [["computers", "Computers"]], [["advanced", "Advanced"]]);
+  const tabs = [["general", "General"], ["voice", "Voice"], ["defaults", "Defaults"], ["tokens", "Tokens & keys"]].concat(solo ? [] : [["computers", "Computers"]], [["advanced", "Advanced"]]);
   if (solo && S.setTab === "computers") S.setTab = "general";
   const row = (b, s, ctl) => '<div class="setting"><div class="l"><b>' + b + "</b><span>" + s + "</span></div>" + ctl + "</div>";
   const tog = (on, attr) => '<button class="toggle ' + (on ? "on" : "") + '" ' + attr + "></button>";
@@ -513,6 +513,7 @@ async function openSettings() {
         '<button class="btn pri" data-cloudset>Connect</button>' + (c.configured ? '<button class="btn" data-cloudclear>Disconnect</button>' : "") + "</div></div></div>" +
         row("Threads survive closing Bridge", "A thread keeps running where it started when you close the window. Reopen it and it picks up where it is.", '<span class="tag acc">Always on</span>');
     },
+    tokens: () => (typeof secretsSettings === "function" ? secretsSettings() : ""),
     advanced: () => row("Show technical details", "Raw tool calls next to each step, and their input and output on click", '<button class="toggle ' + (S.tech ? "on" : "") + '" data-act="tech"></button>') +
       row("Settings files", "CLAUDE.md, settings.json, memory, skills and agents", '<button class="btn" data-go="configs">Open</button>') +
       row("Global instructions", "~/.claude/CLAUDE.md applies to every thread", '<button class="btn" data-doc="' + esc(S.boot.claudeDir + "/CLAUDE.md") + '">Edit</button>') +

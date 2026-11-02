@@ -730,3 +730,17 @@ body.tech .tdet.open{display:block}
 .chat-i.titled,.top .t.titled{animation:titled 2.2s ease-out;border-radius:8px}
 .top .t.titled{padding:0 6px}
 .side-tog.shut svg{transform:rotate(-90deg)}
+
+/* tokens & keys: the masked card a thread asks with, and Settings › Tokens & keys */
+.sec-card{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin:10px 0;background:var(--bg-raised,var(--bg-hover));display:flex;flex-direction:column;gap:8px;max-width:560px}
+.sec-h{display:flex;align-items:center;gap:8px;font-size:13px}
+.sec-h svg{width:15px;height:15px;color:var(--accent)}
+.sec-h code{font-family:var(--mono);font-size:13px;color:var(--fg)}
+.sec-h .faint{font-size:11.5px;margin-left:auto}
+.sec-hint{font-size:12.5px;color:var(--fg-muted)}
+.sec-row{display:flex;gap:8px;align-items:center}
+.sec-scope{margin:0;width:auto}
+.sec-in,.sec-name,.sec-proj{flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--fg);font-family:var(--mono);font-size:13px}
+.sec-in:focus,.sec-name:focus{outline:none;border-color:var(--accent)}
+.sec-err{font-size:12px;color:var(--danger,#e5484d);min-height:0}
+.sec-err:empty{display:none}

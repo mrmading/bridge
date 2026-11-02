@@ -773,7 +773,10 @@ function renderTurn(c, t, ti, isLast) {
   for (const m of answer) {
     if (m.kind === "plan") { h += planCard(m); continue; }
     const x = m.live ? { body: m.text, choices: [] } : extractChoices(m.text);
+    const sx = m.live || typeof extractSecrets !== "function" ? { body: x.body, secrets: [] } : extractSecrets(x.body);
+    x.body = sx.body;
     h += '<div class="prose' + (m.live ? " cursor" : "") + '">' + md(x.body) + "</div>";
+    if (sx.secrets.length && isLast && !live) h += secretCards(c, sx.secrets);
     if (x.choices.length && isLast && !live) h += '<div class="ask"><div class="q">' + ic("hand") + "<span>" + esc(questionOf(x.body)) + '</span></div><div class="opts">' +
       x.choices.map((o, i) => '<button class="opt" data-choice="' + esc(o) + '"><span class="n">' + (i + 1) + "</span><span><b>" + esc(o) + "</b></span></button>").join("") + "</div></div>";
   }
