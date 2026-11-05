@@ -331,6 +331,27 @@ class BridgeApi {
     }
   }
 
+  // ── secrets (tokens & API keys) ──────────────────────────────────────
+  /// GET /api/secrets: saved tokens for [cwd] (global ones plus that folder's). Values never come back.
+  Future<List<SecretInfo>> secrets({required String cwd, String computer = 'mac'}) async {
+    final j = _m(await _get('/api/secrets', q: {'cwd': cwd, ..._cq(computer)}));
+    return [for (final e in _l(j['secrets'])) SecretInfo.fromJson(e)];
+  }
+
+  /// POST /api/secrets. Returns the masked hint; throws ApiException with the server's reason.
+  /// The value is sent once in the body and is never logged or kept here.
+  Future<String> saveSecret({required String name, required String value, required String scope, required String cwd, String computer = 'mac'}) async {
+    final j = _m(await _post('/api/secrets', {'name': name, 'value': value, 'scope': secretScope(scope), 'cwd': cwd, ..._cq(computer)}));
+    if (j['ok'] != true || j['error'] != null) throw ApiException((j['error'] ?? 'could not save the token').toString());
+    return (j['hint'] ?? '').toString();
+  }
+
+  /// POST /api/secrets/remove.
+  Future<void> removeSecret({required String name, required String scope, required String cwd, String computer = 'mac'}) async {
+    final j = _m(await _post('/api/secrets/remove', {'name': name, 'scope': secretScope(scope), 'cwd': cwd, ..._cq(computer)}));
+    if (j['ok'] != true || j['error'] != null) throw ApiException((j['error'] ?? 'could not remove the token').toString());
+  }
+
   // ── catalogs ─────────────────────────────────────────────────────────
   Future<List<AgentInfo>> agents() async => [for (final j in _l(await _get('/api/agents'))) AgentInfo.fromJson(j)];
   Future<List<SkillInfo>> skills() async => [for (final j in _l(await _get('/api/skills'))) SkillInfo.fromJson(j)];
@@ -353,4 +374,32 @@ String stripBridgeBlock(String s) => s.replaceAll(RegExp(r'<bridge>[\s\S]*?</bri
   if (m == null) return (text: text, options: const []);
   final opts = m.group(1)!.split('\n').map((l) => l.replaceFirst(RegExp(r'^\s*(?:[-*•]|\d+[.)])\s*'), '').trim()).where((l) => l.isNotEmpty).toList();
   return (text: text.substring(0, m.start).trimRight(), options: opts);
+}
+
+final _secretName = RegExp(r'^[A-Z][A-Z0-9_]{1,63}$');
+final _secretLine = RegExp(r'^(\S+)(?:\s+(global|project)(?=\s|$))?\s*(.*)$', caseSensitive: false);
+final _secretBlock = RegExp(r'```secret[ \t]*\r?\n([\s\S]*?)```[ \t]*\r?\n?');
+
+/// The server asks the model to end with a ```secret block when it needs a token: one line per
+/// token, `NAME scope hint…` (scope `global` | `project`, default global). Returns at most three
+/// valid requests (bad names dropped, duplicates collapsed) and the text with every block removed.
+({String text, List<SecretRequest> secrets}) splitSecrets(String text) {
+  if (!text.contains('```secret')) return (text: text, secrets: const []);
+  final out = <SecretRequest>[];
+  final seen = <String>{};
+  for (final m in _secretBlock.allMatches(text)) {
+    for (final raw in m.group(1)!.split('\n')) {
+      final line = raw.replaceFirst(RegExp(r'^\s*(?:[-*•]|\d+[.)])\s*'), '').trim();
+      if (line.isEmpty) continue;
+      final m2 = _secretLine.firstMatch(line)!;
+      final name = m2.group(1)!;
+      if (!_secretName.hasMatch(name) || !seen.add(name) || out.length >= 3) continue;
+      final scope = (m2.group(2) ?? 'global').toLowerCase();
+      final hint = (m2.group(3) ?? '').trim();
+      out.add(SecretRequest(name: name, scope: scope, hint: hint));
+    }
+  }
+  if (!_secretBlock.hasMatch(text)) return (text: text, secrets: const []);
+  final stripped = text.replaceAll(_secretBlock, '').replaceAll(RegExp(r'\n{3,}'), '\n\n').trimRight();
+  return (text: stripped, secrets: out);
 }

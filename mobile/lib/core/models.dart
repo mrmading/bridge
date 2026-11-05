@@ -456,3 +456,32 @@ class Computer {
     );
   }
 }
+
+// ── secrets (tokens & API keys) ──────────────────────────────────────────
+
+/// `global` saves for every thread; `project` only for the thread's folder. Anything else is global.
+String secretScope(dynamic v) => _s(v).trim().toLowerCase() == 'project' ? 'project' : 'global';
+
+/// The message a thread gets after a token was saved from a ```secret card. Never contains the value.
+String secretSavedMessage(String name, String scope) => '🔒 Saved $name (${scope == 'project' ? 'this project' : 'everywhere'}). Continue.';
+
+/// One line of a ```secret block: the agent asks for a token named [name].
+class SecretRequest {
+  const SecretRequest({required this.name, this.scope = 'global', this.hint = ''});
+  final String name, scope, hint;
+}
+
+/// GET /api/secrets: a saved token. The value never leaves the server; [hint] is masked (`abcd…wxyz`).
+class SecretInfo {
+  SecretInfo({required this.name, required this.scope, this.hint = '', this.updatedAt = 0, this.project = ''});
+  final String name, scope, hint, project;
+  final int updatedAt;
+  bool get isProject => scope == 'project';
+  factory SecretInfo.fromJson(Map<String, dynamic> j) => SecretInfo(
+        name: _s(j['name']),
+        scope: secretScope(j['scope']),
+        hint: _s(j['hint']),
+        updatedAt: _i(j['updatedAt']),
+        project: _s(j['project']),
+      );
+}

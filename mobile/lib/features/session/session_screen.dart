@@ -891,6 +891,8 @@ class _SessionScreenState extends State<SessionScreen> {
           liveSince: live ? _runSince : 0,
           showTech: _store.showTech,
           onChoice: last && !_busy ? (o) => _send(o) : null,
+          // The token goes straight to the server for this thread's folder; only the follow-up line is sent.
+          onSaveSecret: last && !_busy ? (req, value, scope) => _api.saveSecret(name: req.name, value: value, scope: scope, cwd: _cwd, computer: _computer) : null,
           onOpenFile: _openFile,
           footer: last && !_busy ? _footer : '',
         ));

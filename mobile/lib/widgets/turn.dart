@@ -11,6 +11,7 @@ import '../core/models.dart';
 import '../core/theme.dart';
 import 'artifact.dart';
 import 'bridge.dart';
+import 'secret_card.dart';
 import 'transcript.dart';
 
 String _base(String p) {
@@ -174,7 +175,7 @@ Map<String, bool> touchedFiles(Iterable<Msg> tools) {
 
 /// One assistant turn. [msgs] are every row after a user message up to the next one.
 class AssistantTurn extends StatelessWidget {
-  const AssistantTurn({super.key, required this.msgs, required this.name, this.started, this.live = false, this.liveSince = 0, this.showTech = false, this.onChoice, this.onOpenFile, this.onOpenArtifact, this.footer = ''});
+  const AssistantTurn({super.key, required this.msgs, required this.name, this.started, this.live = false, this.liveSince = 0, this.showTech = false, this.onChoice, this.onSaveSecret, this.onOpenFile, this.onOpenArtifact, this.footer = ''});
   final List<Msg> msgs;
   /// Who answered: the agent or assistant name.
   final String name;
@@ -183,6 +184,8 @@ class AssistantTurn extends StatelessWidget {
   final int liveSince;
   final bool showTech;
   final ValueChanged<String>? onChoice;
+  /// Saves a token from a ```secret card on the last assistant message (null while live / older turns).
+  final SaveSecret? onSaveSecret;
   final ValueChanged<String>? onOpenFile;
   /// Opens the artifact sheet; falls back to [onOpenFile].
   final ValueChanged<String>? onOpenArtifact;
@@ -194,7 +197,7 @@ class AssistantTurn extends StatelessWidget {
     if (showTech) {
       final last = msgs.lastIndexWhere((m) => m.isAssistant);
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        for (var i = 0; i < msgs.length; i++) MsgRow(key: ObjectKey(msgs[i]), msg: msgs[i], onChoice: i == last ? onChoice : null),
+        for (var i = 0; i < msgs.length; i++) MsgRow(key: ObjectKey(msgs[i]), msg: msgs[i], onChoice: i == last ? onChoice : null, onSaveSecret: i == last ? onSaveSecret : null),
         if (footer.isNotEmpty) StatusLine(footer),
       ]);
     }
@@ -234,7 +237,7 @@ class AssistantTurn extends StatelessWidget {
                 )
               : texts[i].kind == 'choices'
               ? ChoiceChips(options: texts[i].options, onChoice: onChoice)
-              : AssistantText(key: ObjectKey(texts[i]), msg: texts[i], onChoice: i == lastText ? onChoice : null, padding: const EdgeInsets.only(top: 4, bottom: 4)),
+              : AssistantText(key: ObjectKey(texts[i]), msg: texts[i], onChoice: i == lastText ? onChoice : null, onSaveSecret: i == lastText ? onSaveSecret : null, padding: const EdgeInsets.only(top: 4, bottom: 4)),
         if (live && tools.isEmpty) const Padding(padding: EdgeInsets.only(top: 6, bottom: 4), child: TypingDots()),
         for (final a in artifacts) ArtifactCard(artifact: a, onTap: open == null ? null : () => open(a.path)),
         for (final f in files.entries.take(4)) FileCard(path: f.key, isNew: f.value, onTap: onOpenFile == null ? null : () => onOpenFile!(f.key)),

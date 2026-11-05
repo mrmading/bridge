@@ -17,6 +17,7 @@ import '../../widgets/composer.dart';
 import '../connectors/connectors_screen.dart';
 import '../files/file_screen.dart';
 import '../session/session_utils.dart';
+import 'tokens_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -510,6 +511,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => Nav.instance.push(const ConnectorsScreen()),
             title: Text('Connectors', style: TextStyle(color: t.fg, fontSize: 16)),
             subtitle: Text('GitHub, Linear, Notion, any MCP server, or build your own', style: TextStyle(color: t.muted, fontSize: 13)),
+            trailing: Icon(Icons.chevron_right_rounded, color: t.faint),
+          ),
+          Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
+          ListTile(
+            minTileHeight: 52,
+            leading: Icon(Icons.key_rounded, color: t.muted),
+            onTap: () => Nav.instance.push(const TokensScreen()),
+            title: Text('Tokens & keys', style: TextStyle(color: t.fg, fontSize: 16)),
+            subtitle: Text('API keys your chats can use, saved on the server', style: TextStyle(color: t.muted, fontSize: 13)),
             trailing: Icon(Icons.chevron_right_rounded, color: t.faint),
           ),
           Divider(height: 1, color: t.border, indent: 16, endIndent: 16),
