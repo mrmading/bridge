@@ -150,6 +150,7 @@ const VIEWS = {
     if (c.loading) body = '<div class="empty-big"><span class="spin-s" style="display:inline-block"></span></div>';
     else if (c.denied) body = '<div class="empty-big"><h3>Outside your folders</h3>' + esc(c.text) + '<div class="row mt12" style="justify-content:center"><button class="btn pri" data-addfolder="' + esc(c.path.slice(0, c.path.lastIndexOf("/"))) + '">Let Bridge see this folder</button></div></div>';
     else if (c.editing) body = c.lang === "markdown" ? '<div class="split"><textarea class="editor" id="editor" spellcheck="false">' + esc(c.text) + '</textarea><div class="mdpreview prose" id="mdprev">' + md(c.text) + "</div></div>" : '<textarea class="editor" id="editor" spellcheck="false">' + esc(c.text) + "</textarea>";
+    else if (c.binary && VIDEO_RE.test(e)) body = '<div class="docbody">' + videoTag(c.url, base(c.path)) + "</div>";
     else if (c.binary && /^(png|jpe?g|gif|webp|svg)$/.test(e)) body = '<div class="docbody"><img src="' + esc(Auth.withToken(c.url)) + '"></div>';
     else if (c.binary) body = '<div class="docbody"><iframe src="' + esc(Auth.withToken(c.url)) + '"></iframe></div>';
     else if (e === "html" || e === "htm") body = '<div class="docbody" style="padding:0;overflow:hidden"><iframe sandbox="allow-scripts allow-popups" src="' + esc(Auth.withToken("/api/raw?path=" + encodeURIComponent(c.path) + cq(c.computer))) + '" style="border:0;border-radius:0"></iframe></div>';
@@ -195,7 +196,7 @@ function projList() {
   const list = S.home.projects.filter((p) => p.path !== homeDir() && (!q || (p.name + " " + p.path).toLowerCase().includes(q)));
   return list.map(projCard).join("") || '<div class="empty-c">No project matches.</div>';
 }
-const KINDS = { All: null, Documents: /^(md|txt|pdf|docx?|rtf)$/, Pages: /^html?$/, Code: /^(ts|tsx|js|jsx|py|dart|rs|go|sh|sql|css|json|ya?ml|toml|swift)$/, Images: /^(png|jpe?g|gif|webp|svg)$/, Spreadsheets: /^(xlsx?|csv)$/, Videos: /^(mp4|mov|webm)$/ };
+const KINDS = { All: null, Documents: /^(md|txt|pdf|docx?|rtf)$/, Pages: /^html?$/, Code: /^(ts|tsx|js|jsx|py|dart|rs|go|sh|sql|css|json|ya?ml|toml|swift)$/, Images: /^(png|jpe?g|gif|webp|svg)$/, Spreadsheets: /^(xlsx?|csv)$/, Videos: /^(mp4|mov|webm|m4v|ogv)$/ };
 function madeList() {
   const q = S.filesQ.toLowerCase(), re = KINDS[S.filesKind];
   const list = S.home.made.filter((f) => (!re || re.test(f.ext)) && (!q || (f.name + " " + f.sessionTitle + " " + f.path).toLowerCase().includes(q)));

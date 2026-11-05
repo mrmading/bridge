@@ -134,6 +134,8 @@ function guard(p: string): string | null {
 }
 const isSensitive = (p: string) => SENSITIVE.some((r) => r.test(p));
 /** a file a chat made can sit outside the Bridge folders (the CLI's scratchpad, Downloads); it still opens when that chat's own transcript names it */
+/** video files Bridge previews inline (served by /api/raw only; never inlined into a model turn) */
+const VIDEO_TYPES: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".ogv": "video/ogg" };
 async function guardFor(p: string, sid: string): Promise<string | null> {
   const abs = guard(p);
   if (abs || !p || !/^[0-9a-f-]{8,64}$/i.test(sid || "")) return abs;
@@ -2705,7 +2707,7 @@ async function route(req: Request): Promise<Response> {
         const st = await stat(abs).catch(() => null);
         if (!st || st.isDirectory()) return json({ error: "not a file" }, 404);
         const ext = extname(abs).toLowerCase();
-        if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf"].includes(ext))
+        if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ...Object.keys(VIDEO_TYPES)].includes(ext))
           return json({ path: abs, size: st.size, binary: true, url: "/api/raw?path=" + encodeURIComponent(abs) + (sid ? "&session=" + encodeURIComponent(sid) : ""), ext });
         if (st.size > 800_000) return json({ path: abs, size: st.size, text: "File too large to preview (" + Math.round(st.size / 1024) + " KB).", lang: "text" });
         return json({ path: abs, size: st.size, mtime: st.mtimeMs, lang: LANGS[ext] || "text", text: await readFile(abs, "utf8") });
@@ -2742,6 +2744,8 @@ async function route(req: Request): Promise<Response> {
         // a page or SVG opened straight from this URL must not run as Bridge itself: it gets an opaque origin, like the preview iframe
         const h: Record<string, string> = { "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" };
         if ([".html", ".htm", ".svg", ".xhtml"].includes(ext)) h["Content-Security-Policy"] = "sandbox allow-scripts";
+        // videos: an explicit type, and Range (206/416) is answered by Bun itself because the body stays a Bun.file — seeking and Safari need it
+        if (VIDEO_TYPES[ext]) { h["Content-Type"] = VIDEO_TYPES[ext]; if (!req.headers.get("range")) h["Accept-Ranges"] = "bytes"; }   // Bun adds it to a 206 itself
         if (q.get("download")) h["Content-Disposition"] = 'attachment; filename="' + basename(abs).replace(/["\\\r\n]/g, "_") + '"';
         return new Response(Bun.file(abs), { headers: h });
       }

@@ -74,6 +74,8 @@ const I = {
   dl: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   code: '<path d="M9 7l-5 5 5 5M15 7l5 5-5 5"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  full: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  play: '<path d="M7 4.5v15l12-7.5z"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
   pulse: '<path d="M3 12h4l3 8 4-16 3 8h4"/>',
@@ -151,9 +153,34 @@ const projIco = (name, size) => '<span class="proj-ico" style="background:' + hu
 const EXT_COLOR = { md: "#495057", html: "#e8590c", htm: "#e8590c", pdf: "#c02828", xlsx: "#137a4b", xls: "#137a4b", csv: "#137a4b", mp4: "#d6336c", mov: "#d6336c", png: "#7a4fd0", jpg: "#7a4fd0", jpeg: "#7a4fd0", svg: "#7a4fd0", webp: "#7a4fd0", ts: "#1668c9", tsx: "#1668c9", js: "#b08900", json: "#b08900", dart: "#0b7285", py: "#3f9ae0", sh: "#3d4452", sql: "#5f3dc4" };
 const extOf = (p) => (String(p).match(/\.([a-z0-9]+)$/i) || [, ""])[1].toLowerCase();
 const extColor = (e) => EXT_COLOR[e] || "#495057";
+/* ── videos: played inline with native controls, plus an obvious full-screen button ── */
+const VIDEO_RE = /^(mp4|webm|mov|m4v|ogv)$/;
+const isVideo = (p) => VIDEO_RE.test(extOf(p));
+/** an inline player; `url` is an /api/raw (or http) URL, the token is added here and every value is escaped */
+const videoTag = (url, label) => '<span class="vidbox"><video class="vid" controls playsinline preload="metadata" src="' + esc(Auth.withToken(url)) + '"' + (label ? ' title="' + esc(label) + '"' : "") + "></video>" +
+  '<button type="button" class="icon-btn vidfs" data-vidfs title="Full screen">' + ic("full") + "</button></span>";
+/** /api/raw for a path a message names: scoped to the open thread (so a recording in /tmp it made still opens) and its computer */
+function rawFor(path) {
+  const c = S.view === "doc" && S.doc ? S.doc : S.chat;
+  return "/api/raw?path=" + encodeURIComponent(path) + (S.chat && S.chat.id && c === S.chat ? "&session=" + encodeURIComponent(S.chat.id) : "") + cq(c && c.computer);
+}
 
 /* ─────────────────────────── markdown ─────────────────────────── */
+const unesc = (s) => String(s).replace(/&(amp|lt|gt|quot|#39);/g, (m, k) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" }[k]));
+/** a video a message names (markdown image/link or a bare absolute path), as a player URL; null when it is not one we can play */
+function videoSrc(ref) {
+  const r = unesc(ref);
+  if (!/\.(mp4|webm|mov|m4v|ogv)$/i.test(r.replace(/[?#].*$/, ""))) return null;
+  if (/^https?:\/\//i.test(r)) return r;
+  if (r.startsWith("/") || r.startsWith("~/")) return rawFor(r.replace(/^~(?=\/)/, homeDir()));
+  return null;
+}
 function inline(t) {
+  const vids = [];
+  const keep = (m, ref, label, pre) => { const u = videoSrc(ref); if (!u) return m; vids.push(videoTag(u, unesc(label || ""))); return (pre || "") + "\u0000V" + (vids.length - 1) + "\u0000"; };
+  t = t
+    .replace(/!?\[([^\]]*)\]\(([^)\s]+)\)/g, (m, label, ref) => keep(m, ref, label))
+    .replace(/(^|\s)((?:\/|~\/)[^\s<`]+?\.(?:mp4|webm|mov|m4v|ogv))(?=$|[\s.,;:!?)])/gi, (m, pre, ref) => keep(m, ref, "", pre));
   return t
     .replace(/`([^`\n]+)`/g, (m, c) => "<code>" + c + "</code>")
     .replace(/\*\*\*([^*]+)\*\*\*/g, "<strong><em>$1</em></strong>")
@@ -161,7 +188,8 @@ function inline(t) {
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
     .replace(/~~([^~]+)~~/g, "<del>$1</del>")
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/(^|\s)(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+    .replace(/(^|\s)(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+    .replace(/\u0000V(\d+)\u0000/g, (m, i) => vids[+i] || "");
 }
 function md(src) {
   if (!src) return "";
@@ -816,8 +844,8 @@ function jobCard(j) {
     '<div class="leave">' + ic("bell") + "Takes a while? Leave this thread or close Bridge. It keeps going and you get a ping when it is done.</div></div>";
 }
 /* ── artifacts: pages, docs and images a turn made, opened beside the thread like Claude's ── */
-const ART_RE = /\.(html?|md|markdown|svg|png|jpe?g|gif|webp|pdf)$/i;
-const ART_KIND = { html: "Page", htm: "Page", md: "Document", markdown: "Document", svg: "Image", png: "Image", jpg: "Image", jpeg: "Image", gif: "Image", webp: "Image", pdf: "PDF" };
+const ART_RE = /\.(html?|md|markdown|svg|png|jpe?g|gif|webp|pdf|mp4|webm|mov|m4v|ogv)$/i;
+const ART_KIND = { html: "Page", htm: "Page", md: "Document", markdown: "Document", svg: "Image", png: "Image", jpg: "Image", jpeg: "Image", gif: "Image", webp: "Image", pdf: "PDF", mp4: "Video", webm: "Video", mov: "Video", m4v: "Video", ogv: "Video" };
 const artKind = (p) => ART_KIND[extOf(p).toLowerCase()] || "File";
 /** what a turn produced: files its tools wrote or published, then pages named in its answer */
 function artifactsOf(tools, answer) {
@@ -837,7 +865,7 @@ function artifactsOf(tools, answer) {
   }
   for (const m of answer) {
     if (m.live || !m.text) continue;
-    const re = /(?:^|[\s`(\[*"'])((?:\/|~\/)[^\s`)\]*"'<>]+?\.(?:html?|md|markdown|svg|png|jpe?g|gif|webp|pdf))(?=$|[\s`)\]*"',.:;!?])/gim;
+    const re = /(?:^|[\s`(\[*"'])((?:\/|~\/)[^\s`)\]*"'<>]+?\.(?:html?|md|markdown|svg|png|jpe?g|gif|webp|pdf|mp4|webm|mov|m4v|ogv))(?=$|[\s`)\]*"',.:;!?])/gim;
     let x; while ((x = re.exec(m.text))) add(x[1], "made");
   }
   return out.slice(0, 6);
@@ -845,7 +873,7 @@ function artifactsOf(tools, answer) {
 function artCard(c, a) {
   const e = extOf(a.p).toLowerCase(), on = S.art && S.art.path === a.p && S.panel;
   const what = artKind(a.p) + " · " + (a.kind === "new" ? "Created" : a.kind === "edited" ? "Edited" : "Made") + " · " + e.toUpperCase();
-  return '<button class="acard' + (on ? " on" : "") + '" data-art="' + esc(a.p) + '"><span class="ath" style="--ac:' + extColor(e) + '">' + ic(/png|jpe?g|gif|webp|svg/.test(e) ? "view" : /html?/.test(e) ? "globe" : "book") +
+  return '<button class="acard' + (on ? " on" : "") + '" data-art="' + esc(a.p) + '"><span class="ath" style="--ac:' + extColor(e) + '">' + ic(VIDEO_RE.test(e) ? "play" : /png|jpe?g|gif|webp|svg/.test(e) ? "view" : /html?/.test(e) ? "globe" : "book") +
     '</span><span class="l"><b>' + esc(base(a.p)) + "</b><span>" + esc(what) + '</span></span><span class="go">' + (on ? "Open" : "Open") + ic("ext") + "</span></button>";
 }
 function openArt(path) {
@@ -895,7 +923,8 @@ async function loadArt(c, a, el) {
     if (a.blob) URL.revokeObjectURL(a.blob);
     a.blob = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: "application/pdf" }));
     el.innerHTML = '<iframe class="artframe pdf" src="' + a.blob + '"></iframe>';
-  } else el.innerHTML = '<div class="artimg"><img alt="' + esc(base(a.path)) + '" src="' + esc(Auth.withToken(artUrl(c, a.path, "&v=" + Date.now()))) + '"></div>';
+  } else if (VIDEO_RE.test(e)) el.innerHTML = '<div class="artimg artvid">' + videoTag(artUrl(c, a.path), base(a.path)) + "</div>";
+  else el.innerHTML = '<div class="artimg"><img alt="' + esc(base(a.path)) + '" src="' + esc(Auth.withToken(artUrl(c, a.path, "&v=" + Date.now()))) + '"></div>';
 }
 /* ── the Computer panel: the cloud computer's screen, live (public/computer.html in a frame, noVNC inside).
  * It opens by itself when a turn starts using the browser or the screen tools; closing it keeps it shut for that turn. ── */
@@ -1094,7 +1123,8 @@ async function previewInto(path, el) {
   if (!el.isConnected) return;
   if (d.error) { el.innerHTML = '<span class="faint">' + esc(d.error) + "</span>"; return; }
   const e = extOf(path);
-  if (d.binary && /png|jpe?g|gif|webp|svg/.test(e)) el.innerHTML = '<img src="' + esc(Auth.withToken(d.url)) + '">';
+  if (d.binary && VIDEO_RE.test(e)) el.innerHTML = videoTag(d.url, base(path));
+  else if (d.binary && /png|jpe?g|gif|webp|svg/.test(e)) el.innerHTML = '<img src="' + esc(Auth.withToken(d.url)) + '">';
   else if (d.binary) el.innerHTML = '<button class="btn" data-doc="' + esc(path) + '">Open ' + esc(e.toUpperCase()) + "</button>";
   else if (d.lang === "markdown") el.innerHTML = '<div class="prose">' + md(String(d.text).slice(0, 20000)) + "</div>";
   else if (/^html?$/.test(e)) { const f = document.createElement("iframe"); f.setAttribute("sandbox", "allow-scripts"); f.style.cssText = "width:100%;height:46vh;border:1px solid var(--border);border-radius:8px;background:#fff"; f.srcdoc = d.text || ""; el.replaceChildren(f); }
@@ -1360,12 +1390,24 @@ function softRender() {
   const v2 = $(".view"); if (v2) v2.scrollTop = top;
 }
 
+/* full screen for an inline video (iOS Safari only has the video-element API) */
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-vidfs]");
+  if (!b) return;
+  e.stopPropagation(); e.preventDefault();
+  const v = b.parentElement && b.parentElement.querySelector("video");
+  if (!v) return;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (v.requestFullscreen) v.requestFullscreen().catch(() => v.webkitEnterFullscreen && v.webkitEnterFullscreen());
+  else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+}, true);
+
 /* ─────────────────────────── toasts ─────────────────────────── */
 function toast(text) {
   const t = document.createElement("div");
   t.className = "tc";
   t.innerHTML = '<span style="color:var(--accent);flex:none">' + ic("check") + "</span><span>" + esc(text) + "</span>";
-  $("#toasts").appendChild(t);
+  $("#toasts").prepend(t);
   setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 260); }, 2600);
 }
 const TOAST_LIFE = { waiting: 16000, error: 10000, done: 8000 };
