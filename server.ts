@@ -1831,6 +1831,31 @@ async function watchCloud() {
 }
 setInterval(() => { watchCloud().catch(() => {}); }, 5000);
 
+/** Keep the cloud computer's copy of this Mac's files current: deploy/files-sync.sh sends what changed
+ *  since its last run (one-way, never deletes, no secrets). It runs here, not from launchd, because only
+ *  this app has macOS permission to read ~/Desktop. Mac only; BRIDGE_FILES_SYNC=0 turns it off. */
+const FILES_SYNC = join(dirname(Bun.fileURLToPath(import.meta.url)), "deploy", "files-sync.sh");
+let filesSyncing = false;
+async function filesSync() {
+  if (filesSyncing) return;
+  filesSyncing = true;
+  const t0 = Date.now();
+  try {
+    const s = cloudCfg.sprite;
+    const p = Bun.spawn(["/bin/bash", FILES_SYNC], { stdout: "pipe", stderr: "pipe",
+      env: { ...process.env, SPRITE_BIN, ...(s ? { SPRITE_ORG: s.org, SPRITE_NAME: s.name } : {}) } });
+    const kill = setTimeout(() => p.kill(), 2 * 3600_000);
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    clearTimeout(kill);
+    const line = (out.trim().split("\n").pop() || err.trim().split("\n").pop() || "").replace(/^files-sync: /, "");
+    if (code || !/^0 files/.test(line)) logRow({ ts: Date.now(), kind: "files.sync", msg: line.slice(0, 240), outcome: code ? "exit " + code : "ok", ms: Date.now() - t0 });
+  } catch (e) { logRow({ ts: Date.now(), kind: "files.sync", msg: String(e).slice(0, 160), outcome: "error" }); }
+  finally { filesSyncing = false; }
+}
+if (process.platform === "darwin" && process.env.BRIDGE_FILES_SYNC !== "0" && existsSync(SPRITE_BIN) && existsSync(FILES_SYNC)) {
+  setTimeout(() => { filesSync(); setInterval(filesSync, 10 * 60_000); }, 60_000);
+}
+
 /** Move a chat to the cloud: its transcript (and the folder of subagent and tool-result files beside it)
  *  is packed here and unpacked on the sprite under the project key its folder has there, through the
  *  sprite CLI's exec — then the chat simply resumes on the cloud. Paths under this Mac's home are
