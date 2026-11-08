@@ -26,7 +26,7 @@
   const box = document.getElementById("box");
   const q = new URLSearchParams(location.search);
   const e = (s) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const done = (name) => { box.innerHTML = '<h1 class="ok">Connected' + (name ? " to " + e(name) : "") + "</h1><p>You can close this tab and go back to Bridge.</p>"; setTimeout(() => { try { window.close(); } catch (x) {} }, 1500); };
+  const done = (name) => { box.innerHTML = '<h1 class="ok">Connected' + (name ? " to " + e(name) : "") + "</h1><p>Bridge picks it up on its own. You can close this tab.</p>"; setTimeout(() => { try { window.close(); } catch (x) {} }, 1500); };
   const paste = (why) => {
     box.innerHTML = "<h1>Almost there</h1><p>" + e(why) + " Copy this address and paste it into Bridge › Connectors › Sign in.</p>" +
       '<textarea id="u" readonly>' + e(location.href) + '</textarea><button id="cp">Copy address</button>';
@@ -35,19 +35,10 @@
   if (q.get("error")) { box.innerHTML = '<h1 class="err">Sign-in was not completed</h1><p>' + e(q.get("error_description") || q.get("error")) + "</p>"; return; }
   if (!q.get("code") || !q.get("state")) { box.innerHTML = '<h1 class="err">Nothing to finish</h1><p>This page has no sign-in code.</p>'; return; }
 
+  // finishing needs only the vendor's code and the single-use state, so no Bridge session is needed here
   async function selfFinish() {
-    let headers = { "content-type": "application/json" };
     try {
-      const cfg = await (await fetch("/api/authconfig")).json();
-      if (cfg.required) {
-        await new Promise((ok, bad) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
-        const client = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, { auth: { persistSession: true, autoRefreshToken: false, detectSessionInUrl: false } });
-        const { data } = await client.auth.getSession();
-        const tok = data && data.session && data.session.access_token;
-        if (!tok) return paste("This browser is not signed in to Bridge.");
-        headers.authorization = "Bearer " + tok;
-      }
-      const r = await fetch("/api/connectors/oauth/finish", { method: "POST", headers, body: JSON.stringify({ code: q.get("code"), state: q.get("state") }) });
+      const r = await fetch("/api/connectors/oauth/finish", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: q.get("code"), state: q.get("state") }) });
       const j = await r.json();
       if (j.error) return paste(j.error + ".");
       done(j.connector && j.connector.name);

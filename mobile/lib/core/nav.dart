@@ -24,6 +24,9 @@ class Nav extends ChangeNotifier {
 
   final navigatorKey = GlobalKey<NavigatorState>();
   final shellKey = GlobalKey<ScaffoldState>();
+  /// Wide windows (desktop): the sidebar stays docked and pages push inside the right-hand pane.
+  bool docked = false;
+  final paneKey = GlobalKey<NavigatorState>();
 
   RootView view = RootView.home;
   ChatRef? chat;
@@ -34,8 +37,8 @@ class Nav extends ChangeNotifier {
   final ValueNotifier<int> focusComposer = ValueNotifier(0);
 
   void _toRoot() {
-    final nav = navigatorKey.currentState;
-    nav?.popUntil((r) => r.isFirst);
+    navigatorKey.currentState?.popUntil((r) => r.isFirst);
+    paneKey.currentState?.popUntil((r) => r.isFirst);
     final s = shellKey.currentState;
     if (s != null && s.isDrawerOpen) s.closeDrawer();
   }
@@ -73,12 +76,15 @@ class Nav extends ChangeNotifier {
     focusComposer.value++;
   }
 
-  void openDrawer() => shellKey.currentState?.openDrawer();
+  void openDrawer() {
+    if (!docked) shellKey.currentState?.openDrawer();
+  }
 
   Future<T?> push<T>(Widget page) {
     final s = shellKey.currentState;
     if (s != null && s.isDrawerOpen) s.closeDrawer();
-    return navigatorKey.currentState!.push<T>(MaterialPageRoute(builder: (_) => page));
+    final pane = docked ? paneKey.currentState : null;
+    return (pane ?? navigatorKey.currentState!).push<T>(MaterialPageRoute(builder: (_) => page));
   }
 }
 

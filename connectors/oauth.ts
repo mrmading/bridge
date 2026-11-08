@@ -63,16 +63,25 @@ type Pending = { id: string; verifier: string; clientId: string; clientSecret?: 
 const pending = new Map<string, Pending>();
 const sweep = () => { for (const [k, v] of pending) if (Date.now() - v.at > 20 * 60_000) pending.delete(k); };
 
-export async function startOAuth(id: string, mcpUrl: string, redirectUri: string): Promise<{ authorizeUrl: string; state: string }> {
+/** The user's own OAuth app, for servers with no dynamic registration (Slack, Google): created at the vendor
+ *  with Bridge's callback page as its redirect URL. */
+export type OwnClient = { id: string; secret?: string };
+
+/** needsClient: the server takes no self-registration and no app was given; the UI asks for one */
+export async function startOAuth(id: string, mcpUrl: string, redirectUri: string, own?: OwnClient): Promise<{ authorizeUrl: string; state: string } | { needsClient: true; redirectUri: string; issuer: string }> {
   sweep();
   const d = await discover(mcpUrl);
-  if (!d.registration_endpoint) throw new Error("This server does not allow apps to register themselves (no dynamic client registration). Use a token instead.");
-  const reg = await fetch(d.registration_endpoint, {
-    method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, signal: AbortSignal.timeout(10_000),
-    body: JSON.stringify({ client_name: "Bridge", redirect_uris: [redirectUri], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none" }),
-  });
-  if (!reg.ok) throw new Error("Registering Bridge with the server failed: HTTP " + reg.status + " " + (await reg.text()).slice(0, 200));
-  const client: any = await reg.json();
+  let client: { client_id: string; client_secret?: string };
+  if (own?.id) client = { client_id: own.id, client_secret: own.secret || undefined };
+  else if (!d.registration_endpoint) return { needsClient: true, redirectUri, issuer: d.issuer };
+  else {
+    const reg = await fetch(d.registration_endpoint, {
+      method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({ client_name: "Bridge", redirect_uris: [redirectUri], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none" }),
+    });
+    if (!reg.ok) throw new Error("Registering Bridge with the server failed: HTTP " + reg.status + " " + (await reg.text()).slice(0, 200));
+    client = await reg.json();
+  }
   const verifier = b64url(randomBytes(32));
   const state = b64url(randomBytes(18));
   const a = new URL(d.authorization_endpoint);
@@ -108,7 +117,9 @@ export async function finishOAuth(code: string, state: string): Promise<{ id: st
   return { id: p.id, grant: grantFrom(j, { client_id: p.clientId, client_secret: p.clientSecret, token_endpoint: p.tokenEndpoint, resource: p.resource }) };
 }
 
-function grantFrom(j: any, base: { client_id: string; client_secret?: string; token_endpoint: string; resource?: string; refresh_token?: string }): OAuthGrant {
+function grantFrom(raw: any, base: { client_id: string; client_secret?: string; token_endpoint: string; resource?: string; refresh_token?: string }): OAuthGrant {
+  const j = raw.access_token ? raw : raw.authed_user?.access_token ? raw.authed_user : raw;
+  if (!j.access_token) throw new Error("Sign-in failed: the server sent no access token");
   return {
     access_token: String(j.access_token), refresh_token: j.refresh_token || base.refresh_token, token_type: j.token_type, scope: j.scope,
     expires_at: j.expires_in ? Date.now() + Number(j.expires_in) * 1000 : undefined,

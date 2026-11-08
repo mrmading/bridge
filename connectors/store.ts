@@ -39,7 +39,8 @@ export type OAuthGrant = {
   access_token: string; refresh_token?: string; expires_at?: number; token_type?: string; scope?: string;
   client_id: string; client_secret?: string; token_endpoint: string; resource?: string;
 };
-export type Secret = { token?: string; oauth?: OAuthGrant };
+/** client: the user's own OAuth app for this connector (kept across sign-outs, never shown back) */
+export type Secret = { token?: string; oauth?: OAuthGrant; client?: { id: string; secret?: string } };
 type State = { connectors: Connector[]; scopes: { chats: Record<string, Record<string, boolean>>; folders: Record<string, Record<string, boolean>> } };
 
 export const slugify = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "connector";
@@ -101,6 +102,7 @@ export class ConnectorStore {
       secret: s?.token ? { kind: "token", hint: mask(s.token) } : s?.oauth ? { kind: "oauth", hint: mask(s.oauth.access_token), expiresAt: s.oauth.expires_at || 0, refreshable: !!s.oauth.refresh_token } : null,
       glyph: entry?.glyph || c.name.slice(0, 2), color: entry?.color || "",
       ready: this.ready(c),
+      ownApp: !!s?.client,
     };
   }
   publicList() { return this.state.connectors.map((c) => this.view(c)); }
@@ -167,16 +169,22 @@ export class ConnectorStore {
     if (!this.get(id)) throw new Error("no such connector");
     const t = String(token || "").trim();
     if (!t) throw new Error("empty token");
-    this.secrets[id] = { token: t };
+    this.secrets[id] = { token: t, client: this.secrets[id]?.client };
     await this.saveSecrets();
     await this.update(id, { status: "untested", error: undefined });
   }
   async setOAuth(id: string, g: OAuthGrant) {
-    this.secrets[id] = { oauth: g };
+    this.secrets[id] = { oauth: g, client: this.secrets[id]?.client };
+    await this.saveSecrets();
+  }
+  async setClient(id: string, client: { id: string; secret?: string }) {
+    if (!this.get(id)) throw new Error("no such connector");
+    this.secrets[id] = { ...this.secrets[id], client };
     await this.saveSecrets();
   }
   async disconnect(id: string) {
-    delete this.secrets[id];
+    const client = this.secrets[id]?.client;
+    if (client) this.secrets[id] = { client }; else delete this.secrets[id];
     await this.saveSecrets();
     const c = this.get(id);
     if (c) await this.update(id, { status: c.auth === "none" || (c.kind === "local" && c.local?.authKind === "none") ? "untested" : "needs-auth", tools: c.tools, error: undefined });

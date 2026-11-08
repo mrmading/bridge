@@ -40,6 +40,23 @@ describe("secrets", () => {
   });
 });
 
+describe("own OAuth app", () => {
+  test("is kept across sign-in and sign-out, and never shown back", async () => {
+    const c = await store.add({ catalogId: "slack", auth: "oauth" });
+    await store.setClient(c.id, { id: "123.456", secret: "app_secret_fixture_XYZ" });
+    await store.setOAuth(c.id, { access_token: "tok_fixture_OAUTH0000", client_id: "123.456", client_secret: "app_secret_fixture_XYZ", token_endpoint: "https://slack.com/api/oauth.v2.user.access" });
+    expect(store.secret(c.id)?.client?.id).toBe("123.456");
+    const pub = JSON.stringify(store.publicList());
+    expect(pub).not.toContain("app_secret_fixture");
+    expect(store.view(store.get(c.id)!).ownApp).toBe(true);
+    await store.disconnect(c.id);
+    expect(store.has(c.id)).toBe(false);
+    expect(store.secret(c.id)?.client?.secret).toBe("app_secret_fixture_XYZ");
+    await store.setToken(c.id, "tok_fixture_TOKEN1111");
+    expect(store.secret(c.id)?.client?.id).toBe("123.456");
+  });
+});
+
 describe("adding", () => {
   test("a catalog entry carries the vendor URL and its params", async () => {
     const c = await store.add({ catalogId: "supabase", params: { project_ref: "abc", read_only: "true" } });

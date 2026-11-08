@@ -91,13 +91,25 @@
   const inp = (id, ph, type, val) => '<input class="sheet-in" id="' + id + '" type="' + (type || "text") + '" placeholder="' + esc(ph || "") + '" value="' + esc(val || "") + '" spellcheck="false" autocomplete="off">';
   const val = (id) => (($("#" + id) || {}).value || "").trim();
 
+  const redirectUri = () => location.origin + "/connectors-callback.html";
+  const ownAppFields = (o) => '<div class="cn-opt"><b>Your ' + esc(o.label || "OAuth app") + "</b><span>" + esc(o.steps || "") + "</span>" +
+    field("Redirect URL", '<input class="sheet-in" readonly value="' + esc(redirectUri()) + '" onclick="this.select()">') +
+    (o.help ? '<span><a href="' + esc(o.help) + '" target="_blank" rel="noopener">Open ' + esc(new URL(o.help).host) + " " + ic("ext") + "</a></span>" : "") +
+    field("Client ID", inp("cnCid", "")) + (o.secret !== false ? field("Client Secret", inp("cnCsec", "", "password")) : "") + "</div>";
+  const ownApp = () => (val("cnCid") ? { clientId: val("cnCid"), clientSecret: val("cnCsec") } : {});
+  function ownAppSheet(c) {
+    const o = (entry(c.catalogId) || {}).ownApp || { label: "OAuth app", secret: true, steps: "This server does not let apps register themselves. Create an OAuth app at the vendor with the redirect URL below, then paste its Client ID and Secret." };
+    sheet(c.name + " needs your own app", ownAppFields(o) + '<div class="row mt12"><button class="btn pri" data-cn="own-app" data-id="' + esc(c.id) + '">Continue to sign in</button></div>');
+  }
+
   function connectSheet(e) {
     const tok = e.token, multi = e.auth.length > 1;
     const params = (e.params || []).map((p) => field(esc(p.label), inp("cnp_" + p.key, p.placeholder), esc(p.help || ""))).join("");
     let h = '<div class="cn-head">' + glyph(e.glyph, e.color, 40) + '<div><b>' + esc(e.name) + "</b><span>" + esc(e.blurb) + "</span></div></div>" +
       (e.note ? '<div class="cn-note">' + esc(e.note) + "</div>" : "") +
       '<div class="cn-meta"><code>' + esc(e.url) + '</code> · <a href="' + esc(e.docs) + '" target="_blank" rel="noopener">docs</a>' + (e.verified ? ' · <span class="ok">checked against the vendor docs</span>' : ' · <span class="warn">not verified</span>') + "</div>" + params;
-    if (e.auth.includes("oauth")) h += '<div class="cn-opt"><b>Sign in with ' + esc(e.name) + "</b><span>Opens " + esc(e.name) + "’s sign-in page. Nothing to copy.</span>" + '<button class="btn pri" data-cn="add-oauth" data-cat="' + esc(e.id) + '">Sign in</button></div>';
+    if (e.auth.includes("oauth") && e.ownApp) h += ownAppFields(e.ownApp);
+    if (e.auth.includes("oauth")) h += '<div class="cn-opt"><b>Sign in with ' + esc(e.name) + "</b><span>Opens " + esc(e.name) + "’s sign-in page." + (e.ownApp ? "" : " Nothing to copy.") + "</span>" + '<button class="btn pri" data-cn="add-oauth" data-cat="' + esc(e.id) + '">Sign in</button></div>';
     if (e.auth.includes("device")) h += '<div class="cn-opt"><b>Sign in with a device code</b><span>' + (C.device.github ? "GitHub shows a code; you type it at github.com/login/device." : "Needs a GitHub OAuth App on this Bridge (BRIDGE_GITHUB_CLIENT_ID). Use a token for now.") + "</span>" + '<button class="btn' + (C.device.github ? " pri" : "") + '" data-cn="add-device" data-cat="' + esc(e.id) + '"' + (C.device.github ? "" : " disabled") + ">Get a code</button></div>";
     if (e.auth.includes("token")) h += '<div class="cn-opt"><b>' + (multi ? "Or paste " : "Paste ") + esc(lc(tok.label)) + '</b><span><a href="' + esc(tok.help) + '" target="_blank" rel="noopener">Where do I get this? ' + ic("ext") + "</a></span>" +
       '<div class="row mt8">' + inp("cnTok", tok.placeholder || "paste here", "password") + '<button class="btn pri" data-cn="add-token" data-cat="' + esc(e.id) + '">Connect</button></div></div>';
@@ -116,10 +128,11 @@
     };
     render(); load();
   }
-  async function startOAuthFor(c) {
+  async function startOAuthFor(c, app) {
     const w = window.open("about:blank", "_blank");
-    const r = await call("/oauth/start", { id: c.id, redirectUri: location.origin + "/connectors-callback.html" });
+    const r = await call("/oauth/start", Object.assign({ id: c.id, redirectUri: redirectUri() }, app || {}));
     if (!ok(r)) { if (w) w.close(); return; }
+    if (r.needsClient) { if (w) w.close(); return ownAppSheet(c); }
     if (w) w.location = r.authorizeUrl; else location.href = r.authorizeUrl;
     oauthWait(c, r.authorizeUrl);
   }
@@ -259,8 +272,10 @@
       } else {
         const auth = a.slice(4) === "device" ? "device" : a.slice(4);
         if (auth === "token" && !val("cnTok")) return toast("Paste the token first");
+        if (auth === "oauth" && (entry(cat) || {}).ownApp && !val("cnCid")) return toast("Paste the Client ID first");
         body = { catalogId: cat, auth, params, token: auth === "token" ? val("cnTok") : "" };
       }
+      const app = a === "add-oauth" ? ownApp() : {};
       const w = a === "add-oauth" ? window.open("about:blank", "_blank") : null;
       t.disabled = true;
       const r = await call("/add", body);
@@ -270,8 +285,9 @@
       C.open = nc.id;
       await load();
       if (a === "add-oauth") {
-        const s = await call("/oauth/start", { id: nc.id, redirectUri: location.origin + "/connectors-callback.html" });
+        const s = await call("/oauth/start", Object.assign({ id: nc.id, redirectUri: redirectUri() }, app));
         if (!ok(s)) { if (w) w.close(); return authSheet(byId(nc.id) || nc); }
+        if (s.needsClient) { if (w) w.close(); return ownAppSheet(byId(nc.id) || nc); }
         if (w) w.location = s.authorizeUrl; else window.open(s.authorizeUrl, "_blank");
         oauthWait(nc, s.authorizeUrl);
       } else if (a === "add-device") deviceFor(nc);
@@ -279,6 +295,7 @@
       else if (body.auth === "oauth") startOAuthFor(nc);
       else { closeOverlays(); C.sheet = null; toast(nc.status === "connected" ? nc.name + " connected · " + (nc.tools || []).length + " tools" : nc.name + ": " + (nc.error || "added")); if (S.view !== "connectors") go("connectors"); }
     }
+    else if (a === "own-app") { if (!val("cnCid")) return toast("Paste the Client ID first"); startOAuthFor(byId(id) || { id, name: id }, ownApp()); }
     else if (a === "save-code") { t.disabled = true; const r = await call("/code", { id, code: $("#cnCode").value }); t.disabled = false; if (!ok(r)) return; toast(r.test.ok ? "Saved · " + r.test.tools.length + " tools" : "Saved, but it does not start: " + r.test.error); load(); }
     else if (a === "regen") { const r = await call("/generate", { id, instructions: val("cnRe") }); if (ok(r)) buildSheet(id); }
     else if (a === "scope") {

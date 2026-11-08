@@ -16,19 +16,16 @@ import '../settings/settings_screen.dart';
 import '../talk/talk_screen.dart';
 
 class AppDrawer extends StatelessWidget {
-  const AppDrawer({super.key});
+  const AppDrawer({super.key, this.docked = false});
+  /// Always-visible sidebar on wide windows: no close button, a hairline instead of a shadow.
+  final bool docked;
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
     final store = AppStore.instance;
     final nav = Nav.instance;
-    return Drawer(
-      width: 304,
-      backgroundColor: t.sunken,
-      surfaceTintColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(),
-      child: ListenableBuilder(
+    final body = ListenableBuilder(
         listenable: Listenable.merge([store, nav]),
         builder: (context, _) => SafeArea(
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -39,7 +36,8 @@ class AppDrawer extends StatelessWidget {
                 const SizedBox(width: 10),
                 const Wordmark(),
                 const Spacer(),
-                IconButton(tooltip: 'Close', onPressed: () => Navigator.of(context).pop(), icon: Icon(Icons.close_rounded, color: t.muted, size: 20)),
+                if (!docked) IconButton(tooltip: 'Close', onPressed: () => Navigator.of(context).pop(), icon: Icon(Icons.close_rounded, color: t.muted, size: 20)),
+                if (docked) const SizedBox(height: 40),
               ]),
             ),
             Padding(padding: const EdgeInsets.fromLTRB(12, 2, 12, 8), child: PaquitoButton(onTap: () => nav.newChat())),
@@ -55,7 +53,20 @@ class AppDrawer extends StatelessWidget {
             _Footer(store: store),
           ]),
         ),
-      ),
+    );
+    if (docked) {
+      return Container(
+        width: 288,
+        decoration: BoxDecoration(color: t.sunken, border: Border(right: BorderSide(color: t.border))),
+        child: Material(type: MaterialType.transparency, child: body),
+      );
+    }
+    return Drawer(
+      width: 304,
+      backgroundColor: t.sunken,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(),
+      child: body,
     );
   }
 }
@@ -314,8 +325,9 @@ class RootAppBar extends StatelessWidget implements PreferredSizeWidget {
     final t = context.t;
     return AppBar(
       backgroundColor: Colors.transparent,
-      leading: IconButton(tooltip: 'Menu', onPressed: Nav.instance.openDrawer, icon: const Icon(Icons.menu_rounded)),
-      titleSpacing: 4,
+      automaticallyImplyLeading: false,
+      leading: Nav.instance.docked ? null : IconButton(tooltip: 'Menu', onPressed: Nav.instance.openDrawer, icon: const Icon(Icons.menu_rounded)),
+      titleSpacing: Nav.instance.docked ? 20 : 4,
       title: Text(title),
       actions: [
         ...actions,

@@ -93,9 +93,11 @@ export async function createConnectors(deps: ConnectorDeps) {
         if (c.kind !== "remote" || !c.url) throw new Error("only remote servers sign in with OAuth");
         const redirect = String(body.redirectUri || "");
         if (!/^https?:\/\/[^/]+\/connectors-callback\.html$/.test(redirect)) throw new Error("bad redirect");
-        const r = await startOAuth(id, c.url, redirect);
+        // the user's own OAuth app: given now, or saved from an earlier sign-in
+        if (body.clientId) await store.setClient(id, { id: String(body.clientId).trim(), secret: String(body.clientSecret || "").trim() || undefined });
+        const r = await startOAuth(id, c.url, redirect, store.secret(id)?.client);
         if (c.auth !== "oauth") await store.update(id, { auth: "oauth" });
-        return json(r);
+        return json({ ...r, hasClient: !!store.secret(id)?.client });
       }
       if (p === "/api/connectors/oauth/finish" && req.method === "POST") {
         let code = String(body.code || ""), state = String(body.state || "");

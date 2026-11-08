@@ -17,6 +17,8 @@ export type CatalogEntry = {
   transport: "http";
   auth: ("oauth" | "token" | "none" | "device")[];
   token?: { header: string; prefix: string; label: string; help: string; placeholder?: string; basic?: boolean };
+  /** the server takes no self-registration: the user brings an OAuth app made at the vendor (Slack, Google) */
+  ownApp?: { label: string; help: string; steps: string; secret: boolean };
   /** optional query parameters appended to the URL (Supabase project_ref, PostHog project_id…) */
   params?: CatalogParam[];
   docs: string;
@@ -115,13 +117,17 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: "slack", name: "Slack", blurb: "Search messages, read channels, post.",
     url: "https://mcp.slack.com/mcp", transport: "http", auth: ["oauth"],
-    docs: "https://docs.slack.dev/ai/mcp-server", verified: true, availability: "limited",
-    note: "Slack's server only accepts OAuth from a registered Slack app (no dynamic registration). Use Slack from Claude.ai, or build a connector on the Slack Web API with a bot token below.",
+    ownApp: { label: "Slack app", help: "https://api.slack.com/apps", secret: true,
+      steps: "Slack lets only registered Slack apps sign in. One time: at api.slack.com/apps create an app in your workspace. Under OAuth & Permissions add the redirect URL below and the user token scopes you want (search:read.public, channels:history, chat:write, users:read…). Then copy the Client ID and Client Secret from Basic Information." },
+    docs: "https://docs.slack.dev/ai/mcp-server", verified: true, availability: "available",
+    note: "Needs your own Slack app (Slack offers no self-registration). Bridge remembers it, so this is a one-time step.",
     color: "#e01e5a", glyph: "Sl",
   },
   {
     id: "google", name: "Gmail & Google Drive", blurb: "Google's Workspace MCP servers (developer preview).",
     url: "https://gmailmcp.googleapis.com/mcp/v1", transport: "http", auth: ["oauth"],
+    ownApp: { label: "Google OAuth client", help: "https://console.cloud.google.com/apis/credentials", secret: true,
+      steps: "Create an OAuth client (type Web application) in a Google Cloud project enrolled in the Workspace Developer Preview, add the redirect URL below as an authorized redirect URI, then copy its Client ID and Client secret." },
     docs: "https://developers.google.com/workspace/guides/configure-mcp-servers", verified: true, availability: "limited",
     note: "Developer preview: needs the Workspace Developer Preview Program and your own Google Cloud OAuth client. Drive is https://drivemcp.googleapis.com/mcp/v1.",
     color: "#4285f4", glyph: "G",

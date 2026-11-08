@@ -1,0 +1,214 @@
+<title>Bridge Persistent Sessions</title>
+<style>
+  :root{
+    --bg:#faf9f7; --panel:#fff; --ink:#16181a; --dim:#63666b; --line:#e4e2dd;
+    --accent:#1f6f4a; --accent-soft:#eaf3ee; --warn:#8a5a12; --warn-soft:#fbf3e3;
+    --code:#f4f2ee; --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --bg:#131416; --panel:#191b1e; --ink:#eceef0; --dim:#9aa0a6; --line:#2a2d31;
+    --accent:#5fbe8c; --accent-soft:#17281f; --warn:#d9a441; --warn-soft:#2a2113;
+    --code:#202327;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#131416; --panel:#191b1e; --ink:#eceef0; --dim:#9aa0a6; --line:#2a2d31;
+    --accent:#5fbe8c; --accent-soft:#17281f; --warn:#d9a441; --warn-soft:#2a2113;
+    --code:#202327;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);
+    font:16px/1.62 ui-sans-serif,-apple-system,"Segoe UI",Inter,system-ui,sans-serif;
+    margin:0;padding:0 20px 96px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:820px;margin:0 auto}
+  header{padding:72px 0 34px;border-bottom:1px solid var(--line)}
+  .eyebrow{font:600 11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 16px}
+  h1{font-size:2.45rem;line-height:1.1;letter-spacing:-.022em;margin:0 0 14px;font-weight:650}
+  .lede{font-size:1.1rem;color:var(--dim);margin:0;max-width:62ch}
+  h2{font-size:1.32rem;letter-spacing:-.012em;margin:52px 0 14px;font-weight:650}
+  h3{font-size:1rem;margin:30px 0 8px;font-weight:650}
+  p,li{max-width:70ch}
+  code{font-family:var(--mono);font-size:.87em;background:var(--code);
+    padding:.12em .38em;border-radius:4px;white-space:nowrap}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:9px;
+    padding:15px 17px;overflow-x:auto;margin:16px 0}
+  pre code{background:none;padding:0;white-space:pre;font-size:.83rem;line-height:1.6}
+  .verdict{background:var(--accent-soft);border:1px solid var(--accent);
+    border-radius:11px;padding:22px 24px;margin:30px 0}
+  .verdict h2{margin:0 0 10px;font-size:1.12rem}
+  .verdict p{margin:0 0 10px}.verdict p:last-child{margin:0}
+  .note{background:var(--warn-soft);border-left:3px solid var(--warn);
+    border-radius:0 8px 8px 0;padding:14px 18px;margin:20px 0}
+  .note strong{color:var(--warn)}
+  table{width:100%;border-collapse:collapse;margin:18px 0;font-size:.93rem}
+  th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font:600 11px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+  td:first-child{white-space:nowrap}
+  .scroll{overflow-x:auto;margin:18px 0}
+  .scroll table{margin:0}
+  .steps{list-style:none;padding:0;margin:20px 0;counter-reset:s}
+  .steps>li{counter-increment:s;position:relative;padding:0 0 20px 46px;margin:0;max-width:70ch}
+  .steps>li::before{content:counter(s);position:absolute;left:0;top:-1px;
+    width:29px;height:29px;border-radius:50%;background:var(--accent);color:#fff;
+    display:grid;place-items:center;font:650 13px/1 var(--mono)}
+  .steps h3{margin:2px 0 5px}
+  .cost{font:600 12px/1 var(--mono);color:var(--accent);
+    background:var(--accent-soft);padding:4px 9px;border-radius:5px;
+    display:inline-block;margin-left:8px;vertical-align:2px;letter-spacing:.02em}
+  .file{font-family:var(--mono);font-size:.82rem;color:var(--dim)}
+  footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);
+    color:var(--dim);font-size:.87rem}
+  ul{padding-left:20px}
+  li{margin:5px 0}
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">Bridge · scope</p>
+  <h1>Persistent sessions, and the agents they make possible</h1>
+  <p class="lede">Bridge cannot keep a background agent alive because every turn is a separate
+  print-mode process on a connection that closes with it. Fixing that does not require the
+  Agent SDK. It requires holding two things open.</p>
+</header>
+
+<div class="verdict">
+  <h2>The finding that sets the price</h2>
+  <p>The <code>claude</code> CLI accepts multiple user turns over a stdin that stays open, and
+  keeps them in one session. Verified directly, because the docs do not cover it:
+  two <code>stream-json</code> envelopes written 25s apart returned <strong>ALPHA</strong> then
+  <strong>BETA</strong>, two <code>result</code> messages, one <code>session_id</code>
+  (<code>9eeb9e86…</code>), exit 0, empty stderr.</p>
+  <p>So Bridge already has everything it needs in the binary it already ships. The migration to
+  <code>@anthropic-ai/claude-agent-sdk</code> is optional, and it buys features rather than
+  capability.</p>
+</div>
+
+<h2>Why it fails today</h2>
+
+<p>Three lines describe the whole problem.</p>
+
+<table>
+  <tr><td class="file">server.ts:616</td><td>Spawns <code>claude -p</code> fresh for every turn. Print mode: one shot, exits when the turn ends.</td></tr>
+  <tr><td class="file">server.ts:679</td><td><code>child.stdin.end()</code> — the door is closed the instant the prompt is written, so a second turn was never possible.</td></tr>
+  <tr><td class="file">app.js:1354</td><td>One <code>fetch("/api/chat")</code> per turn, whose SSE stream closes with the turn.</td></tr>
+</table>
+
+<p>A subagent dispatched inside such a turn must finish before the turn does, or it dies with the
+process. And even if it survived, the connection that would carry its result is already gone.
+That is why Bridge gets synchronous agents only, and it is why swapping the spawn layer alone
+would change nothing.</p>
+
+<p>Worth keeping from the same file: <code>server.ts:709-716</code> records that
+<code>--agent</code> is verified inert in a <code>-p</code> turn on CLI 2.1.259, tested with a
+throwaway agent whose prompt was <em>"reply only ZEBRA"</em>. The reply came back in the main
+voice. The system-prompt fallback exists for a good reason.</p>
+
+<h2>Option A — hold the process open <span class="cost">recommended</span></h2>
+
+<p>Keep the CLI. Change what Bridge does with it. The stream parser, the renderer, the session
+browser, the transcript reader and the agent index are all untouched.</p>
+
+<ol class="steps">
+<li>
+  <h3>One child per conversation, not per turn</h3>
+  <p>Spawn on the first message with <code>--input-format stream-json</code> always on, and never
+  call <code>stdin.end()</code>. Each later turn writes another envelope into the same stdin.
+  The <code>live</code> map already keys by session id, so it becomes the session registry
+  almost as-is.</p>
+</li>
+<li>
+  <h3>A connection that outlives a turn</h3>
+  <p>Replace the per-turn SSE with one stream per conversation, opened when the conversation is
+  and closed when it is abandoned. This is the part that actually delivers background agents:
+  it gives a late result somewhere to land. Add a reconnect, because a laptop that sleeps must
+  not orphan a running session.</p>
+</li>
+<li>
+  <h3>Split "stop this turn" from "end this session"</h3>
+  <p>Today <code>/api/abort</code> kills the child, which is correct when the child <em>is</em>
+  the turn. With a persistent child, SIGINT must interrupt the turn and leave the session
+  standing, and a separate call ends it. Add idle reaping so abandoned conversations do not
+  accumulate processes.</p>
+</li>
+<li>
+  <h3>Move agent routing out of the system prompt</h3>
+  <p>This is the one real casualty. <code>--append-system-prompt</code>,
+  <code>--permission-mode</code>, <code>--model</code> and <code>cwd</code> are all fixed at
+  spawn, but Bridge re-routes to a different agent on <em>every</em> message
+  (<code>server.ts:610-615</code>). The routing hint has to move into the user envelope instead.
+  Changing model or working directory mid-conversation now means respawning, so the UI should
+  either say so or start a new session.</p>
+</li>
+</ol>
+
+<div class="note">
+<p><strong>Unverified, and worth testing before committing.</strong> Two turns proved the session
+holds. Not yet proven: that a subagent dispatched in turn one is still alive and reporting during
+turn three. That is the actual product claim, so prove it the same way — a subagent told to sleep,
+then a second turn sent while it runs.</p>
+</div>
+
+<h2>Option B — migrate to the Agent SDK</h2>
+
+<p>Package <code>@anthropic-ai/claude-agent-sdk</code>, one <code>query()</code> per conversation
+in streaming-input mode: <code>prompt</code> takes an async generator and each user turn is
+yielded into a session that stays open. The process survives between yields, so an in-flight
+subagent can finish while the server waits.</p>
+
+<div class="scroll">
+<table>
+  <tr><th>What it buys</th><th>What it costs</th></tr>
+  <tr>
+    <td>
+      <strong>Plan mode and AskUserQuestion natively.</strong> <code>BRIDGE_PROTOCOL</code>
+      currently fakes both with fenced <code>choices</code> blocks and a plan-card convention.
+      Both become real.
+    </td>
+    <td>
+      <strong>The stream parser is rewritten.</strong> The SDK emits typed messages, and deltas
+      arrive only with <code>includePartialMessages: true</code>, as raw API stream events rather
+      than the CLI's JSONL. <code>server.ts:686-698</code> and the renderer in
+      <code>app.js</code> both change.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <strong>A real permission surface.</strong> <code>canUseTool(toolName, input, {signal,
+      suggestions})</code> returns allow or deny, so Bridge can render approval sheets instead of
+      running everything on <code>acceptEdits</code>.
+    </td>
+    <td>
+      <strong>A second integration to keep current</strong> alongside the CLI that Bridge still
+      reads <code>~/.claude</code> for. Auth, version and update paths must agree.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <strong>Sessions are unchanged.</strong> Same <code>~/.claude/projects/&lt;cwd&gt;/&lt;id&gt;.jsonl</code>,
+      with <code>resume</code>, <code>continue</code> and <code>forkSession</code>. Everything
+      Bridge built on top of the transcript files survives.
+    </td>
+    <td>
+      <strong>AskUserQuestion is not available inside subagents yet</strong>, so a dispatched
+      agent still cannot ask the user anything.
+    </td>
+  </tr>
+</table>
+</div>
+
+<h2>Recommendation</h2>
+
+<p>Do Option A first, and treat Option B as a separate decision made on its own merits once
+background agents actually work. A buys the capability you asked about with the parser and
+renderer intact. B buys plan mode, real permission prompts and AskUserQuestion, and it is worth
+doing, but it is a features project rather than an agents project, and bundling the two would
+hide which change broke what.</p>
+
+<p>The sequencing also de-risks B: once step 2 exists, the transport already tolerates events
+arriving outside a turn, which is the same shape <code>canUseTool</code> approvals need.</p>
+
+<footer>
+  <p>Scope only. Nothing here has been built, and no Bridge file has been modified.<br>
+  Findings verified against <span class="file">~/Desktop/Cowork/bridge/server.ts</span> (1,162 lines)
+  and <span class="file">public/app.js</span> (1,954 lines), plus one live two-turn CLI test.</p>
+</footer>
+</div>

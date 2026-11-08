@@ -7,7 +7,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { Desktop, desktopConfig, mcpConfig, isDesktopTool, DESKTOP_PROTOCOL } from "./desktop.ts";
@@ -843,6 +843,7 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   const usageId = req.resume || sessionId;
   const qmod = provider === "qwen" ? await loadQwen().catch(() => null) : null;
   const usageBefore: QwenUsage | null = qmod?.qwenUsage ? qmod.qwenUsage(usageId) : null;
+  clearStaleAuthLock();
   const child = spawn(CLAUDE_BIN, args, { cwd, env: env as any, stdio });
   const key = req.resume || sessionId;
   live.set(key, child);
@@ -1041,10 +1042,58 @@ async function authStatus(force = false): Promise<AuthStatus> {
   return v;
 }
 
-type Login = { child: ChildProcess; url: string; out: string; done: boolean; code: number | null; wasIn: boolean };
+/* Claude Code holds `.oauth_refresh.lock` (a directory) while it swaps an expired subscription token
+ * for a new one. Two things turn that into "Failed to refresh OAuth token: another Claude Code process is
+ * refreshing it": a process killed mid-refresh (a stopped turn ends in SIGKILL) leaves the lock behind for
+ * good, and when the token runs out every process that starts in the same moment races for the lock and
+ * all but one give up. So Bridge sweeps orphaned locks, and refreshes once on its own a little before
+ * expiry, so turns never meet an expired token. Only the expiry time is read from the credentials file.
+ * On a Mac the token lives in the Keychain, so there is no expiry to read (and Bridge never reads the
+ * Keychain): there a tiny call every few minutes lets one process refresh inside the CLI's own early
+ * window, before many turns can race for the lock. */
+const AUTH_LOCK = join(CLAUDE_DIR, ".oauth_refresh.lock");
+const AUTH_CREDS = join(CLAUDE_DIR, ".credentials.json");
+function clearStaleAuthLock(maxAgeMs = 60_000) {
+  try {
+    if (Date.now() - statSync(AUTH_LOCK).mtimeMs < maxAgeMs) return;
+    rmdirSync(AUTH_LOCK);
+    logRow({ ts: Date.now(), kind: "auth.lock", msg: "cleared a stale Claude token-refresh lock" });
+  } catch {}
+}
+function tokenExpiresAt(): number {
+  try { return Number(JSON.parse(readFileSync(AUTH_CREDS, "utf8"))?.claudeAiOauth?.expiresAt) || 0; } catch { return 0; }
+}
+let refreshing = false;
+let lastPing = 0;
+const PING_MS = 4 * 60_000;
+async function keepTokenFresh() {
+  clearStaleAuthLock();
+  const exp = tokenExpiresAt();
+  const keychain = !exp && process.platform === "darwin" && !existsSync(AUTH_CREDS);
+  if (refreshing || existsSync(AUTH_LOCK)) return;
+  if (keychain ? Date.now() - lastPing < PING_MS : !exp || exp - Date.now() > 20 * 60_000) return;
+  lastPing = Date.now();
+  refreshing = true;
+  try {
+    // any API call makes the CLI refresh first; the cheapest model and no tools keep it to one tiny request
+    const proc = Bun.spawn([CLAUDE_BIN, "-p", "reply ok", "--model", "haiku", "--max-turns", "1", "--strict-mcp-config", "--no-session-persistence", "--tools", ""],
+      { cwd: HOME, env: { ...process.env, ...settingsEnv }, stdout: "ignore", stderr: "pipe" });
+    const t = setTimeout(() => proc.kill(), 90_000);
+    const err = await new Response(proc.stderr).text();
+    const code = await proc.exited; clearTimeout(t);
+    const ok = keychain ? code === 0 : tokenExpiresAt() > exp;
+    if (!keychain || !ok) logRow({ ts: Date.now(), kind: ok ? "auth.refresh" : "auth.fail", msg: ok ? "Claude token refreshed ahead of expiry" : "token refresh failed: " + err.trim().slice(-160) });
+  } catch {} finally { refreshing = false; }
+}
+setInterval(() => { keepTokenFresh(); }, 60_000);
+
+type Login = { child: ChildProcess; url: string; out: string; done: boolean; code: number | null; wasIn: boolean; timer?: ReturnType<typeof setTimeout> };
 let login: Login | null = null;
+/** an abandoned sign-in (tab closed, code never pasted) is killed after this, so it can't wedge Claude's auth lock */
+const LOGIN_TTL_MS = 15 * 60_000;
 function endLogin() {
   if (!login) return;
+  clearTimeout(login.timer);
   try { if (!login.done) login.child.kill("SIGTERM"); } catch {}
   login = null;
 }
@@ -1079,6 +1128,7 @@ async function startLogin(mode: string, email?: string) {
     endLogin();
     return { error: why.slice(-400) };
   }
+  L.timer = setTimeout(() => { if (login === L) endLogin(); }, LOGIN_TTL_MS);
   logRow({ ts: Date.now(), kind: "auth.login", msg: "sign-in started (" + (mode === "console" ? "console" : "claude.ai") + ")" });
   return { url: L.url, mode };
 }
@@ -2301,7 +2351,10 @@ async function route(req: Request): Promise<Response> {
 
     try {
       if (p === "/api/authconfig") return json({ required: authRequired(), supabaseUrl: AUTH_URL, supabaseKey: AUTH_KEY });
-      if (p.startsWith("/api/") && authRequired() && !(await checkToken(bearer(req, q))).ok) return json({ error: "auth" }, 401);
+      // the OAuth callback page may run in a browser not signed in to Bridge: finishing needs only the
+      // vendor's code plus the single-use 18-byte state that an authenticated /oauth/start created
+      const oauthFinish = p === "/api/connectors/oauth/finish" && req.method === "POST";
+      if (p.startsWith("/api/") && !oauthFinish && authRequired() && !(await checkToken(bearer(req, q))).ok) return json({ error: "auth" }, 401);
       if (!rootsReady) { ROOTS = await readRoots(); await ensureRoots(); }
       if (p.startsWith("/api/desktop/")) return desktopApi(req, p);
       if (p === "/api/connectors" || p.startsWith("/api/connectors/")) return (await connectors.route(req, url))!;
