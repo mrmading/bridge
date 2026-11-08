@@ -1,5 +1,5 @@
 /* ══════════════════════ Bridge views ══════════════════════
- * Everything that is not the chat: Home, Inbox, Projects, Files, Agents & skills, documents,
+ * Everything that is not the thread: Home, Inbox, Projects, Files, Agents & skills, documents,
  * Settings, the ⌘K palette, the ⌘F finder and the sign-in sheet. Uses app.js's state and helpers. */
 
 const today0 = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
@@ -27,7 +27,7 @@ function fileTile(f) {
 }
 function projCard(p) {
   const live = runningList().some((r) => (r.computer || "mac") === (p.computer || "mac") && (r.cwd === p.path || String(r.cwd).indexOf(p.path + "/") === 0));
-  return '<button class="card" data-proj="' + esc((p.computer === "cloud" ? "cloud:" : "") + p.key) + '"><div class="ch">' + projIco(p.name, 38) + '<div style="flex:1;min-width:0"><div class="ct">' + esc(p.name) + cloudMark(p.computer) + '</div><div class="cm">' + p.count + (p.count === 1 ? " chat" : " chats") + " · " + fmtAgo(p.mtime) + "</div></div>" + (live ? '<span class="dot run"></span>' : "") +
+  return '<button class="card" data-proj="' + esc((p.computer === "cloud" ? "cloud:" : "") + p.key) + '"><div class="ch">' + projIco(p.name, 38) + '<div style="flex:1;min-width:0"><div class="ct">' + esc(p.name) + cloudMark(p.computer) + '</div><div class="cm">' + p.count + (p.count === 1 ? " thread" : " threads") + " · " + fmtAgo(p.mtime) + "</div></div>" + (live ? '<span class="dot run"></span>' : "") +
     '</div><p class="mono" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(p.path.replace(homeDir(), "~")) + "</p></button>";
 }
 function signinCard() {
@@ -45,7 +45,7 @@ const VIEWS = {
     const done = S.recent.filter((s) => !s.running && !s.needs && s.mtime >= today0()).length;
     const n = (k, one, many) => "<b>" + k + " " + (k === 1 ? one : many) + "</b>";
     const brief = needs.length || runs.length || done
-      ? [needs.length ? n(needs.length, "thing needs you", "things need you") : "", runs.length ? n(runs.length, "chat is working", "chats are working") : "", done ? n(done, "chat finished today", "chats finished today") : ""].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " and $1") + "."
+      ? [needs.length ? n(needs.length, "thing needs you", "things need you") : "", runs.length ? n(runs.length, "thread is working", "threads are working") : "", done ? n(done, "thread finished today", "threads finished today") : ""].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " and $1") + "."
       : "Nothing is running. Start something below, or tap the orb to talk.";
     const top = S.home.projects.filter((p) => p.path !== homeDir())[0];
     const chips = [["Catch me up on everything", 1], ["What's waiting on me?", 1], top ? ["What should I do next in " + top.name + "?", 0] : null, ["Review what changed today", 0]].filter(Boolean);
@@ -56,11 +56,11 @@ const VIEWS = {
       (authed() ? composer("Ask anything, or tell your team what to do…") : signinCard()) +
       '<div class="suggest">' + chips.map(([t, cop]) => '<button class="chipx" ' + (cop ? 'data-ask="' : 'data-suggest="') + esc(t) + '">' + esc(t) + "</button>").join("") + "</div></div>" +
       sec("hand", "Needs you", needs.length ? '<span class="tag warn">' + needs.length + "</span>" : "", '<button class="more" data-go="inbox">Open inbox</button>') +
-      (needs.length ? '<div class="grid two">' + needs.slice(0, 4).map(needCard).join("") + "</div>" : empty("Nothing is waiting on you.", "When a chat ends on a question, it shows up here.")) +
+      (needs.length ? '<div class="grid two">' + needs.slice(0, 4).map(needCard).join("") + "</div>" : empty("Nothing is waiting on you.", "When a thread ends on a question, it shows up here.")) +
       sec("bolt", "Working now", runs.length ? '<span class="tag acc">' + runs.length + "</span>" : "") +
-      (runs.length ? '<div class="grid two">' + runs.map(runCard).join("") + "</div>" : empty("No chat is running.", "Long jobs keep going here even after you close Bridge.")) +
+      (runs.length ? '<div class="grid two">' + runs.map(runCard).join("") + "</div>" : empty("No thread is running.", "Long jobs keep going here even after you close Bridge.")) +
       sec("file", "Recently made for you", "", '<button class="more" data-go="files">All files</button>') +
-      (made.length ? '<div class="grid">' + made.slice(0, 4).map(fileTile).join("") + "</div>" : empty("No files yet this week.", "Documents, pages and code your chats write appear here.")) +
+      (made.length ? '<div class="grid">' + made.slice(0, 4).map(fileTile).join("") + "</div>" : empty("No files yet this week.", "Documents, pages and code your threads write appear here.")) +
       sec("folder", "Jump back in", "", '<button class="more" data-go="projects">All projects</button>') +
       '<div class="grid">' + S.home.projects.filter((p) => p.path !== homeDir()).slice(0, 4).map(projCard).join("") + "</div>" +
       "</div></div>";
@@ -88,8 +88,8 @@ const VIEWS = {
   },
 
   projects() {
-    return '<div class="view"><div class="wrap wide"><div class="row"><h1 class="big" style="flex:1">Projects</h1><button class="btn pri" data-act="choosefolder">' + ic("plus", 2) + "New project</button></div>" +
-      '<p class="sub mt8">A project is a folder your team works in. Its instructions, chats and files live together.</p>' +
+    return '<div class="view"><div class="wrap wide"><div class="row"><h1 class="big" style="flex:1">Projects</h1><button class="btn" data-go="reorganize" style="margin-right:8px">' + ic("folder") + 'Reorganize</button><button class="btn pri" data-act="choosefolder">' + ic("plus", 2) + "New project</button></div>" +
+      '<p class="sub mt8">A project is a folder your team works in. Its instructions, threads and files live together.</p>' +
       '<div class="search">' + ic("search") + '<input id="pq" placeholder="Find a project…" value="' + esc(S.projQ) + '" autocomplete="off"></div>' +
       '<div class="grid" id="plist" style="margin-top:18px">' + projList() + "</div></div></div>";
   },
@@ -103,15 +103,15 @@ const VIEWS = {
     const hooks = S.hooks || [];
     return '<div class="view"><div class="wrap wide"><div class="crumbs"><button data-go="projects">Projects</button>›<b>' + esc(p.name) + "</b></div>" +
       '<div class="row">' + projIco(p.name, 48) + '<div style="flex:1;min-width:0"><h1 class="big">' + esc(p.name) + cloudMark(comp) + '</h1><div class="sub mono" style="font-size:12px;overflow-wrap:anywhere">' + esc(p.path.replace(homeDir(), "~")) + "</div></div>" +
-      '<button class="btn pri" data-newin="' + esc(p.path) + '" data-newcomp="' + comp + '">' + ic("plus", 2) + '<span class="hide-sm">New chat here</span></button></div>' +
+      '<button class="btn pri" data-newin="' + esc(p.path) + '" data-newcomp="' + comp + '">' + ic("plus", 2) + '<span class="hide-sm">New thread here</span></button></div>' +
       '<div class="grid two" style="margin-top:22px">' +
       '<div class="card" style="cursor:default"><div class="ch">' + ic("book") + '<span class="ct">Instructions</span><span class="tag">CLAUDE.md</span></div>' +
-      "<p>" + (info ? (info.claude ? esc(info.claude) : "No instructions yet. Rules you write here apply to every chat in " + esc(p.name) + ".") : "Loading…") + "</p>" +
+      "<p>" + (info ? (info.claude ? esc(info.claude) : "No instructions yet. Rules you write here apply to every thread in " + esc(p.name) + ".") : "Loading…") + "</p>" +
       '<button class="btn mt12" data-doc-create="' + esc(p.path + "/CLAUDE.md") + '" data-computer="' + comp + '">' + (info && info.claude ? "Edit instructions" : "Write instructions") + "</button></div>" +
       '<div class="card" style="cursor:default"><div class="ch">' + ic("zap") + '<span class="ct">Automations</span><span class="tag">' + (hooks.length + (info ? info.hooks : 0)) + " hooks</span></div>" +
-      "<p>" + (hooks.length ? "Every chat runs your automations: " + esc([...new Set(hooks.map((h) => h.event))].slice(0, 5).join(", ")) + "." : "No automations configured.") + (info && info.hooks ? " This project adds " + info.hooks + " of its own." : "") + "</p>" +
+      "<p>" + (hooks.length ? "Every thread runs your automations: " + esc([...new Set(hooks.map((h) => h.event))].slice(0, 5).join(", ")) + "." : "No automations configured.") + (info && info.hooks ? " This project adds " + info.hooks + " of its own." : "") + "</p>" +
       '<button class="btn mt12" data-stab-open="advanced">Manage</button></div></div>' +
-      sec("inbox", "Chats", '<span class="tag">' + p.count + "</span>") +
+      sec("inbox", "Threads", '<span class="tag">' + p.count + "</span>") +
       '<div class="list">' + (info && info.sessions ? info.sessions.slice(0, 30).map((s) => {
         const run = runningList().find((r) => r.id === s.id), need = S.home.needs.find((x) => x.id === s.id);
         return '<button class="li" data-open="' + openRef(p.key, s.id, comp) + '"><span class="dot ' + (run ? "run" : need ? "wait" : "ok") + '"></span><div class="l"><b>' + esc(s.title) + "</b><span>" + esc(s.preview || "") + '</span></div><span class="r">' + (run ? '<span class="mono" data-since="' + run.started + '">' + fmtEl(Date.now() - run.started) + "</span>" : fmtShortAgo(s.mtime)) + "</span></button>";
@@ -171,7 +171,7 @@ const VIEWS = {
     const K = { "turn.start": ["started", "k-start"], "turn.done": ["done", "k-done"], "turn.error": ["failed", "k-error"], "turn.exit": ["exited", "k-error"], "turn.stop": ["stopped", ""], "file.save": ["saved", ""] };
     return '<div class="view"><div class="wrap"><div class="row"><h1 class="big" style="flex:1">Activity</h1><span class="faint" style="font-size:12px">today · since Bridge started</span></div>' +
       '<div class="tiles">' + tile("running now", s.running) + tile("turns", s.turns, s.done + " done · " + s.failed + " failed" + (s.stopped ? " · " + s.stopped + " stopped" : "")) +
-      tile("spend", "$" + s.spend.toFixed(2), "model time " + fmtEl(s.wall)) + tile("chats touched", s.sessionsToday, s.saves + " file saves") + "</div>" +
+      tile("spend", "$" + s.spend.toFixed(2), "model time " + fmtEl(s.wall)) + tile("threads touched", s.sessionsToday, s.saves + " file saves") + "</div>" +
       sec("pulse", "Log", '<span class="tag">' + A.log.length + "</span>") +
       '<div class="list">' + (A.log.map((r) => {
         const k = K[r.kind] || [r.kind.split(".").pop(), ""];
@@ -199,7 +199,7 @@ const KINDS = { All: null, Documents: /^(md|txt|pdf|docx?|rtf)$/, Pages: /^html?
 function madeList() {
   const q = S.filesQ.toLowerCase(), re = KINDS[S.filesKind];
   const list = S.home.made.filter((f) => (!re || re.test(f.ext)) && (!q || (f.name + " " + f.sessionTitle + " " + f.path).toLowerCase().includes(q)));
-  return list.length ? '<div class="grid">' + list.map(fileTile).join("") + "</div>" : '<div class="empty-c">' + (q ? "Nothing made this week matches. Press ↵ to search every chat for it." : "Nothing here this week.") + "</div>";
+  return list.length ? '<div class="grid">' + list.map(fileTile).join("") + "</div>" : '<div class="empty-c">' + (q ? "Nothing made this week matches. Press ↵ to search every thread for it." : "Nothing here this week.") + "</div>";
 }
 function browseList() {
   const d = S.dir;
@@ -227,7 +227,7 @@ function agentList() {
     const L = agentLook(a.name), busy = runs.filter((r) => r.agent === a.name).length;
     return '<div class="card agent-card" style="cursor:default"><div class="big-ava" style="background:' + L.color + '">' + esc(L.init) + '<span class="dot ' + (busy ? "run" : "ok") + '"></span></div>' +
       '<div class="ct" style="font-weight:600">' + esc(a.name) + '</div><p style="min-height:38px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + esc(L.role) + "</p>" +
-      '<div class="row mt8"><span class="tag ' + (busy ? "acc" : "ok") + '">' + (busy ? "Busy in " + busy + (busy > 1 ? " chats" : " chat") : "Available") + '</span><span class="cm" style="font-size:11.5px;color:var(--fg-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(a.category || "") + "</span></div>" +
+      '<div class="row mt8"><span class="tag ' + (busy ? "acc" : "ok") + '">' + (busy ? "Busy in " + busy + (busy > 1 ? " threads" : " thread") : "Available") + '</span><span class="cm" style="font-size:11.5px;color:var(--fg-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(a.category || "") + "</span></div>" +
       '<div class="row mt12"><button class="btn" style="flex:1;justify-content:center" data-assign="' + esc(a.name) + '">Give a task</button><button class="icon-btn" data-doc="' + esc(a.path) + '" title="Read its instructions">' + ic("book") + "</button></div></div>";
   }).join("") || '<div class="empty-c">No teammate matches.</div>';
 }
@@ -278,7 +278,7 @@ async function openDoc(path, title, opts) {
   const computer = opts.computer === "cloud" ? "cloud" : "mac";
   S.doc = { path, title: title || base(path), back, from, loading: true, text: "", computer };
   go("doc");
-  // a file a chat made outside the Bridge folders opens on that chat's say-so (its transcript names it)
+  // a file a thread made outside the Bridge folders opens on that thread's say-so (its transcript names it)
   const sid = opts.session || (S.chat && S.chat.id) || "";
   const d = await getJ("/api/file?path=" + encodeURIComponent(path) + (sid ? "&session=" + encodeURIComponent(sid) : "") + cq(computer)).catch((e) => ({ error: String(e) }));
   if (d.url) d.url += cq(computer);
@@ -399,11 +399,11 @@ function openPalette() {
 function palRender(q) {
   q = q.toLowerCase();
   const rows = [
-    ...[["New chat", "act", "new", "⌘T"], ["Talk to " + daName(), "act", "voice", ""], ["Search every chat's transcript", "act", "finder", "⌘F"], ["Inbox", "go", "inbox", ""], ["Files", "go", "files", ""], ["Activity log", "go", "activity", ""], ["Settings files", "go", "configs", ""],
+    ...[["New thread", "act", "new", "⌘T"], ["Talk to " + daName(), "act", "voice", ""], ["Search every thread's transcript", "act", "finder", "⌘F"], ["Inbox", "go", "inbox", ""], ["Files", "go", "files", ""], ["Activity log", "go", "activity", ""], ["Settings files", "go", "configs", ""],
       ["Toggle theme", "act", "theme", "⌘J"], ["Settings", "act", "settings", ""], [S.tech ? "Hide technical details" : "Show technical details", "act", "tech", ""], [authed() ? "Claude account" : "Sign in to Claude Code", "act", "signin", ""]]
       .map(([l, k, v, kb]) => ["Actions", "data-" + k + '="' + v + '"', l, kb, "bolt"]),
     ...runningList().map((r) => ["Working now", 'data-open="' + openRef(r.key, r.id, r.computer) + '"', r.title, r.projectName + " · " + r.step, "bolt"]),
-    ...S.recent.slice(0, 80).map((s) => ["Chats", 'data-open="' + openRef(s.project, s.id, s.computer) + '"', s.title, projectName(s.projectPath) + " · " + fmtAgo(s.mtime), "inbox"]),
+    ...S.recent.slice(0, 80).map((s) => ["Threads", 'data-open="' + openRef(s.project, s.id, s.computer) + '"', s.title, projectName(s.projectPath) + " · " + fmtAgo(s.mtime), "inbox"]),
     ...S.home.projects.filter((p) => p.path !== homeDir()).map((p) => ["Projects", 'data-proj="' + esc((p.computer === "cloud" ? "cloud:" : "") + p.key) + '"', p.name, p.path.replace(homeDir(), "~"), "folder"]),
     ...S.home.made.map((f) => ["Files", 'data-doc="' + esc(f.path) + '" data-computer="' + esc(f.computer || "mac") + '"', f.name, f.sessionTitle, "file"]),
     ...S.agents.map((a) => ["Agents", 'data-assign="' + esc(a.name) + '"', a.name, String(a.description || "").slice(0, 90), "agents"]),
@@ -459,7 +459,7 @@ async function runFind() {
   if (seq !== findSeq) return;
   $("#finderSpin").style.display = "none";
   const terms = q.toLowerCase().split(/[^a-z0-9_.-]+/).filter((w) => w.length > 2);
-  $("#finderNote").textContent = widened ? "Nothing in this folder. " + res.length + " matches everywhere else" : res.length + " chats match, best first";
+  $("#finderNote").textContent = widened ? "Nothing in this folder. " + res.length + " matches everywhere else" : res.length + " threads match, best first";
   body.innerHTML = res.length ? res.map((r) => '<button class="fres" data-open="' + esc(r.project + "|" + r.id) + '"><div class="t">' + hl(r.title, terms) + "</div>" +
     '<div class="m"><span>' + esc(projectName(r.projectPath)) + "</span><span>" + fmtAgo(r.mtime) + "</span><span>" + r.tools + " steps</span>" + (r.wrote.length ? "<span>" + r.wrote.length + " files written</span>" : "") + "</div>" +
     (r.first ? '<div class="s"><b>asked</b>' + hl(r.first, terms) + "</div>" : "") + (r.last ? '<div class="s"><b>ended</b>' + hl(r.last, terms) + "</div>" : "") +
@@ -475,7 +475,7 @@ $("#finderBody").addEventListener("click", (e) => { if (e.target.closest(".fres"
 async function openSettings() {
   // a Bridge that is itself the cloud box has no second computer to connect
   const solo = S.boot && S.boot.host && S.boot.host.kind === "cloud" && !cloudInfo().configured;
-  const tabs = [["general", "General"], ["voice", "Voice"], ["defaults", "Defaults"]].concat(solo ? [] : [["computers", "Computers"]], [["advanced", "Advanced"]]);
+  const tabs = [["general", "General"], ["voice", "Voice"], ["defaults", "Defaults"], ["tokens", "Tokens & keys"]].concat(solo ? [] : [["computers", "Computers"]], [["advanced", "Advanced"]]);
   if (solo && S.setTab === "computers") S.setTab = "general";
   const row = (b, s, ctl) => '<div class="setting"><div class="l"><b>' + b + "</b><span>" + s + "</span></div>" + ctl + "</div>";
   const tog = (on, attr) => '<button class="toggle ' + (on ? "on" : "") + '" ' + attr + "></button>";
@@ -487,7 +487,7 @@ async function openSettings() {
       (Auth.required ? row("Bridge account", "Signed in as " + esc(Auth.email || "you"), '<button class="btn" data-act="signout">Sign out</button>') : "") +
       row("Claude account", authed() ? "Signed in as " + esc(S.auth.email || (S.auth.keyAuth ? "an API key" : "Claude")) : "Not signed in", '<button class="btn" data-act="signin">' + (authed() ? "Manage" : "Sign in") + "</button>") +
       row("Connectors", "GitHub, Linear, Notion, any MCP server, or one Bridge builds for your API", '<button class="btn" data-go="connectors">Open</button>') +
-      row("Notifications", "A card, a voice line and a Mac notification when a chat finishes or needs you", tog(ls("bridgeNotify") !== "0", 'data-sv="notify"')) +
+      row("Notifications", "A card, a voice line and a Mac notification when a thread finishes or needs you", tog(ls("bridgeNotify") !== "0", 'data-sv="notify"')) +
       row("LifeOS", L && L.installed ? esc(L.versions.slice(0, 2).join(" · ")) : "Not installed under ~/.claude", L && L.dims && L.dims.length ? "" : "") +
       (L && L.dims && L.dims.length ? '<div class="dims">' + L.dims.map((d) => '<div class="dim"><span>' + esc(d.name) + '</span><span class="dim-bar"><span style="width:' + Math.max(0, Math.min(100, d.pct)) + '%"></span></span><span class="mono">' + d.pct + "%</span></div>").join("") + "</div>" : ""),
     voice: () => row("Speak answers aloud", esc(daName()) + " reads the short summary line", tog(!V.muted, 'data-sv="voice"')) +
@@ -495,27 +495,28 @@ async function openSettings() {
       row("Engines", V.health ? "Voice: " + esc({ elevenlabs: "ElevenLabs", kokoro: "Kokoro on this Mac", pulse: "Pulse", browser: "the browser" }[V.health.tts] || V.health.tts) + " · Ears: " + esc({ parakeet: "Parakeet on this Mac", mlx: "whisper (GPU)", none: "none installed" }[V.health.stt] || V.health.stt) : "Checking…", "") +
       row("Copilot model", "What " + esc(daName()) + " runs on when you talk", '<div class="seg" style="width:auto">' + ["", "sonnet", "opus", "haiku"].map((m) => '<button class="' + ((V.da && V.da.model) === m || (!(V.da && V.da.model) && !m) ? "on" : "") + '" data-damodel="' + m + '">' + esc(MODELS[m] ? MODELS[m][0] : m) + "</button>").join("") + "</div>") +
       row("Start a fresh conversation", "Clears what " + esc(daName()) + " remembers from this desk session", '<button class="btn" data-dareset>Reset</button>'),
-    defaults: () => row("Default teammate", "Who gets a new chat. Change it in any composer too", '<span class="tag">' + esc(agentLook(S.agent === "" ? "none" : S.agent).name) + "</span>") +
+    defaults: () => row("Default teammate", "Who gets a new thread. Change it in any composer too", '<span class="tag">' + esc(agentLook(S.agent === "" ? "none" : S.agent).name) + "</span>") +
       row("Default freedom", esc((MODES[S.perm] || {}).help || ""), '<span class="tag">' + esc((MODES[S.perm] || {}).label || S.perm) + "</span>") +
       row("Default model", "Effort " + esc(EFFORTS[S.effort] || S.effort), '<span class="tag">' + esc(S.ultra ? "God mode" : (MODELS[S.model] || [S.model])[0]) + "</span>") +
-      row("New chats start in", esc(S.newPath ? S.newPath.replace(homeDir(), "~") : "Your home folder"), '<button class="btn" data-act="choosefolder">Change</button>') +
-      '<p class="faint" style="font-size:12px;margin-top:10px">Bridge remembers whatever you last picked in the composer and uses it for the next chat.</p>',
+      row("New threads start in", esc(S.newPath ? S.newPath.replace(homeDir(), "~") : "Your home folder"), '<button class="btn" data-act="choosefolder">Change</button>') +
+      '<p class="faint" style="font-size:12px;margin-top:10px">Bridge remembers whatever you last picked in the composer and uses it for the next thread.</p>',
     computers: () => {
       const c = cloudInfo();
       const status = !c.configured ? '<span class="tag">Not connected</span>' : c.online ? '<span class="tag ok">Online</span>' : '<span class="tag warn">Offline</span>';
-      const how = !c.configured ? "Another Bridge, on a Fly sprite, that keeps chats running when this Mac sleeps or is closed. Pick it per chat in the project menu."
+      const how = !c.configured ? "Another Bridge, on a Fly sprite, that keeps threads running when this Mac sleeps or is closed. Pick it per thread in the project menu."
         : (c.via === "sprite-proxy" ? "Through the sprite CLI's tunnel to " + esc(c.sprite.org + "/" + c.sprite.name) + " (port " + c.sprite.port + ")" : "At " + esc(c.url)) +
           (c.online ? " · " + esc(c.version || "") + (c.home ? " · home " + esc(c.home) : "") : " · " + esc(c.error || "unreachable"));
-      return row(esc(userName()) + "'s Mac", "Online · runs chats here, with your local tools and simulators", '<span class="tag ok">Online</span>') +
+      return row(esc(userName()) + "'s Mac", "Online · runs threads here, with your local tools and simulators", '<span class="tag ok">Online</span>') +
         row("Cloud computer", how, status) +
         '<div class="setting"><div class="l"><b>' + (c.configured ? "Change the connection" : "Connect") + "</b><span>A sprite as <code>org/name</code> (Bridge opens <code>sprite proxy</code> itself, with the CLI's own login" + (c.spriteCli ? "" : "; the sprite CLI is not installed") + "), or a URL.</span>" +
         '<div class="row mt8"><input class="sheet-in" id="cloudIn" style="height:34px;flex:1;min-width:0" placeholder="nestor-280/bridge  or  https://…" value="' + esc(c.sprite ? c.sprite.org + "/" + c.sprite.name + (c.sprite.port !== 8080 ? ":" + c.sprite.port : "") : c.url || "") + '" spellcheck="false" autocomplete="off">' +
         '<button class="btn pri" data-cloudset>Connect</button>' + (c.configured ? '<button class="btn" data-cloudclear>Disconnect</button>' : "") + "</div></div></div>" +
-        row("Chats survive closing Bridge", "A chat keeps running where it started when you close the window. Reopen it and it picks up where it is.", '<span class="tag acc">Always on</span>');
+        row("Threads survive closing Bridge", "A thread keeps running where it started when you close the window. Reopen it and it picks up where it is.", '<span class="tag acc">Always on</span>');
     },
+    tokens: () => (typeof secretsSettings === "function" ? secretsSettings() : ""),
     advanced: () => row("Show technical details", "Raw tool calls next to each step, and their input and output on click", '<button class="toggle ' + (S.tech ? "on" : "") + '" data-act="tech"></button>') +
       row("Settings files", "CLAUDE.md, settings.json, memory, skills and agents", '<button class="btn" data-go="configs">Open</button>') +
-      row("Global instructions", "~/.claude/CLAUDE.md applies to every chat", '<button class="btn" data-doc="' + esc(S.boot.claudeDir + "/CLAUDE.md") + '">Edit</button>') +
+      row("Global instructions", "~/.claude/CLAUDE.md applies to every thread", '<button class="btn" data-doc="' + esc(S.boot.claudeDir + "/CLAUDE.md") + '">Edit</button>') +
       row("Activity log", "Every turn, stop and save since Bridge started", '<button class="btn" data-go="activity">Open</button>') +
       '<div class="side-h" style="padding-left:0">Automations (hooks)</div>' + (S.hooks ? (S.hooks.map((h) => '<div class="hookrow"><b>' + esc(h.event) + "</b>" + esc([h.matcher !== "*" ? h.matcher : "", h.command ? short(h.command, 90) : h.type + " hook"].filter(Boolean).join(" · ")) + "</div>").join("") || '<p class="faint">None configured.</p>') : '<p class="faint">Loading…</p>') +
       '<div class="side-h" style="padding-left:0">Folders Bridge can see</div><div class="roots">' + S.roots.map((r) => '<div class="li"><span class="ico" style="background:var(--accent-soft);color:var(--accent)">' + ic("folder") + '</span><div class="l"><b>' + esc(base(r)) + "</b><span>" + esc(r.replace(homeDir(), "~")) + '</span></div><button class="icon-btn" data-rmroot="' + esc(r) + '" title="Stop showing this folder">' + ic("x") + "</button></div>").join("") +

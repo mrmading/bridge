@@ -94,7 +94,7 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     final id = done.first;
     if (_nav.view == RootView.chat && _nav.chat?.id == id) return;
     final s = _store.recent.where((r) => r.id == id).firstOrNull;
-    final title = s?.title ?? 'A chat';
+    final title = s?.title ?? 'A thread';
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger
       ?..hideCurrentSnackBar()

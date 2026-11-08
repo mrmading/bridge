@@ -53,12 +53,12 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.only(bottom: 32),
               children: [
-                Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 12), child: Text('A project is a folder your team works in. Its instructions, chats and files live together.', style: TextStyle(color: t.muted, fontSize: 14))),
+                Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 12), child: Text('A project is a folder your team works in. Its instructions, threads and files live together.', style: TextStyle(color: t.muted, fontSize: 14))),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: TextField(onChanged: (v) => setState(() => _q = v.trim()), decoration: const InputDecoration(hintText: 'Find a project…', prefixIcon: Icon(Icons.search_rounded))),
                 ),
-                if (items.isEmpty) const EmptyState(icon: Icons.folder_off_outlined, title: 'No projects yet', body: 'Start a chat in a folder and it shows up here.'),
+                if (items.isEmpty) const EmptyState(icon: Icons.folder_off_outlined, title: 'No projects yet', body: 'Start a thread in a folder and it shows up here.'),
                 for (final p in items) _ProjectRow(p),
               ],
             ),
@@ -88,7 +88,7 @@ class _ProjectRow extends StatelessWidget {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 16, fontWeight: FontWeight.w600)),
             const SizedBox(height: 2),
-            Text([p.sessions == 0 ? 'No chats yet' : '${p.sessions} ${p.sessions == 1 ? 'chat' : 'chats'}', if (p.lastActivity > 0) relTime(p.lastActivity)].join(' · '), style: TextStyle(color: t.muted, fontSize: 13)),
+            Text([p.sessions == 0 ? 'No threads yet' : '${p.sessions} ${p.sessions == 1 ? 'thread' : 'threads'}', if (p.lastActivity > 0) relTime(p.lastActivity)].join(' · '), style: TextStyle(color: t.muted, fontSize: 13)),
           ]),
         ),
         if (waiting > 0) ...[Tag('$waiting needs you', kind: 'warn'), const SizedBox(width: 6)],
@@ -164,7 +164,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
         return ConstrainedBox(
           constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(c).height * .8),
           child: ListView(shrinkWrap: true, padding: const EdgeInsets.only(bottom: 20), children: [
-            const SheetTitle('Automations', sub: 'Hooks that run on events, for every chat on this computer.'),
+            const SheetTitle('Automations', sub: 'Hooks that run on events, for every thread on this computer.'),
             if (_hooks.isEmpty) const EmptyState(icon: Icons.bolt_outlined, title: 'No hooks'),
             for (final h in _hooks)
               Padding(
@@ -202,7 +202,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
                   indicatorSize: TabBarIndicatorSize.label,
                   dividerColor: t.border,
                   labelStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                  tabs: [Tab(text: _sessions.isEmpty ? 'Chats' : 'Chats · ${_sessions.length}'), const Tab(text: 'Files')],
+                  tabs: [Tab(text: _sessions.isEmpty ? 'Threads' : 'Threads · ${_sessions.length}'), const Tab(text: 'Files')],
                 ),
               ),
             ),
@@ -240,7 +240,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
         icon: Icons.menu_book_outlined,
         title: 'Instructions',
         tag: 'CLAUDE.md',
-        body: _instructions == null ? 'Loading…' : (_instructions!.isEmpty ? 'No instructions yet. Every chat here would follow what you write in CLAUDE.md.' : _firstLines(_instructions!)),
+        body: _instructions == null ? 'Loading…' : (_instructions!.isEmpty ? 'No instructions yet. Every thread here would follow what you write in CLAUDE.md.' : _firstLines(_instructions!)),
         onTap: _instructions?.isNotEmpty == true ? () => Nav.instance.push(FileScreen(path: _claudeMd)) : null,
       ),
       _infoCard(
@@ -265,7 +265,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
       onRefresh: _load,
       child: ListView(physics: const AlwaysScrollableScrollPhysics(), padding: const EdgeInsets.fromLTRB(0, 12, 0, 32), children: [
         if (_loading) Center(child: Padding(padding: const EdgeInsets.all(20), child: CircularProgressIndicator(color: t.accent, strokeWidth: 2))),
-        if (!_loading && _sessions.isEmpty) EmptyState(icon: Icons.chat_bubble_outline_rounded, title: _error.isNotEmpty ? 'Could not load chats' : 'No chats here yet', body: _error.isNotEmpty ? _error : 'Ask Paquito to start one in this project.'),
+        if (!_loading && _sessions.isEmpty) EmptyState(icon: Icons.chat_bubble_outline_rounded, title: _error.isNotEmpty ? 'Could not load threads' : 'No threads here yet', body: _error.isNotEmpty ? _error : 'Ask Paquito to start one in this project.'),
         if (_sessions.isNotEmpty)
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -288,7 +288,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
       onRefresh: _loadDir,
       child: ListView(physics: const AlwaysScrollableScrollPhysics(), padding: const EdgeInsets.only(top: 8, bottom: 32), children: [
         if (made.isNotEmpty) ...[
-          SecHeader(icon: Icons.auto_awesome_outlined, title: 'Made by your chats', count: made.length),
+          SecHeader(icon: Icons.auto_awesome_outlined, title: 'Made by your threads', count: made.length),
           SizedBox(
             height: 196,
             child: ListView.separated(

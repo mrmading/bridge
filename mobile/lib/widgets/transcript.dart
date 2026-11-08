@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/api.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
+import 'secret_card.dart';
 
 const _monoFamily = 'Menlo';
 const _monoFallback = ['SF Mono', 'Roboto Mono', 'monospace', 'Courier'];
@@ -18,11 +19,13 @@ const _monoFallback = ['SF Mono', 'Roboto Mono', 'monospace', 'Courier'];
 TextStyle mono(double size, Color color, {FontWeight? weight, double height = 1.4}) =>
     TextStyle(fontFamily: _monoFamily, fontFamilyFallback: _monoFallback, fontSize: size, color: color, fontWeight: weight, height: height);
 
-/// One row of the stream. [onChoice] receives a tapped ```choices option.
+/// One row of the stream. [onChoice] receives a tapped ```choices option; [onSaveSecret] saves a
+/// token from a ```secret card (null: the cards are read-only).
 class MsgRow extends StatelessWidget {
-  const MsgRow({super.key, required this.msg, this.onChoice, this.queued = false});
+  const MsgRow({super.key, required this.msg, this.onChoice, this.onSaveSecret, this.queued = false});
   final Msg msg;
   final ValueChanged<String>? onChoice;
+  final SaveSecret? onSaveSecret;
   final bool queued;
 
   @override
@@ -30,7 +33,7 @@ class MsgRow extends StatelessWidget {
     final m = msg;
     final Widget row = switch (m.kind) {
       'user' => UserBubble(text: m.text, queued: queued),
-      'assistant' || 'agent_text' => AssistantText(msg: m, onChoice: onChoice),
+      'assistant' || 'agent_text' => AssistantText(msg: m, onChoice: onChoice, onSaveSecret: onSaveSecret),
       'thinking' => ThinkingRow(msg: m),
       'tool' => ToolCard(msg: m),
       'choices' => ChoiceChips(options: m.options, onChoice: onChoice),
@@ -118,15 +121,19 @@ Future<void> openLink(String? href) async {
 }
 
 class AssistantText extends StatelessWidget {
-  const AssistantText({super.key, required this.msg, this.onChoice, this.padding = const EdgeInsets.fromLTRB(16, 8, 16, 4)});
+  const AssistantText({super.key, required this.msg, this.onChoice, this.onSaveSecret, this.padding = const EdgeInsets.fromLTRB(16, 8, 16, 4)});
   final Msg msg;
   final ValueChanged<String>? onChoice;
+  /// Set only on the last assistant message of a finished turn; the follow-up goes via [onChoice].
+  final SaveSecret? onSaveSecret;
   final EdgeInsets padding;
   @override
   Widget build(BuildContext context) {
-    // While streaming, a half-written ```choices block is just text; split once it is complete.
-    final split = msg.live ? (text: msg.text, options: const <String>[]) : splitChoices(msg.text);
+    // While streaming, a half-written ```choices or ```secret block is just text; split once complete.
+    final secrets = msg.live ? (text: msg.text, secrets: const <SecretRequest>[]) : splitSecrets(msg.text);
+    final split = msg.live ? (text: msg.text, options: const <String>[]) : splitChoices(secrets.text);
     final text = split.text.trim();
+    final canSave = onSaveSecret != null && onChoice != null;
     return Padding(
       padding: padding,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -136,6 +143,13 @@ class AssistantText extends StatelessWidget {
             selectable: true,
             styleSheet: bridgeMarkdown(context),
             onTapLink: (_, href, _) => openLink(href),
+          ),
+        if (secrets.secrets.isNotEmpty)
+          SecretPrompt(
+            key: ValueKey('secrets-${msg.id}-${msg.hashCode}'),
+            requests: secrets.secrets,
+            onSave: canSave ? onSaveSecret : null,
+            onDone: canSave ? onChoice : null,
           ),
         if (split.options.isNotEmpty) ChoiceChips(options: split.options, onChoice: onChoice),
       ]),

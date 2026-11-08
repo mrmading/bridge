@@ -108,7 +108,7 @@ class _FileScreenState extends State<FileScreen> {
                   child: FilledButton.icon(
                     onPressed: () => Nav.instance.newChat(cwd: _path),
                     icon: const Icon(Icons.add_rounded),
-                    label: Text('New chat in $name', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    label: Text('New thread in $name', maxLines: 1, overflow: TextOverflow.ellipsis),
                     style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)), textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                   ),
                 ),

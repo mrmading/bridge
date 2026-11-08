@@ -113,7 +113,7 @@ class _FilesScreenState extends State<FilesScreen> {
             ),
             if (_tab == 'made') ..._madeView(context) else ..._browseView(context),
             if (_found.isNotEmpty) ...[
-              SecHeader(icon: Icons.chat_bubble_outline_rounded, title: 'Chats that mention it', count: _found.length),
+              SecHeader(icon: Icons.chat_bubble_outline_rounded, title: 'Threads that mention it', count: _found.length),
               for (final s in _found.take(20))
                 Card2(
                   onTap: () => openSession(key: s.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, computer: s.computer),
@@ -157,7 +157,7 @@ class _FilesScreenState extends State<FilesScreen> {
       if (made.isEmpty)
         Padding(
           padding: const EdgeInsets.only(top: 32),
-          child: EmptyState(icon: Icons.auto_awesome_outlined, title: _store.home.made.isEmpty ? 'Nothing made yet' : 'No matches', body: _store.home.made.isEmpty ? 'Files your chats write land here.' : null),
+          child: EmptyState(icon: Icons.auto_awesome_outlined, title: _store.home.made.isEmpty ? 'Nothing made yet' : 'No matches', body: _store.home.made.isEmpty ? 'Files your threads write land here.' : null),
         )
       else
         Padding(

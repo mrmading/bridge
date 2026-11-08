@@ -49,6 +49,8 @@ class _SessionScreenState extends State<SessionScreen> {
   late String _id = widget.chat.id;
   late String _cwd = widget.chat.cwd;
   late String _title = widget.chat.title;
+  /// true for ~2 s after Bridge names the thread, so the moment shows in the app bar
+  bool _justTitled = false;
   late bool _isNew = widget.chat.isNew;
   /// mac · cloud. A chat that moves reopens as a new screen, so this never changes in place.
   late final String _computer = widget.chat.computer;
@@ -450,6 +452,8 @@ class _SessionScreenState extends State<SessionScreen> {
         _turnStarted = true;
         _abortKey = (f.json['sessionId'] ?? '').toString();
         unawaited(_store.rememberProvider(_id, _store.turn.provider));
+        final st = (f.json['title'] ?? '').toString();
+        if (st.isNotEmpty && _title.isEmpty) setState(() => _title = st);
         final c = (f.json['cwd'] ?? '').toString();
         if (c.isNotEmpty && c != _cwd) {
           // Outside the roots the server silently falls back to $HOME (gotcha 8).
@@ -459,6 +463,14 @@ class _SessionScreenState extends State<SessionScreen> {
         // The drawer and Home show it as working right away; background work shows up here.
         unawaited(_store.pollHome());
         if (_jobsTimer == null) _startJobs();
+      case 'title':
+        // Bridge named the thread (a 2-4 word haiku title): swap it in, glow once, refresh the drawer
+        final nt = (f.json['title'] ?? '').toString();
+        if (nt.isNotEmpty) {
+          setState(() { _title = nt; _justTitled = true; });
+          Future.delayed(const Duration(milliseconds: 2200), () { if (mounted) setState(() => _justTitled = false); });
+          unawaited(_store.pollHome());
+        }
       case 'msg':
         final d = f.dMap;
         if (d != null) _onStreamJson(d);
@@ -671,7 +683,7 @@ class _SessionScreenState extends State<SessionScreen> {
     final title = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Rename chat'),
+        title: const Text('Rename thread'),
         content: TextField(controller: c, autofocus: true, textCapitalization: TextCapitalization.sentences, decoration: const InputDecoration(hintText: 'Title'), onSubmitted: (v) => Navigator.pop(ctx, v)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
@@ -708,7 +720,7 @@ class _SessionScreenState extends State<SessionScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Move to the cloud computer?'),
-        content: const Text('The chat and its history move to the cloud computer, so it keeps working when your Mac sleeps. Files it needs must exist there too.'),
+        content: const Text('The thread and its history move to the cloud computer, so it keeps working when your Mac sleeps. Files it needs must exist there too.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Move')),
@@ -754,7 +766,7 @@ class _SessionScreenState extends State<SessionScreen> {
     final t = context.t;
     final folder = folderLabel(_cwd);
     final firstAsk = _msgs.where((m) => m.isUser && !isHarnessNote(m)).map((m) => m.text.trim()).firstOrNull ?? '';
-    final title = _title.isNotEmpty ? _title : (firstAsk.isNotEmpty ? firstAsk.replaceAll(RegExp(r'\s+'), ' ') : 'New chat');
+    final title = _title.isNotEmpty ? _title : (firstAsk.isNotEmpty ? firstAsk.replaceAll(RegExp(r'\s+'), ' ') : 'New thread');
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
@@ -767,7 +779,12 @@ class _SessionScreenState extends State<SessionScreen> {
             ...[ProjectIcon(projectLabel(_cwd), size: 24), const SizedBox(width: 9)],
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16)),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 900),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(color: _justTitled ? t.accent.withValues(alpha: .25) : Colors.transparent, borderRadius: BorderRadius.circular(6)),
+                child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16)),
+              ),
               if (folder.isNotEmpty)
                 Row(children: [
                   if (_busy) ...[PulseDot(color: t.accent, size: 6), const SizedBox(width: 2)],
@@ -782,7 +799,7 @@ class _SessionScreenState extends State<SessionScreen> {
           IconButton(tooltip: 'Talk', onPressed: () => openTalk(context), icon: Icon(Icons.graphic_eq_rounded, color: t.muted)),
           if (_deskAvail) IconButton(tooltip: 'Computer', onPressed: _openComputer, icon: Icon(Icons.desktop_windows_outlined, color: t.muted)),
           IconButton(tooltip: 'Files & progress', onPressed: _openPanel, icon: Icon(Icons.view_agenda_outlined, color: t.muted)),
-          IconButton(tooltip: 'Chat options', onPressed: _openOptions, icon: const Icon(Icons.more_horiz_rounded)),
+          IconButton(tooltip: 'Thread options', onPressed: _openOptions, icon: const Icon(Icons.more_horiz_rounded)),
         ],
       ),
       // The pane is full width; the conversation keeps a comfortable line length in the middle of it.
@@ -806,7 +823,7 @@ class _SessionScreenState extends State<SessionScreen> {
           _rename();
         case 'copy':
           Clipboard.setData(ClipboardData(text: _id));
-          toast(context, 'Chat id copied');
+          toast(context, 'Thread id copied');
         case 'stop':
           _stopTurn();
         case 'cloud':
@@ -825,13 +842,13 @@ class _SessionScreenState extends State<SessionScreen> {
       ('panel', Icons.view_agenda_outlined, 'Files & progress', true),
       ('folder', Icons.folder_open_outlined, 'Browse project folder', true),
       ('connectors', Icons.extension_outlined, 'Connectors', true),
-      ('copy', Icons.copy_rounded, 'Copy chat id', true),
+      ('copy', Icons.copy_rounded, 'Copy thread id', true),
       if (_computer == 'mac' && _store.hasCloud) ('cloud', Icons.cloud_upload_outlined, 'Move to cloud computer', true),
       ('stop', Icons.stop_circle_outlined, 'Stop all running work', _busy),
     ];
     showSidePanel<String>(
       context,
-      title: 'Chat options',
+      title: 'Thread options',
       width: 340,
       builder: (ctx) => ListView(padding: const EdgeInsets.symmetric(vertical: 4), children: [
         for (final (v, icon, label, on) in items)
@@ -871,7 +888,7 @@ class _SessionScreenState extends State<SessionScreen> {
     if (_loadError.isNotEmpty) {
       return EmptyState(
         icon: Icons.cloud_off_rounded,
-        title: 'Could not load this chat',
+        title: 'Could not load this thread',
         body: _loadError,
         action: FilledButton(onPressed: () {
           setState(() => _loading = true);
@@ -906,6 +923,8 @@ class _SessionScreenState extends State<SessionScreen> {
           liveSince: live ? _runSince : 0,
           showTech: _store.showTech,
           onChoice: last && !_busy ? (o) => _send(o) : null,
+          // The token goes straight to the server for this thread's folder; only the follow-up line is sent.
+          onSaveSecret: last && !_busy ? (req, value, scope) => _api.saveSecret(name: req.name, value: value, scope: scope, cwd: _cwd, computer: _computer) : null,
           onOpenFile: _openFile,
           footer: last && !_busy ? _footer : '',
         ));

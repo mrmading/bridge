@@ -76,7 +76,7 @@ class _InboxScreenState extends State<InboxScreen> {
                   ]),
                 ),
                 if (items.isEmpty)
-                  const Padding(padding: EdgeInsets.only(top: 60), child: EmptyState(icon: Icons.inbox_outlined, title: 'Nothing here', body: 'When a chat finishes or needs you, it lands here.'))
+                  const Padding(padding: EdgeInsets.only(top: 60), child: EmptyState(icon: Icons.inbox_outlined, title: 'Nothing here', body: 'When a thread finishes or needs you, it lands here.'))
                 else
                   Container(
                     margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),

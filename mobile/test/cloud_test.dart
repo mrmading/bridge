@@ -109,7 +109,7 @@ void main() {
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
-    expect(find.text('Run new chats on'), findsOneWidget);
+    expect(find.text('Run new threads on'), findsOneWidget);
     expect(find.textContaining('Offline · Sprite is asleep'), findsOneWidget);
     await tester.tap(find.text('Cloud computer'));
     await tester.pump(const Duration(milliseconds: 100));

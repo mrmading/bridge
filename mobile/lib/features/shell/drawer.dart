@@ -11,6 +11,7 @@ import '../../core/nav.dart';
 import '../../core/store.dart';
 import '../../core/theme.dart';
 import '../../widgets/bridge.dart';
+import '../projects/projects_screen.dart';
 import '../search/search_screen.dart';
 import '../session/session_utils.dart';
 import '../settings/settings_screen.dart';
@@ -46,7 +47,7 @@ class AppDrawer extends StatelessWidget {
               child: Row(children: [
                 Expanded(child: _PaquitoPill(on: const {RootView.home, RootView.projects, RootView.files, RootView.agents}.contains(nav.view), onTap: () => nav.go(RootView.home))),
                 const SizedBox(width: 8),
-                _RoundIcon(icon: Icons.add_rounded, tooltip: 'New chat', onTap: () => nav.newChat()),
+                _RoundIcon(icon: Icons.add_rounded, tooltip: 'New thread', onTap: () => nav.newChat()),
               ]),
             ),
             _NavItem(icon: Icons.search_rounded, label: 'Search', onTap: () => nav.push(const SearchScreen())),
@@ -250,13 +251,29 @@ class _Chats extends StatelessWidget {
           ]),
         );
 
+    // the five most recent projects, right in the menu; a pulse while one of their threads works
+    final projs = [...store.projects.where((p) => p.exists && isProjectPath(p.path))]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
+    final top = projs.take(5).toList();
+    final busyKeys = {...running.map((r) => r.key)};
     return ListView(padding: const EdgeInsets.only(bottom: 12), children: [
+      if (top.isNotEmpty) ...[
+        header('Projects'),
+        for (final p in top)
+          _ChatItem(
+            title: top.where((q) => q.name == p.name).length > 1 ? '${p.name} · ${baseName(p.path.substring(0, p.path.lastIndexOf('/').clamp(0, p.path.length)))}' : p.name,
+            lead: ProjectIcon(p.name, size: 20),
+            dot: busyKeys.contains(p.key) ? PulseDot(color: t.accent, size: 7) : null,
+            trailing: busyKeys.contains(p.key) ? null : Text('${p.sessions}', style: TextStyle(color: t.faint, fontSize: 11.5)),
+            onTap: () => Nav.instance.push(ProjectScreen(project: p)),
+          ),
+        _ChatItem(title: 'All projects', onTap: () => Nav.instance.go(RootView.projects)),
+      ],
       Padding(
         padding: const EdgeInsets.fromLTRB(20, 14, 16, 2),
         child: Row(children: [
           Icon(Icons.chat_bubble_outline_rounded, size: 15, color: t.muted),
           const SizedBox(width: 8),
-          Text('Chats', style: TextStyle(color: t.muted, fontSize: 14, fontWeight: FontWeight.w600)),
+          Text('Threads', style: TextStyle(color: t.muted, fontSize: 14, fontWeight: FontWeight.w600)),
         ]),
       ),
       if (running.isNotEmpty || needs.isNotEmpty) header('Working now', lead: PulseDot(color: t.accent, size: 6)),
@@ -292,13 +309,15 @@ class _Chats extends StatelessWidget {
             ),
         ],
       if (store.recent.isEmpty && running.isEmpty && needs.isEmpty)
-        Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 0), child: Text('Your chats will show up here.', style: TextStyle(color: t.faint, fontSize: 13))),
+        Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 0), child: Text('Your threads will show up here.', style: TextStyle(color: t.faint, fontSize: 13))),
     ]);
   }
 }
 
 class _ChatItem extends StatelessWidget {
-  const _ChatItem({required this.title, required this.onTap, this.on = false, this.dot, this.trailing, this.cloud = false, this.model = ''});
+  const _ChatItem({required this.title, required this.onTap, this.on = false, this.dot, this.trailing, this.cloud = false, this.model = '', this.lead});
+  /// a project's letter tile, in the Projects section
+  final Widget? lead;
   final bool cloud;
   /// An open model's short name ("Qwen 3.8"); '' for Claude.
   final String model;
@@ -323,6 +342,7 @@ class _ChatItem extends StatelessWidget {
             child: Row(children: [
               SizedBox(width: dot == null ? 12 : 4),
               if (dot != null) ...[dot!, const SizedBox(width: 2)],
+              if (lead != null) ...[lead!, const SizedBox(width: 10)],
               Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: on ? t.fg : t.muted, fontSize: 14))),
               if (cloud) ...[const SizedBox(width: 6), const CloudBadge(size: 13)],
               if (model.isNotEmpty) ...[const SizedBox(width: 6), Tag(model, kind: 'think')],

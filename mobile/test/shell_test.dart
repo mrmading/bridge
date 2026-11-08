@@ -65,14 +65,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
     }
     final drawer = find.byType(Drawer);
-    for (final l in ['Paquito', 'Search', 'Inbox', 'Chats']) {
+    for (final l in ['Paquito', 'Search', 'Inbox', 'Threads']) {
       expect(find.descendant(of: drawer, matching: find.text(l)), findsWidgets, reason: l);
     }
     // Vellum layout: the places live in the Paquito hub (Home), not the sidebar.
     for (final l in ['Projects', 'Files', 'Agents & skills', 'Connectors']) {
       expect(find.descendant(of: drawer, matching: find.text(l)), findsNothing, reason: l);
     }
-    expect(find.byTooltip('New chat'), findsOneWidget);
+    expect(find.byTooltip('New thread'), findsOneWidget);
     expect(find.descendant(of: find.byType(Drawer), matching: find.text('1')), findsOneWidget); // inbox badge = needs count
     expect(find.text('WORKING NOW'), findsOneWidget);
     expect(find.text('needs you'), findsOneWidget);

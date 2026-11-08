@@ -135,11 +135,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (h.needs.isNotEmpty) add('${h.needs.length} ${h.needs.length == 1 ? 'thing needs' : 'things need'} you');
-    if (h.running.isNotEmpty) add('${h.running.length} ${h.running.length == 1 ? 'chat is' : 'chats are'} working');
-    if (finished > 0) add('$finished ${finished == 1 ? 'chat' : 'chats'} finished today');
+    if (h.running.isNotEmpty) add('${h.running.length} ${h.running.length == 1 ? 'thread is' : 'threads are'} working');
+    if (finished > 0) add('$finished ${finished == 1 ? 'thread' : 'threads'} finished today');
     if (parts.length > 1) parts.insert(parts.length - 1, const TextSpan(text: 'and '));
     final text = parts.isEmpty
-        ? const TextSpan(text: 'All quiet. Pick up where you left off, or start a new chat with +.')
+        ? const TextSpan(text: 'All quiet. Pick up where you left off, or start a new thread with +.')
         : TextSpan(children: [...parts, const TextSpan(text: '.')]);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -433,7 +433,7 @@ class _ProjectTile extends StatelessWidget {
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 14, fontWeight: FontWeight.w600)),
-                Text('${p.count} ${p.count == 1 ? 'chat' : 'chats'}', style: TextStyle(color: t.faint, fontSize: 12)),
+                Text('${p.count} ${p.count == 1 ? 'thread' : 'threads'}', style: TextStyle(color: t.faint, fontSize: 12)),
               ]),
             ),
             if (live) PulseDot(color: t.accent, size: 6),

@@ -22,7 +22,7 @@ const _steps = [
   (0, 'Reaching your machine'),
   (4, 'Waking it up'),
   (15, 'Starting Bridge on it'),
-  (35, 'Loading your chats and files'),
+  (35, 'Loading your threads and files'),
   (60, 'Taking longer than usual, still trying'),
 ];
 

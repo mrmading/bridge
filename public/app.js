@@ -1,7 +1,7 @@
 /* ══════════════════════════ Bridge client ══════════════════════════
- * One page: a sidebar of chats, Home, Inbox, Projects, Files, Agents & skills, and the chat
- * itself. Every chat starts here and runs as a `claude -p` turn on the server, so it keeps going
- * when this page closes; reopening a running chat re-attaches to its transcript (/api/follow).
+ * One page: a sidebar of threads, Home, Inbox, Projects, Files, Agents & skills, and the chat
+ * itself. Every thread starts here and runs as a `claude -p` turn on the server, so it keeps going
+ * when this page closes; reopening a running thread re-attaches to its transcript (/api/follow).
  * Views live in views.js, the Talk overlay and Copilot in voice.js. */
 window.BridgeReady = new Promise((r) => (window._bridgeBooted = r));
 const $ = (s, r = document) => r.querySelector(s);
@@ -111,16 +111,16 @@ const userName = () => { const u = (S.boot && S.boot.user) || "you"; return u.ch
 const daName = () => (S.boot && S.boot.assistant) || "Claude";
 const projectName = (p) => (!p || p === homeDir() ? "Home" : base(p));
 const projKey = (p) => String(p || "").replace(/[^A-Za-z0-9]/g, "-");
-/** the query suffix that sends a request about a cloud chat on to the cloud */
+/** the query suffix that sends a request about a cloud thread on to the cloud */
 const cq = (computer) => (computer === "cloud" ? "&computer=cloud" : "");
 const cloudInfo = () => S.computers.find((x) => x.id === "cloud") || { online: false, configured: false };
 const cloudOn = () => !!cloudInfo().online && !S.home.cloudOffline;
 /** a small cloud mark for anything that lives on the cloud computer */
 const cloudMark = (computer) => (computer === "cloud" ? '<span class="cmark" title="Cloud computer">' + ic("cloud", 2) + "</span>" : "");
 const openRef = (key, id, computer) => esc(key + "|" + id + "|" + (computer || "mac"));
-/** Qwen chats get a small tag wherever they are listed */
+/** Qwen threads get a small tag wherever they are listed */
 const providerInfo = (id) => ((S.boot && S.boot.providers) || []).find((p) => p.id === id) || { id, name: id, short: id, group: id === "claude" ? "claude" : "open" };
-/** a chat on an open model carries that model's short name wherever it is listed */
+/** a thread on an open model carries that model's short name wherever it is listed */
 const qwenTag = (provider) => { if (!provider || provider === "claude") return ""; const p = providerInfo(provider); return '<span class="tag think qtag-p" title="' + esc(p.name + (p.note ? " · " + p.note : "")) + '">' + esc(p.short || p.name) + "</span>"; };
 /** RunPod GPU spend as a person reads it: "$0.02 GPU · 41s", with ~ when the price per second is an assumption */
 const gpuCost = (u) => {
@@ -129,7 +129,7 @@ const gpuCost = (u) => {
   return (u.estimated ? "~" : "") + usd + " GPU · " + t;
 };
 const providerOn = (id) => ((S.boot && S.boot.providers) || []).some((p) => p.id === id && p.available);
-/** where a chat runs, for the label: a configured cloud is named as such, otherwise the host this server is */
+/** where a thread runs, for the label: a configured cloud is named as such, otherwise the host this server is */
 const hostLabel = (computer) => (computer === "cloud" ? ic("cloud") + "Cloud computer" : (S.boot && S.boot.host && S.boot.host.kind === "cloud" ? ic("cloud") : ic("laptop")) + esc((S.boot && S.boot.host && S.boot.host.name) || "This Mac"));
 const homeFor = (computer) => (computer === "cloud" ? cloudInfo().home || "" : homeDir());
 
@@ -325,7 +325,7 @@ function groupOf(ms) {
   return "Earlier";
 }
 function runningList() {
-  // the server's list, plus a chat this page has just started and the server has not reported yet
+  // the server's list, plus a thread this page has just started and the server has not reported yet
   const out = S.home.running.slice();
   for (const c of S.chats.values()) if (c.streaming && c.id && !out.some((r) => r.id === c.id)) out.push({ id: c.id, key: c.key, computer: c.computer, title: chatTitle(c), projectName: projectName(c.path), cwd: c.path, started: c.turnStart || Date.now(), step: c.step || "Starting", jobs: [] });
   return out;
@@ -341,29 +341,44 @@ function renderSide() {
     const g = groupOf(s.mtime);
     (groups[g] = groups[g] || []).push(s);
   }
-  const item = (id, key, title, extra, dot, computer, provider) => '<button class="chat-i ' + (on(id) ? "on" : "") + '" data-open="' + openRef(key, id, computer) + '" title="' + esc(title) + '">' + (dot ? '<span class="dot ' + dot + '"></span>' : "") + '<span class="t">' + esc(title) + "</span>" + qwenTag(provider) + cloudMark(computer) + extra + "</button>";
+  const glow = (id) => { const c = S.chats.get(id), r = S.recent.find((x) => x.id === id); return ((c && c.justTitled) || (r && r.justTitled) || 0) > Date.now() - 2400; };
+  const item = (id, key, title, extra, dot, computer, provider) => '<button class="chat-i ' + (on(id) ? "on" : "") + (glow(id) ? " titled" : "") + '" data-open="' + openRef(key, id, computer) + '" title="' + esc(title) + '">' + (dot ? '<span class="dot ' + dot + '"></span>' : "") + '<span class="t">' + esc(title) + "</span>" + qwenTag(provider) + cloudMark(computer) + extra + "</button>";
   const u = userName();
   $("#side").innerHTML =
     '<div class="brand"><div class="logo"><span>B</span></div><span class="name">BRIDGE</span><span class="spacer"></span>' +
     '<button class="icon-btn hide-sm" data-act="collapse" title="Hide sidebar">' + ic("side") + "</button>" +
     '<button class="icon-btn show-sm" data-act="mnav" title="Close">' + ic("x") + "</button></div>" +
-    '<button class="newchat" data-act="new">' + ic("plus", 2.2) + "New chat<kbd>⌘T</kbd></button>" +
+    '<button class="newchat" data-act="new">' + ic("plus", 2.2) + "New thread<kbd>⌘T</kbd></button>" +
     '<div class="nav"><button class="nav-i" data-act="palette">' + ic("search") + "Search<kbd>⌘K</kbd></button>" +
-    nav.map(([id, l, i]) => '<button class="nav-i ' + (S.view === id || (id === "projects" && S.view === "project") ? "on" : "") + '" data-go="' + id + '">' + ic(i) + l +
+    nav.map(([id, l, i]) => '<button class="nav-i ' + (S.view === id || (id === "projects" && (S.view === "project" || S.view === "reorganize")) ? "on" : "") + '" data-go="' + id + '">' + ic(i) + l +
       (id === "inbox" && needs.length ? '<span class="badge warn">' + needs.length + "</span>" : "") + "</button>").join("") + "</div>" +
-    '<div class="side-scroll">' +
+    '<div class="side-scroll">' + sideProjects(runs) +
     (runs.length || needs.length ? '<div class="side-h"><span class="dot run" style="width:6px;height:6px"></span>Working now</div>' +
       runs.map((r) => item(r.id, r.key, r.title, '<span class="m el" data-since="' + r.started + '">' + fmtEl(Date.now() - r.started) + "</span>", "run", r.computer, r.provider)).join("") +
       needs.slice(0, 6).map((n) => item(n.id, n.key, n.title, '<span class="m" style="color:var(--warn)">needs you</span>', "wait", n.computer, n.provider)).join("") : "") +
     (S.home.cloudOffline ? '<div class="side-empty" title="Bridge cannot reach the cloud computer right now">' + ic("cloud") + " Cloud computer offline</div>" : "") +
     ["Today", "Yesterday", "This week", "Earlier"].filter((g) => groups[g]).map((g) => '<div class="side-h">' + g + "</div>" +
       groups[g].slice(0, g === "Earlier" ? 15 : 40).map((s) => item(s.id, s.project, s.title, "", "", s.computer, s.provider)).join("")).join("") +
-    (!S.recent.length && !runs.length ? '<div class="side-empty">Your chats show up here.</div>' : "") +
+    (!S.recent.length && !runs.length ? '<div class="side-empty">Your threads show up here.</div>' : "") +
     "</div>" +
     '<div class="me"><div class="avatar" data-menu="me" title="Account">' + esc(u.slice(0, 2).toUpperCase()) + '</div><div class="who"><b>' + esc(u) + "</b><span>" +
     esc(authed() ? (S.auth.subscriptionType ? S.auth.subscriptionType.replace(/^\w/, (c) => c.toUpperCase()) + " plan" : S.auth.email || "Signed in") : "Not signed in") + "</span></div>" +
     '<button class="icon-btn" data-act="theme" title="Theme (⌘J)">' + ic(document.documentElement.dataset.theme === "dark" ? "sun" : "moon") + "</button>" +
     '<button class="icon-btn" data-act="settings" title="Settings">' + ic("gear") + "</button></div>";
+}
+/** the five most recent projects right in the sidebar, with a dot while one of their threads works */
+function sideProjects(runs) {
+  const projs = S.home.projects.filter((p) => p.path !== homeDir()).slice(0, 5);
+  if (!projs.length) return "";
+  const open = ls("bridgeSideProjects") !== "0";
+  const busy = new Set(runs.map((r) => r.key));
+  const ref = (p) => (p.computer === "cloud" ? "cloud:" : "") + p.key;
+  return '<button class="side-h side-tog' + (open ? "" : " shut") + '" data-act="sideprojects" title="' + (open ? "Hide" : "Show") + ' projects">' + ic("chev") + "Projects</button>" +
+    (open ? projs.map((p) => '<button class="chat-i proj-i ' + (S.view === "project" && S.proj === ref(p) ? "on" : "") + '" data-proj="' + esc(ref(p)) + '" title="' + esc(p.path) + '">' +
+      projIco(p.name, 18) + '<span class="t">' + esc(p.name) + (projs.filter((q) => q.name === p.name).length > 1 ? ' <span class="faint">· ' + esc(p.computer === "cloud" ? "cloud" : (p.path.split("/").slice(-2, -1)[0] || "~")) + "</span>" : "") + "</span>" + cloudMark(p.computer) +
+      (busy.has(p.key) ? '<span class="dot run"></span>' : '<span class="m">' + p.count + "</span>") + "</button>").join("") +
+      '<button class="chat-i proj-all" data-go="projects">All projects</button>' : "") +
+    '<div class="side-h">Threads</div>';
 }
 function renderTop() {
   const burger = '<button class="icon-btn show-sm" data-act="mnav" title="Menu">' + ic("menu") + "</button>" +
@@ -371,12 +386,12 @@ function renderTop() {
   let title = "", right = "";
   const c = S.chat;
   if (S.view === "chat" && c && (c.id || c.msgs.length)) {
-    title = projIco(projectName(c.path), 22) + '<span class="t" data-act="rename" title="Double-click to rename">' + esc(chatTitle(c)) + "</span>";
+    title = projIco(projectName(c.path), 22) + '<span class="t' + (c.justTitled > Date.now() - 2400 ? " titled" : "") + '" data-act="rename" title="' + esc(c.named ? "Named by you · double-click to rename" : c.titledAt ? "Named by Bridge " + new Date(c.titledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " · double-click to rename" : "Double-click to rename") + '">' + esc(chatTitle(c)) + "</span>";
     right = '<span class="pill hide-sm" title="' + esc(c.path) + '">' + hostLabel(c.computer) + "</span>" +
       (S.deskAvail ? '<button class="pill ' + (S.desk && S.panel ? "on" : "") + '" data-act="desk" title="Watch the computer the agent uses">' + ic("screen") + '<span class="hide-sm">Computer</span></button>' : "") +
       '<button class="pill ' + (S.panel && !S.desk ? "on" : "") + '" data-act="panel" title="Files & progress (⌘I)">' + ic("panel") + '<span class="hide-sm">Files &amp; progress</span></button>' +
       '<button class="icon-btn" data-menu="chatmenu" title="More">' + ic("more") + "</button>";
-  } else if (S.view === "chat") title = '<span class="t">New chat</span>';
+  } else if (S.view === "chat") title = '<span class="t">New thread</span>';
   else if (S.view === "doc" && S.doc) title = '<span class="t">' + esc(S.doc.title) + "</span>";
   $("#top").innerHTML = burger + '<div class="title">' + title + '</div><div class="spacer"></div>' + right +
     '<button class="pill" data-act="voice" title="Talk to ' + esc(daName()) + '">' + ic("mic") + '<span class="hide-sm">Talk</span></button>';
@@ -491,7 +506,7 @@ function openMenu(kind, anchor) {
     const models = [""].concat((S.boot && S.boot.models) || ["opus", "sonnet", "haiku"]);
     const prov = curProvider();
     const open = ((S.boot && S.boot.providers) || []).filter((p) => p.group === "open");
-    // two tabs: Claude, and open models; the tab follows the chat's provider until you pick the other one
+    // two tabs: Claude, and open models; the tab follows the thread's provider until you pick the other one
     const tab = S.modelTab || (providerInfo(prov).group === "open" ? "open" : "claude");
     const top = open.length ? '<div class="seg mtabs"><button class="' + (tab === "claude" ? "on" : "") + '" data-mtab="claude">Claude</button><button class="' + (tab === "open" ? "on" : "") + '" data-mtab="open">Open models</button></div>' : "";
     if (open.length && tab === "open") m.innerHTML = top + '<div class="menu-h">Open models</div>' + open.map((p) => p.available
@@ -526,7 +541,7 @@ function openMenu(kind, anchor) {
       mi('data-act="mention"', ic("at") + lb("Mention a file", "Point at something in the project") + "<kbd>@</kbd>") +
       mi('data-act="skill"', ic("spark") + lb("Use a skill", S.skills.slice(0, 3).map((s) => s.label).join(", ") + "…") + "<kbd>/</kbd>") +
       mi('data-act="instructions"', ic("book") + lb("Project instructions", "View or edit CLAUDE.md")) +
-      mi('data-act="conn-scope"', ic("plug") + lb("Connectors", "Tools this chat can use"));
+      mi('data-act="conn-scope"', ic("plug") + lb("Connectors", "Tools this thread can use"));
   } else if (kind === "me") {
     m.innerHTML = '<div class="menu-h">' + esc(Auth.email || userName()) + "</div>" +
       mi('data-act="settings"', ic("gear") + lb("Settings")) + mi('data-act="signin"', ic("shield") + lb("Claude account", authed() ? S.auth.email || "Signed in" : "Not signed in")) +
@@ -536,7 +551,7 @@ function openMenu(kind, anchor) {
     m.innerHTML = mi('data-act="rename"', ic("edit") + lb("Rename")) +
       mi('data-act="rawtranscript"', ic("term") + lb("Open raw transcript")) +
       mi('data-act="copyid"', ic("copy") + lb("Copy session id")) +
-      mi('data-act="conn-scope"', ic("plug") + lb("Connectors", "Which connectors this chat uses")) +
+      mi('data-act="conn-scope"', ic("plug") + lb("Connectors", "Which connectors this thread uses")) +
       (c && c.computer !== "cloud" ? mi('data-act="revealfolder"', ic("folder") + lb("Open the folder", c ? short(c.path, 40) : "")) : "") +
       (c && c.id && c.computer !== "cloud" && !busy && cloudInfo().configured ? mi('data-act="movecloud"', ic("cloud") + lb("Move to cloud computer", cloudOn() ? "Continues there; keeps running with your Mac closed" : "The cloud computer is offline")) : "") +
       mi('data-act="tech"', ic("term") + lb(S.tech ? "Hide technical details" : "Show technical details", "Raw tool calls next to each step")) +
@@ -560,7 +575,7 @@ function setChoice(k, v) {
     if (v !== "claude" && !providerOn(v)) return toast(providerInfo(v).name + " is not set up on this server");
     S.modelTab = null;
     S.provider = v; ls("bridgeProvider", v);
-    // a chat keeps its own provider; switching in it moves its next turn
+    // a thread keeps its own provider; switching in it moves its next turn
     if (S.view === "chat" && S.chat && !chatBusy(S.chat)) S.chat.provider = v;
   }
   else if (k === "proj") { S.newPath = v; ls(S.computer === "cloud" ? "bridgeCwdCloud" : "bridgeCwd", v); acDir = null; }
@@ -573,7 +588,7 @@ function setChoice(k, v) {
   }
 }
 
-/* ─────────────────────────── chats ─────────────────────────── */
+/* ─────────────────────────── threads ─────────────────────────── */
 function newChat(path, computer) {
   computer = computer || S.computer;
   return { id: null, tmp: "n" + Date.now(), computer, provider: S.provider, key: path ? projKey(path) : "", path: path || homeFor(computer) || homeDir(), title: "", named: false, msgs: [], usage: null, model: "", branch: "",
@@ -584,7 +599,24 @@ const chatBusy = (c) => !!(c && (c.streaming || c.running));
 function chatTitle(c) {
   if (c.title) return c.title;
   const u = c.msgs.find((m) => m.kind === "user");
-  return u ? u.text.replace(/\s+/g, " ").slice(0, 60) : "New chat";
+  return u ? quickTitle(u.text) : "New thread";
+}
+/** the instant name, same rule as the server's: drop "hey, please can you", keep five words, capitalise */
+const TITLE_FILLER = /^(?:(?:hey|hi|hello|ok(?:ay)?|so|now|also|then|and|but|yes|yeah|great|cool|thanks|thank you|pl+e?a?se?|pls|plz|can|could|would|will|you|we|i|u|kindly|just|quickly|go ahead and|let'?s|lets|want|wanna|need|to|me|us|help|try|would like|like|tell|show|give|explain|check|what'?s|whats|what|is|are|the|a|an|about|me|do|does)\b[\s,!.?:;-]*)+/i;
+function quickTitle(text) {
+  let s = String(text || "").replace(/```[\s\S]*?```/g, " ").replace(/https?:\/\/\S+/g, " ").replace(/\s+/g, " ").trim();
+  const stripped = s.replace(TITLE_FILLER, "").trim();
+  if (stripped.split(" ").length >= 2) s = stripped;
+  const w = s.split(" ").slice(0, 5).join(" ").replace(/[\s,.;:!?-]+$/, "");
+  return w ? w[0].toUpperCase() + w.slice(1) : "New thread";
+}
+/** a thread just got its real name: swap it in everywhere and glow it once, so the moment is visible */
+function applyTitle(c, title, at) {
+  if (!title || c.named) return;
+  c.title = title; c.titledAt = at || Date.now(); c.justTitled = Date.now();
+  if (S.chat === c) renderTop();
+  renderSide();
+  setTimeout(() => { c.justTitled = 0; }, 2400);
 }
 function startNewChat(path, agent) {
   if (path !== undefined && path !== S.newPath) setChoice("proj", path);
@@ -593,7 +625,7 @@ function startNewChat(path, agent) {
   go("chat");
   setTimeout(() => { const ta = $("#ta"); if (ta) ta.focus(); }, 30);
 }
-/** open a chat from anywhere: the sidebar, the inbox, a card. A running chat re-attaches. */
+/** open a thread from anywhere: the sidebar, the inbox, a card. A running thread re-attaches. */
 async function openChat(key, id, opts) {
   opts = opts || {};
   let c = S.chats.get(id);
@@ -615,10 +647,10 @@ async function loadChat(c) {
   let r;
   try { r = await getJ("/api/session?key=" + encodeURIComponent(c.key) + "&id=" + c.id + cq(c.computer)); } catch (e) { r = { error: String(e) }; }
   c.loading = false;
-  if (r.error) { c.msgs = [{ kind: "assistant", text: "Could not open this chat: " + r.error, ts: Date.now() }]; paintChat(c); return; }
+  if (r.error) { c.msgs = [{ kind: "assistant", text: "Could not open this thread: " + r.error, ts: Date.now() }]; paintChat(c); return; }
   c.msgs = r.events || []; c.usage = r.meta.usage; c.model = r.meta.model; c.branch = r.meta.branch; c.hookCount = r.meta.hookCount || 0;
   if (r.meta.cwd && (!c.path || c.path === homeFor(c.computer))) c.path = r.meta.cwd;
-  if (r.meta.title) { c.title = r.meta.title; c.named = !!r.meta.named; }
+  if (r.meta.title) { c.title = r.meta.title; c.named = !!r.meta.named; c.titledAt = r.meta.titledAt || 0; }
   if (r.meta.provider) c.provider = r.meta.provider;
   c.qwenUsage = r.meta.qwenUsage || null;
   c.offset = r.offset || 0; c.loaded = true;
@@ -650,7 +682,7 @@ function attach(c) {
   es.onerror = () => { /* EventSource reconnects by itself */ };
 }
 function detach(c) { if (c.follow) { try { c.follow.close(); } catch (e) {} c.follow = null; } }
-/** while a chat runs, ask the server what it is doing; when it stops, settle the page */
+/** while a thread runs, ask the server what it is doing; when it stops, settle the page */
 let jobsT = null;
 async function pollJobs(now) {
   clearTimeout(jobsT);
@@ -720,7 +752,7 @@ function renderTurn(c, t, ti, isLast) {
     '<div class="a-name">' + esc(look.name) + qwenTag(t.user && t.user.provider === "qwen" || items.some((m) => /qwen/i.test(m.model || "")) ? "qwen" : "") + (agentName && t.user && t.user.routedTo ? '<span class="tag acc" title="Auto picked this teammate">auto</span>' : "") + '<span class="faint" style="font-weight:400">' + fmtTime(t.user ? t.user.ts : items[0] && items[0].ts) + "</span></div>";
   // the work block: one line per step, collapsed once the turn is done
   const steps = work.concat(sideTail);
-  // a turn that is only thinking and writing reads as plain chat; the work block appears with its first tool call
+  // a turn that is only thinking and writing reads as plain thread; the work block appears with its first tool call
   if (tools.length || sideTail.length) {
     const startTs = tms(t.user ? t.user.ts : items[0] && items[0].ts) || c.turnStart;
     const endTs = Math.max.apply(null, [startTs].concat(items.map((m) => tms(m.ts) || 0)).concat(items.filter((m) => m.result && m.result.ts).map((m) => tms(m.result.ts))));
@@ -741,7 +773,10 @@ function renderTurn(c, t, ti, isLast) {
   for (const m of answer) {
     if (m.kind === "plan") { h += planCard(m); continue; }
     const x = m.live ? { body: m.text, choices: [] } : extractChoices(m.text);
+    const sx = m.live || typeof extractSecrets !== "function" ? { body: x.body, secrets: [] } : extractSecrets(x.body);
+    x.body = sx.body;
     h += '<div class="prose' + (m.live ? " cursor" : "") + '">' + md(x.body) + "</div>";
+    if (sx.secrets.length && isLast && !live) h += secretCards(c, sx.secrets);
     if (x.choices.length && isLast && !live) h += '<div class="ask"><div class="q">' + ic("hand") + "<span>" + esc(questionOf(x.body)) + '</span></div><div class="opts">' +
       x.choices.map((o, i) => '<button class="opt" data-choice="' + esc(o) + '"><span class="n">' + (i + 1) + "</span><span><b>" + esc(o) + "</b></span></button>").join("") + "</div></div>";
   }
@@ -778,9 +813,9 @@ function jobCard(j) {
   return '<div class="job"><div class="jh"><span class="spin" style="width:14px;height:14px;border-radius:50%;border:2px solid color-mix(in srgb,var(--accent) 25%,transparent);border-top-color:var(--accent);animation:rot .8s linear infinite;flex:none"></span><b>' + esc(j.title) + '</b><span class="el" data-since="' + j.since + '">' + fmtEl(Date.now() - j.since) + "</span></div>" +
     '<div class="bar indet"><i></i></div>' +
     (j.subs && j.subs.length ? '<div class="sub-agents">' + j.subs.map((a) => '<span class="sa">' + ava(a) + esc(a) + ' <span class="typing"><i></i><i></i><i></i></span></span>').join("") + "</div>" : "") +
-    '<div class="leave">' + ic("bell") + "Takes a while? Leave this chat or close Bridge. It keeps going and you get a ping when it is done.</div></div>";
+    '<div class="leave">' + ic("bell") + "Takes a while? Leave this thread or close Bridge. It keeps going and you get a ping when it is done.</div></div>";
 }
-/* ── artifacts: pages, docs and images a turn made, opened beside the chat like Claude's ── */
+/* ── artifacts: pages, docs and images a turn made, opened beside the thread like Claude's ── */
 const ART_RE = /\.(html?|md|markdown|svg|png|jpe?g|gif|webp|pdf)$/i;
 const ART_KIND = { html: "Page", htm: "Page", md: "Document", markdown: "Document", svg: "Image", png: "Image", jpg: "Image", jpeg: "Image", gif: "Image", webp: "Image", pdf: "PDF" };
 const artKind = (p) => ART_KIND[extOf(p).toLowerCase()] || "File";
@@ -896,7 +931,7 @@ function planCard(m) {
     (m.decided ? '<div class="decided">' + esc(m.decided) + "</div>" : '<div class="acts"><button class="btn pri" data-plan="approve">' + ic("check", 2.2) + 'Approve and build</button><button class="btn" data-plan="revise">Revise</button></div>') + "</div>";
 }
 
-/* ── the chat view ────────────────────────────────────────────── */
+/* ── the thread view ────────────────────────────────────────────── */
 function renderChatView() {
   const c = S.chat || (S.chat = newChat(S.newPath));
   const host = $("#viewHost");
@@ -952,7 +987,7 @@ function flush(c, from) {
   });
 }
 function scrollMsgs(force) { const m = $("#msgs"); if (m && (force || m.scrollHeight - m.scrollTop - m.clientHeight < 240)) m.scrollTop = m.scrollHeight; }
-/** the tray above the composer: what is still running for this chat, from the server */
+/** the tray above the composer: what is still running for this thread, from the server */
 function paintTray(c) {
   const box = $("#tray");
   if (!box) return;
@@ -1017,7 +1052,7 @@ function paintPanel() {
     const sel = S.pfile && fs.some((f) => f.p === S.pfile) ? S.pfile : (fs.find((f) => f.kind !== "read") || {}).p;
     body = (sel ? '<div class="preview" id="pprev"><div class="row" style="margin-bottom:10px"><span class="tag">' + esc(extOf(sel).toUpperCase() || "FILE") + '</span><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(base(sel)) + "</b>" +
       '<button class="icon-btn" data-doc="' + esc(sel) + '" data-computer="' + esc(c.computer || "mac") + '" title="Open">' + ic("ext") + '</button></div><div id="pprevBody" class="faint">Loading…</div></div>' : "") +
-      '<div class="side-h" style="padding-left:2px">' + (fs.length ? "Touched in this chat · " + fs.length : "Files appear here as the work produces them") + "</div>" +
+      '<div class="side-h" style="padding-left:2px">' + (fs.length ? "Touched in this thread · " + fs.length : "Files appear here as the work produces them") + "</div>" +
       fs.map((f) => '<button class="li ' + (f.p === sel ? "cur" : "") + '" style="border:0;padding:7px 4px" data-pfile="' + esc(f.p) + '"><span class="ico" style="background:var(--bg-active);width:26px;height:26px">' + ic(f.kind === "read" ? "read" : f.kind === "new" ? "file" : "edit") + '</span><div class="l"><span style="font-family:var(--mono);font-size:12px;color:var(--fg)">' + esc(short(f.p.replace(homeDir(), "~"), 44)) + '</span></div><span class="tag ' + (f.kind === "new" ? "ok" : f.kind === "edited" ? "acc" : "") + '">' + f.kind + "</span></button>").join("");
     if (sel) setTimeout(() => previewInto(sel, $("#pprevBody")), 0);
   } else if (S.ptab === "progress") {
@@ -1026,7 +1061,7 @@ function paintPanel() {
     body = '<div class="side-h" style="padding-left:2px">Goal</div><p style="font-size:13px;padding:0 4px 8px">' + esc(goal.slice(0, 280) || "Not set yet") + "</p>" +
       (todos ? '<div class="side-h" style="padding-left:2px">Checklist</div>' + todos.map((t) => '<div class="todo ' + (t.status === "completed" ? "done" : t.status === "in_progress" ? "doing" : "") + '"><span class="bx">' + (t.status === "completed" ? ic("check", 3) : "") + '</span><span class="tt">' + esc(t.content || t.activeForm || "") + "</span></div>").join("") : "") +
       (claimed.length ? '<div class="side-h" style="padding-left:2px">Steps achieved</div>' + claimed.slice(-12).map((x) => '<div class="todo done"><span class="bx">' + ic("check", 3) + '</span><span class="tt" style="text-decoration:none;color:var(--fg-muted)">' + esc(x) + "</span></div>").join("") : "") +
-      (!todos && !claimed.length ? '<p class="faint" style="font-size:12.5px;padding:4px">Checklists and completed steps land here as the chat moves.</p>' : "");
+      (!todos && !claimed.length ? '<p class="faint" style="font-size:12.5px;padding:4px">Checklists and completed steps land here as the thread moves.</p>' : "");
   } else {
     const u = c.usage || {};
     const tools = c.msgs.filter((m) => m.kind === "tool").length;
@@ -1037,7 +1072,7 @@ function paintPanel() {
       "<dt>Runs on</dt><dd>" + esc(userName()) + "'s Mac</dd>" +
       "<dt>Tokens</dt><dd>" + fmtN(u.input || 0) + " in · " + fmtN(u.output || 0) + " out · " + fmtN(u.cacheRead || 0) + " cached</dd>" +
       (c.lastResult ? "<dt>Last turn</dt><dd>" + ((c.provider && c.provider !== "claude") || /qwen/i.test(c.model || "") ? (c.lastResult.qwen ? esc(gpuCost(c.lastResult.qwen)) + " · " : "") : "$" + (c.lastResult.total_cost_usd || 0).toFixed(3) + " · ") + fmtEl(c.lastResult.duration_ms || 0) + "</dd>" : "") +
-      (c.qwenUsage && c.qwenUsage.jobs ? "<dt>GPU, this chat</dt><dd>" + esc(gpuCost(c.qwenUsage)) + " · " + c.qwenUsage.jobs + (c.qwenUsage.jobs === 1 ? " job" : " jobs") + "</dd>" : "") +
+      (c.qwenUsage && c.qwenUsage.jobs ? "<dt>GPU, this thread</dt><dd>" + esc(gpuCost(c.qwenUsage)) + " · " + c.qwenUsage.jobs + (c.qwenUsage.jobs === 1 ? " job" : " jobs") + "</dd>" : "") +
       "<dt>Steps</dt><dd>" + tools + " tool calls" + (c.hookCount ? " · " + c.hookCount + " hooks" : "") + "</dd>" +
       "<dt>Session id</dt><dd>" + esc(c.id || "new") + "</dd></dl>" +
       '<div class="side-h" style="padding-left:0;margin-top:10px">Power tools</div>' +
@@ -1129,12 +1164,14 @@ async function runTurn(c, msg) {
       c.deskShut = false;
       c.live = c.live || p.sessionId; c.id = c.id || p.sessionId; c.key = c.key || projKey(p.cwd || c.path);
       if (p.cwd) c.path = p.cwd;
+      if (p.title && !c.title) c.title = p.title;
       S.chats.set(c.id, c);
       if (fresh) { if (S.chat === c) renderTop(); renderSide(); setTimeout(refreshHome, 1500); setTimeout(refreshRecent, 2500); }
       return;
     }
     if (p.t === "auth") { S.auth = p.d || S.auth; openSignin("Claude Code is not signed in, so that message did not run. Sign in and send it again."); return; }
     if (p.t === "stderr") { const line = String(p.d).trim(); if (line && !/hook|deprecat|warning/i.test(line)) push({ kind: "assistant", text: "```\n" + line + "\n```", ts: Date.now() }); return; }
+    if (p.t === "title") { applyTitle(c, p.title, p.at); setTimeout(refreshRecent, 300); return; }
     if (p.t === "ping" || p.t === "end" || p.t === "error" || p.t === "raw") return;
     const d = p.d;
     if (!d || !d.type) return;
@@ -1234,7 +1271,7 @@ function accUsage(u, x) {
   u = u || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   return { input: u.input + (x.input_tokens || 0), output: u.output + (x.output_tokens || 0), cacheRead: u.cacheRead + (x.cache_read_input_tokens || 0), cacheWrite: u.cacheWrite + (x.cache_creation_input_tokens || 0) };
 }
-/** the stop button and placeholder follow the chat's state without redrawing the text box */
+/** the stop button and placeholder follow the thread's state without redrawing the text box */
 function refreshComposerBar() {
   if (S.view !== "chat" || !S.chat) return;
   const comp = $("#composer"); if (!comp) return;
@@ -1251,13 +1288,13 @@ async function refreshComputers() {
   try { const c = await getJ("/api/computers"); if (!Array.isArray(c)) return; S.computers = c; } catch (e) { return; }
   if (S.computer === "cloud" && !cloudInfo().configured) { S.computer = "mac"; ls("bridgeComputer", "mac"); S.newPath = ls("bridgeCwd") || ""; }
 }
-/** copy a Mac chat to the cloud computer and continue it there */
+/** copy a Mac thread to the cloud computer and continue it there */
 async function moveChatToCloud(c) {
   if (!c || !c.id) return;
   if (!cloudOn()) return toast("The cloud computer is offline right now");
   toast("Moving to the cloud computer…");
   const r = await post("/api/move", { key: c.key, id: c.id }).catch((e) => ({ error: String(e) }));
-  if (r.error) return toastCard({ kind: "error", title: "Could not move this chat", detail: r.error });
+  if (r.error) return toastCard({ kind: "error", title: "Could not move this thread", detail: r.error });
   S.chats.delete(c.id);
   Object.assign(c, { computer: "cloud", key: r.key, path: r.cwd, loaded: false, offset: 0 });
   S.chats.set(c.id, c);
@@ -1284,13 +1321,14 @@ function announceTurn(c) {
   const asks = ok && /\?\s*$/.test(text);
   toastCard({ kind: asks ? "waiting" : ok ? "done" : "error", title: chatTitle(c), detail: text, onOpen: () => openChat(c.key, c.id) });
   if (ls("bridgeNotify") === "0") return;
-  if (window.Voice && Voice.say) Voice.say((asks ? "Your " + projectName(c.path) + " chat needs you. " : ok ? "Your " + projectName(c.path) + " chat finished. " : "Your " + projectName(c.path) + " chat stopped with an error. ") + ((text.match(/[^.!?]+[.!?]/) || [text.slice(0, 160)])[0] || ""));
+  if (window.Voice && Voice.say) Voice.say((asks ? "Your " + projectName(c.path) + " thread needs you. " : ok ? "Your " + projectName(c.path) + " thread finished. " : "Your " + projectName(c.path) + " thread stopped with an error. ") + ((text.match(/[^.!?]+[.!?]/) || [text.slice(0, 160)])[0] || ""));
   if (!document.hasFocus()) post("/api/notify", { title: projectName(c.path) + (asks ? " needs you" : ok ? " finished" : " failed"), subtitle: chatTitle(c), body: text.slice(0, 200) }).catch(() => {});
 }
-/** an event from the server (via the Copilot stream): a chat somewhere else finished or needs you */
+/** an event from the server (via the Copilot stream): a thread somewhere else finished or needs you */
 function onServerEvent(e) {
   if (!e || !e.kind) return;
   if (e.kind === "started") { refreshHome(); return; }
+  if (e.kind === "titled") { const c = S.chats.get(e.id); if (c) applyTitle(c, e.title, e.at); else { for (const s of S.recent) if (s.id === e.id) { s.title = e.title; s.justTitled = Date.now(); } renderSide(); } setTimeout(refreshRecent, 300); return; }
   refreshHome(); setTimeout(refreshRecent, 600);
   const c = S.chats.get(e.id);
   if (c && !c.streaming && c.running) pollJobs(true);
@@ -1302,7 +1340,7 @@ function onServerEvent(e) {
 async function refreshHome() {
   // a refusal (401, an error) is not a Home: keep what is on screen
   try { const h = await getJ("/api/home"); if (!h || !Array.isArray(h.running)) return; S.home = h; S.homeAt = Date.now(); } catch (e) { return; }
-  // a chat open in this page that the server says is running, but nothing here follows it yet
+  // a thread open in this page that the server says is running, but nothing here follows it yet
   for (const r of S.home.running) { const c = S.chats.get(r.id); if (c && c.loaded && !c.streaming && !c.follow) attach(c); }
   renderSide();
   if (S.view === "home" || S.view === "inbox") softRender();
@@ -1422,6 +1460,7 @@ function act(a, t, e) {
   else if (a === "new") startNewChat();
   else if (a === "palette") openPalette();
   else if (a === "theme") toggleTheme();
+  else if (a === "sideprojects") { ls("bridgeSideProjects", ls("bridgeSideProjects") === "0" ? "1" : "0"); renderSide(); }
   else if (a === "settings") openSettings();
   else if (a === "panel") { if (S.desk) { S.desk = null; S.panel = true; } else S.panel = !S.panel; if (!S.panel) S.art = null; render(); }
   else if (a === "desk") { if (S.desk && S.panel) closeDesk(); else openDesk(S.chat); }
@@ -1484,7 +1523,7 @@ function chooseFolder() {
   if (v && v.trim()) useFolder(v.trim());
 }
 window.bridgeFolderPicked = (p) => useFolder(p);
-/** make sure Bridge may read the folder, then start new chats there */
+/** make sure Bridge may read the folder, then start new threads there */
 async function useFolder(path) {
   path = String(path || "").replace(/\/+$/, "");
   if (!path) return;
@@ -1540,7 +1579,7 @@ setInterval(() => {
 /* ─────────────────────────── boot ─────────────────────────── */
 async function boot() {
   document.body.classList.toggle("tech", S.tech);
-  // paint as soon as Bridge knows who it is; chats, home and configs land as they arrive (a busy machine or a slow cloud never holds the page blank)
+  // paint as soon as Bridge knows who it is; threads, home and configs land as they arrive (a busy machine or a slow cloud never holds the page blank)
   const [rq, aq, cq2, oq, hq] = ["/api/recent?limit=120", "/api/agents", "/api/configs", "/api/roots", "/api/home"].map((u) => getJ(u).catch(() => null));
   let b = await getJ("/api/bootstrap").catch(() => null);
   if (b && (b.error || !Array.isArray(b.models))) b = null;

@@ -300,7 +300,7 @@ class Run {
   factory Run.fromJson(Map<String, dynamic> j) => Run(
         id: _s(j['id']),
         key: _s(j['key']),
-        title: _s(j['title']).isNotEmpty ? _s(j['title']) : (_s(j['prompt']).isNotEmpty ? _s(j['prompt']) : 'Untitled chat'),
+        title: _s(j['title']).isNotEmpty ? _s(j['title']) : (_s(j['prompt']).isNotEmpty ? _s(j['prompt']) : 'Untitled thread'),
         projectName: _s(j['projectName']),
         cwd: _s(j['cwd']),
         // Prefer `started`; fall back to now - elapsed when only a duration is sent.
@@ -319,7 +319,7 @@ class Need {
   final String id, key, title, projectName, ask, computer;
   final int since;
   factory Need.fromJson(Map<String, dynamic> j) =>
-      Need(id: _s(j['id']), key: _s(j['key']), title: _s(j['title']).isEmpty ? 'Untitled chat' : _s(j['title']), projectName: _s(j['projectName']), ask: _s(j['ask']), since: _i(j['since']), computer: _computer(j['computer']));
+      Need(id: _s(j['id']), key: _s(j['key']), title: _s(j['title']).isEmpty ? 'Untitled thread' : _s(j['title']), projectName: _s(j['projectName']), ask: _s(j['ask']), since: _i(j['since']), computer: _computer(j['computer']));
 }
 
 /// A file a chat wrote.
@@ -455,4 +455,33 @@ class Computer {
       configured: j['configured'] != false,
     );
   }
+}
+
+// ── secrets (tokens & API keys) ──────────────────────────────────────────
+
+/// `global` saves for every thread; `project` only for the thread's folder. Anything else is global.
+String secretScope(dynamic v) => _s(v).trim().toLowerCase() == 'project' ? 'project' : 'global';
+
+/// The message a thread gets after a token was saved from a ```secret card. Never contains the value.
+String secretSavedMessage(String name, String scope) => '🔒 Saved $name (${scope == 'project' ? 'this project' : 'everywhere'}). Continue.';
+
+/// One line of a ```secret block: the agent asks for a token named [name].
+class SecretRequest {
+  const SecretRequest({required this.name, this.scope = 'global', this.hint = ''});
+  final String name, scope, hint;
+}
+
+/// GET /api/secrets: a saved token. The value never leaves the server; [hint] is masked (`abcd…wxyz`).
+class SecretInfo {
+  SecretInfo({required this.name, required this.scope, this.hint = '', this.updatedAt = 0, this.project = ''});
+  final String name, scope, hint, project;
+  final int updatedAt;
+  bool get isProject => scope == 'project';
+  factory SecretInfo.fromJson(Map<String, dynamic> j) => SecretInfo(
+        name: _s(j['name']),
+        scope: secretScope(j['scope']),
+        hint: _s(j['hint']),
+        updatedAt: _i(j['updatedAt']),
+        project: _s(j['project']),
+      );
 }

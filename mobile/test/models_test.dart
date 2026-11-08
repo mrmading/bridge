@@ -40,7 +40,7 @@ void main() {
   test('parsing is lenient: junk and missing fields never throw', () {
     final h = HomeData.fromJson({'running': 'nope', 'needs': [1, null, {}], 'made': [{'path': '/a/b/report.pdf'}]});
     expect(h.running, isEmpty);
-    expect(h.needs.single.title, 'Untitled chat');
+    expect(h.needs.single.title, 'Untitled thread');
     expect(h.made.single.name, 'report.pdf');
     expect(h.made.single.ext, 'PDF');
     final r = Run.fromJson({'elapsed': 60000});

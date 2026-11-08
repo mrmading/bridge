@@ -101,7 +101,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   Text(
                     _sent
                         ? 'Enter the 6-digit code we sent to ${_email.text.trim()}.'
-                        : 'Your chats, your team, from anywhere. We email you a link; no password.',
+                        : 'Your threads, your team, from anywhere. We email you a link; no password.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: t.muted, fontSize: 15, height: 1.45),
                   ),

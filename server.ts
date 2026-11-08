@@ -8,10 +8,12 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { existsSync, readdirSync, readFileSync, rmdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { Desktop, desktopConfig, mcpConfig, isDesktopTool, DESKTOP_PROTOCOL } from "./desktop.ts";
 import { createConnectors } from "./connectors/routes.ts";
+import { createReorganize } from "./reorganize.ts";
+import { createSecrets, type Scope } from "./secrets.ts";
 
 const HOME = homedir();
 const CLAUDE_DIR = join(HOME, ".claude");
@@ -106,6 +108,12 @@ const BRIDGE_PROTOCOL = [
   "   `choices`, one short option per line (2-6 lines). Bridge renders them as buttons; the click becomes the next message.",
   "2. In plan mode, finish your reply with the complete plan as markdown under a heading that starts with `Plan`.",
   "   Bridge renders it as a plan card with Approve / Revise buttons; Approve sends the next message with edits enabled.",
+  "3. When you need a token, API key or password, never ask for it in chat and never tell the user to edit an env file.",
+  "   End your reply with a fenced block whose info string is `secret`, one line per secret: `NAME scope where-to-get-it`",
+  "   (NAME in CAPS_SNAKE; scope `global` for a key used everywhere, `project` for one that belongs to this codebase only).",
+  "   Bridge shows a masked field and saves the value straight to its store (global: ~/.claude/.env; project: Bridge's",
+  "   per-folder store, outside the repo). From the next turn on it is in your environment as $NAME; you never see the value",
+  "   and must never print or echo it. The user's next message says it is saved. If a token is pasted in chat anyway, say so.",
 ].join("\n");
 
 /* ────────────────────────────── helpers ────────────────────────────── */
@@ -116,7 +124,7 @@ const json = (data: unknown, status = 200) =>
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
   });
 
-const SENSITIVE = [/\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\.credentials/, /id_rsa/, /\/\.env/, /\.pem$/, /keychain/i];
+const SENSITIVE = [/\/bridge\/secrets\//, /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\.credentials/, /id_rsa/, /\/\.env/, /\.pem$/, /keychain/i];
 /** Bridge only ever touches the folders you have added — not the whole machine. */
 let ROOTS: string[] = [];
 function guard(p: string): string | null {
@@ -216,6 +224,51 @@ async function setTitle(id: string, title: string) {
   await Bun.write(TITLES_FILE, JSON.stringify(Object.fromEntries(customTitles), null, 2));
   return t;
 }
+/** Bridge's own short thread names. Claude Code writes an `ai-title` a few seconds into the first
+ *  turn and it runs long ("Upload active sessions to bridge app computer"), so until then a thread was
+ *  named by its raw prompt. Bridge names it twice instead: a cleaned-up first few words the moment the
+ *  message is sent, then a 2-4 word title from a one-shot haiku call (~2 s). A name the user typed
+ *  (titles.json) always wins; this sidecar is below it and above Claude Code's ai-title. */
+const AUTO_TITLES_FILE = join(DATA_DIR, "auto-titles.json");
+const autoTitles = new Map<string, { title: string; at: number }>();
+try {
+  const disk = JSON.parse(await Bun.file(AUTO_TITLES_FILE).text());
+  for (const [k, v] of Object.entries(disk) as any) if (v && typeof v.title === "string") autoTitles.set(k, v);
+} catch {}
+let autoSaveTimer: any = null;
+function setAutoTitle(id: string, title: string) {
+  autoTitles.set(id, { title, at: Date.now() });
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => Bun.write(AUTO_TITLES_FILE, JSON.stringify(Object.fromEntries(autoTitles))).catch(() => {}), 500);
+}
+const FILLER = /^(?:(?:hey|hi|hello|ok(?:ay)?|so|now|also|then|and|but|yes|yeah|great|cool|thanks|thank you|pl+e?a?se?|pls|plz|can|could|would|will|you|we|i|u|kindly|just|quickly|go ahead and|let'?s|lets|want|wanna|need|to|me|us|help|try|would like|like|tell|show|give|explain|check|what'?s|whats|what|is|are|the|a|an|about|me|do|does)\b[\s,!.?:;-]*)+/i;
+/** the instant name: the request minus greetings and "please can you", first five words, capitalised */
+function quickTitle(prompt: string) {
+  let s = String(prompt || "").replace(/```[\s\S]*?```/g, " ").replace(/https?:\/\/\S+/g, " ").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  const stripped = s.replace(FILLER, "").trim();
+  if (stripped.split(" ").length >= 2) s = stripped;
+  const w = s.split(" ").slice(0, 5).join(" ").replace(/[\s,.;:!?-]+$/, "");
+  return w ? w[0].toUpperCase() + w.slice(1) : "New thread";
+}
+/** the real name: one haiku turn with no hooks, tools, MCP or saved session, so it neither costs a
+ *  LifeOS start-up nor leaves a stray thread behind. Empty on any failure — the quick title stays. */
+async function aiThreadTitle(prompt: string): Promise<string> {
+  const text = String(prompt || "").slice(0, 1500);
+  if (!text.trim()) return "";
+  try {
+    const proc = Bun.spawn([CLAUDE_BIN, "-p", "--model", "haiku", "--no-session-persistence", "--setting-sources", "",
+      "--strict-mcp-config", "--disable-slash-commands", "--tools", "",
+      "--system-prompt", "You name chat threads. Reply with ONLY a 2-4 word title in Title Case for the user's request. " +
+        "Name the subject, not the action word 'help'. Fix typos, keep product and proper names, no quotes, no trailing punctuation."],
+      { cwd: tmpdir(), stdin: new Blob([text]), stdout: "pipe", stderr: "ignore", env: { ...process.env, ...settingsEnv } as any });
+    const timer = setTimeout(() => proc.kill(), 20_000);
+    const out = (await new Response(proc.stdout).text()).trim().split("\n").pop() || "";
+    clearTimeout(timer);
+    if ((await proc.exited) !== 0) return "";
+    const t = out.replace(/^["'`*#\s]+|["'`*.\s]+$/g, "").replace(/^title:\s*/i, "");
+    return t && t.split(/\s+/).length <= 6 && t.length <= 48 ? t : "";
+  } catch { return ""; }
+}
 const metaCache = new Map<string, { m: number; v: SessionMeta }>();
 try {
   const disk = JSON.parse(await Bun.file(CACHE_FILE).text());
@@ -256,9 +309,9 @@ function persistCache() {
 async function sessionMeta(key: string, file: string): Promise<SessionMeta | null> {
   const m = await computeMeta(key, file);
   if (!m) return null;
-  const custom = customTitles.get(m.id);
+  const custom = customTitles.get(m.id), auto = autoTitles.get(m.id);
   const provider = providerOf(m.model);
-  return custom ? { ...m, title: custom, named: true, provider } : { ...m, provider };
+  return custom ? { ...m, title: custom, named: true, provider } : auto ? { ...m, title: auto.title, titledAt: auto.at, provider } : { ...m, provider };
 }
 /** a chat is on Qwen when its transcript says the model was qwen; everything else is Claude */
 const providerOf = (model?: string) => (/qwen/i.test(String(model || "")) ? "qwen" : "claude");
@@ -829,7 +882,9 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
 
   const cwd = guard(req.cwd || HOME) || HOME;
   const stdio = inputEnvelope ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"];
-  const env: Record<string, string | undefined> = { ...process.env, ...settingsEnv, FORCE_COLOR: "0" };
+  // tokens saved through Bridge's masked field: global ones, then this folder's (secrets.ts)
+  const secretEnv = await secrets.envFor(cwd).catch(() => ({}));
+  const env: Record<string, string | undefined> = { ...process.env, ...settingsEnv, ...secretEnv, FORCE_COLOR: "0" };
   if (desk.supported) env.DISPLAY = desk.cfg.display;   // a headed program started from Bash lands on the screen the user watches
   if (provider === "qwen") {
     Object.assign(env, {
@@ -852,9 +907,21 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void, wat
   running.set(key, run);
   homeCache = null; recentAll = null;
   logRow({ ts: Date.now(), kind: "turn.start", msg: prompt, session: key, cwd, model: req.model });
-  emitEvent({ kind: "started", at: Date.now(), id: key, key: run.key, folder: basename(cwd), cwd, title: prompt.slice(0, 60), text: prompt });
+  // a new thread is named at once (quick title), then properly when haiku answers; a resumed one keeps its name
+  const fresh = !req.resume && !customTitles.has(key) && !autoTitles.has(key);
+  const quick = quickTitle(String(req.prompt || ""));
+  if (fresh) setAutoTitle(key, quick);
+  emitEvent({ kind: "started", at: Date.now(), id: key, key: run.key, folder: basename(cwd), cwd, title: autoTitles.get(key)?.title || quick, text: prompt });
   let outcome: { error: boolean; text: string } | null = null;
-  send({ t: "start", sessionId: key, cwd, args });
+  send({ t: "start", sessionId: key, cwd, args, title: fresh ? quick : undefined });
+  if (fresh) aiThreadTitle(String(req.prompt || "")).then((t) => {
+    if (!t || customTitles.has(key)) return;                     // the user renamed it in the meantime
+    setAutoTitle(key, t);
+    homeCache = null; recentAll = null;
+    send({ t: "title", title: t, at: Date.now() });
+    emitEvent({ kind: "titled", at: Date.now(), id: key, key: run.key, folder: basename(cwd), cwd, title: t, text: quick });
+    logRow({ ts: Date.now(), kind: "thread.titled", msg: quick + " → " + t, session: key, cwd });
+  });
 
   if (inputEnvelope && child.stdin) {
     child.stdin.write(JSON.stringify(inputEnvelope) + "\n");
@@ -1235,6 +1302,12 @@ async function tailState(file: string, idle: boolean): Promise<TailState> {
 function softWaiting(v: TailState, idle: boolean): Waiting {
   if (v.waiting) return v.waiting;
   if (!idle || !v.last) return null;
+  // a token asked for through a ```secret card: the thread cannot go on until it is typed in
+  const secret = /```secret\s*\n([\s\S]*?)```/.exec(v.last);
+  if (secret) {
+    const names = secret[1].split("\n").map((l) => (l.trim().split(/\s+/)[0] || "").replace(/^\$/, "")).filter((n) => /^[A-Z][A-Z0-9_]{1,63}$/.test(n));
+    if (names.length) return { kind: "question", text: "needs a token: " + names.join(", "), options: [] };
+  }
   const choices = /```choices\s*\n([\s\S]*?)```/.exec(v.last);
   if (choices) {
     const before = v.last.slice(0, choices.index).trim().split("\n").map((l) => l.trim()).filter(Boolean).pop() || "";
@@ -1412,7 +1485,7 @@ async function runView(r: Run) {
   const meta = file && existsSync(file) ? await sessionMeta(r.key, file) : null;
   const t = file ? await turnTail(file) : { step: "Starting", jobs: [], last: 0 };
   return {
-    id: r.sid || r.id, key: r.key, title: meta?.title || r.prompt.slice(0, 60) || "New chat",
+    id: r.sid || r.id, key: r.key, title: meta?.title || customTitles.get(r.id) || autoTitles.get(r.id)?.title || quickTitle(r.prompt),
     projectName: folderName(r.cwd), cwd: r.cwd, started: r.started, elapsed: Date.now() - r.started,
     prompt: r.prompt, model: r.model || meta?.model || "", step: t.step, jobs: t.jobs, agent: r.agent || "", provider: r.provider,
   };
@@ -1480,7 +1553,7 @@ const isDeskId = (id: string, meta?: { desk?: boolean; oneshot?: boolean }) => {
 
 /** Moments worth telling the principal about, for the Copilot and the open pages: a chat
  *  started, finished, failed, or stopped on a question. */
-type LiveEvent = { kind: "started" | "done" | "error" | "waiting"; at: number; id: string; key: string; folder: string; cwd: string; title: string; text: string; options?: string[]; computer?: string };
+type LiveEvent = { kind: "started" | "titled" | "done" | "error" | "waiting"; at: number; id: string; key: string; folder: string; cwd: string; title: string; text: string; options?: string[]; computer?: string };
 const EVENTS: LiveEvent[] = [];
 function emitEvent(ev: LiveEvent) {
   ev.computer ||= "mac";
@@ -1671,9 +1744,13 @@ async function setComputers(body: any) {
   return { ok: true, computers: await computersList() };
 }
 
+/** tokens & keys typed into a masked field (secrets.ts): global → ~/.claude/.env, project → DATA_DIR/secrets */
+const secrets = createSecrets({ globalFile: join(CLAUDE_DIR, ".env"), dataDir: DATA_DIR });
 /* the cloud's chats, proxied: same requests, sent on to the cloud's Bridge */
-const PROXY_GET = new Set(["/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw"]);
-const PROXY_POST = new Set(["/api/chat", "/api/abort", "/api/rename", "/api/save"]);
+const PROXY_GET = new Set(["/api/secrets", "/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw", "/api/reorganize", "/api/reorganize/plan"]);
+const PROXY_POST = new Set(["/api/secrets", "/api/secrets/remove", "/api/chat", "/api/abort", "/api/rename", "/api/save", ...["decide", "undecide", "project", "apply", "undo"].map((x) => "/api/reorganize/" + x)]);
+/** sorting the work folder into projects, by hand, one folder at a time (reorganize.ts) */
+const reorganize = createReorganize({ home: HOME, claudeDir: CLAUDE_DIR });
 /** which cloud chats have a page attached right now: those announce their own end */
 const cloudWatched = new Map<string, number>();
 function passThrough(src: ReadableStream<Uint8Array>, onText: (s: string) => void, onEnd: () => void) {
@@ -1976,7 +2053,7 @@ async function bridgeBlock(): Promise<string> {
     lines.push("waiting on " + DA.user + " (" + needs.length + "):");
     for (const n of needs.slice(0, 8)) lines.push("- " + n.title + " · " + n.projectName + " · asks: " + n.ask + "\n  transcript: " + sessionFile(n.id, n.key));
   }
-  const recent = EVENTS.filter((e) => e.kind !== "started").slice(-8);
+  const recent = EVENTS.filter((e) => e.kind !== "started" && e.kind !== "titled").slice(-8);
   if (recent.length) {
     lines.push("recent events:");
     for (const e of recent) lines.push("- " + new Date(e.at).toISOString().slice(11, 16) + " " + e.kind + " · " + e.title + " · " + e.folder + (e.text ? " · " + e.text.slice(0, 160) : ""));
@@ -2366,6 +2443,7 @@ async function route(req: Request): Promise<Response> {
         const body = await req.clone().json().catch(() => null);
         if (body?.computer === "cloud") { delete body.computer; return proxyCloud(p, "POST", body, req.headers.get("authorization") || ""); }
       }
+      if (p === "/api/reorganize" || p.startsWith("/api/reorganize/")) { projectsCache = null; return reorganize.route(req, p); }
       if (p === "/api/computers") return json(req.method === "POST" ? await setComputers(await req.json().catch(() => ({}))) : await computersList());
       if (p === "/api/move" && req.method === "POST") {
         const { key, id } = await req.json().catch(() => ({}) as any);
@@ -2430,8 +2508,9 @@ async function route(req: Request): Promise<Response> {
         const raw = await readFile(file, "utf8");
         const lines = raw.split("\n").filter(Boolean);
         const out = normalizeTranscript(lines);
-        const custom = customTitles.get(q.get("id") || "");
+        const custom = customTitles.get(q.get("id") || ""), auto = autoTitles.get(q.get("id") || "");
         if (custom) { out.meta.title = custom; (out.meta as any).named = true; }
+        else if (auto) { out.meta.title = auto.title; (out.meta as any).titledAt = auto.at; }
         (out.meta as any).provider = providerOf(out.meta.model);
         (out.meta as any).qwenUsage = qwenSpend.get(q.get("id") || "") || null;
         // where a follower should start: the bytes up to the last complete line
@@ -2692,6 +2771,26 @@ async function route(req: Request): Promise<Response> {
         return json(hits.sort((a, b) => b.mtime - a.mtime));
       }
 
+      if (p === "/api/secrets" && req.method === "GET") {
+        return json({ secrets: await secrets.list(q.get("cwd") || "") });
+      }
+      if (p === "/api/secrets" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}) as any);
+        const name = String(b.name || "").trim(), scope: Scope = b.scope === "project" ? "project" : "global";
+        try {
+          const r = await secrets.set(name, String(b.value ?? ""), scope, (String(b.cwd || "").startsWith("/") ? resolve(String(b.cwd)) : ""));
+          logRow({ ts: Date.now(), kind: "secret.set", msg: name + " (" + scope + ") " + r.hint, cwd: scope === "project" ? String(b.cwd || "") : undefined });
+          return json({ ok: true, ...r });
+        } catch (e: any) { return json({ error: String(e?.message || e) }, 400); }
+      }
+      if (p === "/api/secrets/remove" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}) as any);
+        const name = String(b.name || "").trim(), scope: Scope = b.scope === "project" ? "project" : "global";
+        if (secrets.check(name)) return json({ error: "bad name" }, 400);
+        await secrets.remove(name, scope, (String(b.cwd || "").startsWith("/") ? resolve(String(b.cwd)) : ""), b.project ? String(b.project) : undefined);
+        logRow({ ts: Date.now(), kind: "secret.remove", msg: name + " (" + scope + ")" });
+        return json({ ok: true });
+      }
       if (p === "/api/rename" && req.method === "POST") {
         const { id, title } = await req.json();
         if (!id || typeof id !== "string") return json({ error: "id required" }, 400);

@@ -1,7 +1,7 @@
 /* ═══════════════════════════ Talk ═══════════════════════════
  * The principal's own assistant: one persistent Claude Code process on the server (the desk),
  * one event stream here. Talk opens a full-screen orb that listens, thinks and speaks, with the
- * conversation one tap away. The same stream carries chat events (finished, needs you), which
+ * conversation one tap away. The same stream carries thread events (finished, needs you), which
  * app.js turns into cards. Also: dictation into any composer. */
 (function () {
   const V = {
@@ -59,7 +59,7 @@
         if (m.kind === "tool") return '<div class="step ' + (m.result ? "ok" : "") + '">' + (m.result ? ic(TOOL_ICON[m.name] || "zap") : '<span class="spin"></span>') + '<span class="st">' + esc(stepText(m.name, m.input, !!m.result)) + "</span></div>";
         if (m.kind === "event") { const e = m.ev; return '<div class="evrow" data-open="' + esc(e.key + "|" + e.id) + '"><b>' + esc(e.title) + "</b> · " + esc({ done: "finished", waiting: "needs you", error: "stopped with an error" }[e.kind] || e.kind) + (e.text ? " · " + esc(e.text.slice(0, 200)) : "") + "</div>"; }
         return "";
-      }).join("") || '<div class="empty-c">Ask anything about what is going on. Answers and chat events land here.</div>';
+      }).join("") || '<div class="empty-c">Ask anything about what is going on. Answers and thread events land here.</div>';
       if (stick) box.scrollTop = box.scrollHeight;
     });
   }
@@ -152,10 +152,10 @@
   function onEvent(e) {
     if (!e || !e.kind) return;
     if (typeof onServerEvent === "function") onServerEvent(e);
-    if (e.kind === "started") return;
+    if (e.kind === "started" || e.kind === "titled") return;
     push({ kind: "event", ev: e, ts: e.at });
     if (V.open && (e.kind === "waiting" || e.kind === "done")) caption("", "", e.title + (e.kind === "waiting" ? " needs you: " : " finished. ") + (e.text || "").slice(0, 140));
-    if (e.kind === "waiting" && !S.announced.has(e.id) && ls("bridgeNotify") !== "0") say("Your " + e.folder + " chat is asking: " + (e.text || "").slice(0, 300));
+    if (e.kind === "waiting" && !S.announced.has(e.id) && ls("bridgeNotify") !== "0") say("Your " + e.folder + " thread is asking: " + (e.text || "").slice(0, 300));
   }
 
   /* ── sending ─────────────────────────────────────────────────────── */
@@ -370,7 +370,7 @@
     if (feed !== undefined) V.feed = feed;
     $("#vfeed").classList.toggle("on", V.feed);
     paintState(); paintFeed(); setPhase(V.phase === "speaking" || V.phase === "thinking" || V.phase === "working" ? V.phase : "idle");
-    if (!V.msgs.length || !$("#vcap").textContent) caption("", "Hi " + userName() + ". " + (S.home.needs.length ? S.home.needs.length + (S.home.needs.length === 1 ? " thing needs" : " things need") + " you. " : "") + (S.home.running.length ? S.home.running.length + (S.home.running.length === 1 ? " chat is" : " chats are") + " working." : "Nothing is running right now."));
+    if (!V.msgs.length || !$("#vcap").textContent) caption("", "Hi " + userName() + ". " + (S.home.needs.length ? S.home.needs.length + (S.home.needs.length === 1 ? " thing needs" : " things need") + " you. " : "") + (S.home.running.length ? S.home.running.length + (S.home.running.length === 1 ? " thread is" : " threads are") + " working." : "Nothing is running right now."));
     requestAnimationFrame(draw);
   }
   function close() {

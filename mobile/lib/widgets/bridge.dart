@@ -569,7 +569,7 @@ class CloudOfflineBanner extends StatelessWidget {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
             Text('Cloud computer offline', style: TextStyle(color: t.warn, fontSize: 14, fontWeight: FontWeight.w700)),
             Text(
-              [if (reason.isNotEmpty) reason, inChat ? 'This chat continues once it is back.' : 'Cloud chats wait until it is back; your Mac still works.'].join(' · '),
+              [if (reason.isNotEmpty) reason, inChat ? 'This thread continues once it is back.' : 'Cloud threads wait until it is back; your Mac still works.'].join(' · '),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: t.warn, fontSize: 12.5),
