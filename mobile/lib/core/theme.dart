@@ -98,6 +98,9 @@ extension TokensX on BuildContext {
   Tokens get t => Theme.of(this).extension<Tokens>()!;
 }
 
+/// Pointing hand over anything clickable (arrow when disabled).
+const hand = WidgetStateMouseCursor.clickable;
+
 ThemeData buildTheme(Brightness b) {
   final k = b == Brightness.dark ? Tokens.dark : Tokens.light;
   final base = ThemeData(brightness: b, useMaterial3: true);
@@ -165,6 +168,38 @@ ThemeData buildTheme(Brightness b) {
     ),
     snackBarTheme: SnackBarThemeData(backgroundColor: k.fg, contentTextStyle: TextStyle(color: k.bg), behavior: SnackBarBehavior.floating),
     chipTheme: ChipThemeData(backgroundColor: k.active, labelStyle: TextStyle(color: k.muted, fontSize: 12), side: BorderSide.none, padding: const EdgeInsets.symmetric(horizontal: 8)),
+    // Flutter's desktop default is the arrow on buttons (hand on web only); Bridge wants the hand
+    // on everything clickable. Raw InkWells and chips pass `mouseCursor: hand` themselves.
+    textButtonTheme: const TextButtonThemeData(
+      style: ButtonStyle(mouseCursor: hand),
+    ),
+    iconButtonTheme: const IconButtonThemeData(
+      style: ButtonStyle(mouseCursor: hand),
+    ),
+    filledButtonTheme: const FilledButtonThemeData(
+      style: ButtonStyle(mouseCursor: hand),
+    ),
+    elevatedButtonTheme: const ElevatedButtonThemeData(
+      style: ButtonStyle(mouseCursor: hand),
+    ),
+    outlinedButtonTheme: const OutlinedButtonThemeData(
+      style: ButtonStyle(mouseCursor: hand),
+    ),
+    segmentedButtonTheme: const SegmentedButtonThemeData(
+      style: ButtonStyle(mouseCursor: hand),
+    ),
+    menuButtonTheme: const MenuButtonThemeData(
+      style: ButtonStyle(mouseCursor: hand),
+    ),
+    listTileTheme: const ListTileThemeData(mouseCursor: hand),
+    popupMenuTheme: const PopupMenuThemeData(mouseCursor: hand),
+    checkboxTheme: const CheckboxThemeData(mouseCursor: hand),
+    radioTheme: const RadioThemeData(mouseCursor: hand),
+    switchTheme: const SwitchThemeData(mouseCursor: hand),
+    tabBarTheme: const TabBarThemeData(mouseCursor: hand),
+    floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      mouseCursor: hand,
+    ),
     pageTransitionsTheme: const PageTransitionsTheme(builders: {
       TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
       TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),

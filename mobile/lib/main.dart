@@ -145,23 +145,18 @@ class _ShellState extends State<Shell> with WidgetsBindingObserver {
     final wide = MediaQuery.sizeOf(context).width >= 900;
     _nav.docked = wide;
     if (wide) {
-      // Desktop: sidebar docked on the left; the current view and anything pushed from it live in
-      // the pane on the right, kept at a readable width.
+      // Desktop: sidebar docked on the left; the current view and anything pushed from it fill the
+      // pane on the right. Screens that need a reading width (a chat) set their own.
       return Scaffold(
         key: _nav.shellKey,
         backgroundColor: t.bg,
         body: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           const AppDrawer(docked: true),
           Expanded(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1040),
-                child: Navigator(
-                  key: _nav.paneKey,
-                  onGenerateRoute: (_) => PageRouteBuilder(
-                    pageBuilder: (context, a, b) => ListenableBuilder(listenable: _nav, builder: (context, _) => AnimatedSwitcher(duration: const Duration(milliseconds: 160), child: KeyedSubtree(key: ValueKey('${_nav.view}:${_nav.chat?.id}'), child: _root()))),
-                  ),
-                ),
+            child: Navigator(
+              key: _nav.paneKey,
+              onGenerateRoute: (_) => PageRouteBuilder(
+                pageBuilder: (context, a, b) => ListenableBuilder(listenable: _nav, builder: (context, _) => AnimatedSwitcher(duration: const Duration(milliseconds: 160), child: KeyedSubtree(key: ValueKey('${_nav.view}:${_nav.chat?.id}'), child: _root()))),
               ),
             ),
           ),

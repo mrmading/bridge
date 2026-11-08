@@ -171,7 +171,7 @@ class ChoiceChips extends StatelessWidget {
             child: Material(
               color: t.raised,
               borderRadius: BorderRadius.circular(10),
-              child: InkWell(
+              child: InkWell(mouseCursor: hand, 
                 borderRadius: BorderRadius.circular(10),
                 onTap: onChoice == null ? null : () => onChoice!(options[i]),
                 child: Container(
@@ -214,7 +214,7 @@ class _ThinkingRowState extends State<ThinkingRow> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        InkWell(
+        InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(10),
           onTap: () => setState(() => _open = !_open),
           child: ConstrainedBox(
@@ -332,7 +332,7 @@ class _ToolCardState extends State<ToolCard> {
       child: Material(
         color: t.raised,
         borderRadius: BorderRadius.circular(12),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(12),
           onTap: () => setState(() => _open = !_open),
           child: Container(

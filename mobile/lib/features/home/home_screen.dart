@@ -1,5 +1,6 @@
-/// Home: the orb, a greeting and a one-line catch-up, the composer, then what needs you, what is
-/// working now (live), what was recently made for you, and projects to jump back into.
+/// Home, the Paquito hub (Vellum-style): the orb, a greeting and a one-line catch-up, what needs
+/// you, what is working now (live, two to a row when there is room), the hub tiles (projects, files, agents & skills, connectors), what
+/// was recently made for you, and projects to jump back into.
 library;
 
 import 'package:flutter/material.dart';
@@ -10,16 +11,14 @@ import '../../core/store.dart';
 import '../../core/theme.dart';
 import '../../widgets/bridge.dart';
 import '../../widgets/common.dart';
-import '../../widgets/composer.dart';
 import '../../widgets/orb.dart';
+import '../connectors/connectors_screen.dart';
 import '../files/file_screen.dart';
 import '../projects/projects_screen.dart';
 import '../session/session_utils.dart';
 import '../settings/settings_screen.dart';
 import '../shell/drawer.dart';
 import '../talk/talk_screen.dart';
-
-const suggestions = ["Catch me up on everything", "What's waiting on me?", 'What did you make for me today?', 'Plan my day'];
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -29,18 +28,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _store = AppStore.instance;
-  final _input = TextEditingController();
-  final _focus = FocusNode();
-  String _cwd = '';
-
-  @override
-  void dispose() {
-    _input.dispose();
-    _focus.dispose();
-    super.dispose();
-  }
-
-  void _send(String text) => Nav.instance.startChat(cwd: _cwd.isEmpty ? defaultCwd() : _cwd, message: text, computer: _store.computer);
 
   String _greeting() {
     final h = DateTime.now().hour;
@@ -56,11 +43,10 @@ class _HomeScreenState extends State<HomeScreen> {
       listenable: _store,
       builder: (context, _) {
         final h = _store.home;
-        // The bloom sits behind a transparent scaffold so it lights the app bar too, while the
+        // The backdrop sits behind a transparent scaffold so it lights the app bar too, while the
         // list scrolls under the bar instead of through it.
         return Stack(children: [
-          Positioned.fill(child: ColoredBox(color: t.bg)),
-          const Bloom(),
+          const Positioned.fill(child: HubBackdrop()),
           Scaffold(
             backgroundColor: Colors.transparent,
             appBar: const RootAppBar(),
@@ -68,20 +54,22 @@ class _HomeScreenState extends State<HomeScreen> {
               color: t.accent,
               onRefresh: _store.refreshAll,
               child: ListView(
-                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.only(top: 4, bottom: 40),
                 children: [
                   if (_store.cloudOffline) CloudOfflineBanner(reason: _store.computerById('cloud')?.reason ?? '', margin: const EdgeInsets.fromLTRB(16, 0, 16, 12)),
                   _hero(context),
                   if (_store.conn == ConnState.ready && !_store.auth.loggedIn) _signIn(context),
+                  // Wide windows have room for the hub row in view, as Vellum does; phones put the urgent cards first.
+                  if (Nav.instance.docked) const HubTiles(),
                   if (h.needs.isNotEmpty) ...[
                     SecHeader(icon: Icons.back_hand_outlined, title: 'Needs you', count: h.needs.length, countKind: 'warn', more: 'Open inbox', onMore: () => Nav.instance.go(RootView.inbox)),
                     for (final n in h.needs) NeedCard(n),
                   ],
                   if (h.running.isNotEmpty) ...[
                     SecHeader(icon: Icons.bolt_rounded, title: 'Working now', count: h.running.length, countKind: 'acc'),
-                    for (final r in h.running) RunCard(r),
+                    _running(h.running),
                   ],
+                  if (!Nav.instance.docked) const HubTiles(),
                   if (h.made.isNotEmpty) ...[
                     SecHeader(icon: Icons.description_outlined, title: 'Recently made for you', more: 'All files', onMore: () => Nav.instance.go(RootView.files)),
                     SizedBox(
@@ -116,37 +104,16 @@ class _HomeScreenState extends State<HomeScreen> {
         Semantics(
           button: true,
           label: 'Talk to ${_store.assistantName}',
-          child: GestureDetector(onTap: () => openTalk(context), child: Orb(phase: _store.conn == ConnState.ready ? 'idle' : 'offline', color: _store.accent, size: 128)),
+          child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(onTap: () => openTalk(context), child: Orb(phase: _store.conn == ConnState.ready ? 'idle' : 'offline', color: _store.accent, size: 128,
+                ))),
         ),
         const SizedBox(height: 2),
-        Text(_greeting(), textAlign: TextAlign.center, style: TextStyle(color: t.fg, fontSize: 26, fontWeight: FontWeight.w600, letterSpacing: -.4, height: 1.2)),
+        GradientText(_greeting(), textAlign: TextAlign.center, style: TextStyle(color: t.fg, fontSize: 30, fontWeight: FontWeight.w600, letterSpacing: -.4, height: 1.2)),
         const SizedBox(height: 10),
         _catchUp(context),
-        const SizedBox(height: 20),
-        Composer(controller: _input, focusNode: _focus, hint: 'Ask anything, or tell your team what to do…', showProject: true, cwd: _cwd, onCwd: (c) => setState(() => _cwd = c), onSend: _send),
-        const RunsOn(),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 44,
-          child: ListView(scrollDirection: Axis.horizontal, clipBehavior: Clip.none, children: [
-            for (final s in suggestions)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ActionChip(
-                  label: Text(s),
-                  labelStyle: TextStyle(color: t.muted, fontSize: 13),
-                  backgroundColor: t.raised.withValues(alpha: .6),
-                  side: BorderSide(color: t.border),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                  onPressed: () {
-                    _input.text = s;
-                    _input.selection = TextSelection.collapsed(offset: s.length);
-                    _focus.requestFocus();
-                  },
-                ),
-              ),
-          ]),
-        ),
+        const SizedBox(height: 8),
       ]),
     );
   }
@@ -172,7 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (finished > 0) add('$finished ${finished == 1 ? 'chat' : 'chats'} finished today');
     if (parts.length > 1) parts.insert(parts.length - 1, const TextSpan(text: 'and '));
     final text = parts.isEmpty
-        ? const TextSpan(text: 'All quiet. Ask anything, or pick up where you left off.')
+        ? const TextSpan(text: 'All quiet. Pick up where you left off, or start a new chat with +.')
         : TextSpan(children: [...parts, const TextSpan(text: '.')]);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -200,6 +167,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Compact running cards, two or three to a row once the pane is wide enough.
+  Widget _running(List<Run> runs) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        child: LayoutBuilder(builder: (context, box) {
+          final cols = box.maxWidth >= 1100 ? 3 : (box.maxWidth >= 520 ? 2 : 1);
+          final w = (box.maxWidth - 10 * (cols - 1)) / cols;
+          return Wrap(spacing: 10, runSpacing: 10, children: [for (final r in runs) SizedBox(width: w, child: RunCard(r))]);
+        }),
+      );
+
   Widget _projects(BuildContext context, List<HomeProject> list) {
     final sorted = [...list.where((p) => isProjectPath(p.path))]..sort((a, b) => b.mtime.compareTo(a.mtime));
     final top = sorted.take(4).toList();
@@ -226,7 +203,7 @@ class NeedCard extends StatelessWidget {
       child: Material(
         color: t.raised,
         borderRadius: BorderRadius.circular(14),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(14),
           onTap: open,
           child: Container(
@@ -273,39 +250,34 @@ String _cwdFor(String id) {
   return '';
 }
 
-/// A running chat: title, live elapsed, what it is doing, its background jobs, a sweeping bar.
+/// A running chat, compact: title, live elapsed, what it is doing and where, its first jobs, a sweeping bar.
 class RunCard extends StatelessWidget {
   const RunCard(this.r, {super.key});
   final Run r;
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    final store = AppStore.instance;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-      child: Material(
-        color: t.raised,
+    return Material(
+        color: t.raised.withValues(alpha: .72),
         borderRadius: BorderRadius.circular(14),
         clipBehavior: Clip.antiAlias,
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           onTap: () => openSession(key: r.key, id: r.id, cwd: r.cwd, title: r.title, computer: r.computer),
           child: Container(
             decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: t.border)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
                     PulseDot(color: t.accent),
                     const SizedBox(width: 4),
-                    Expanded(child: Text(r.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 15, fontWeight: FontWeight.w600))),
+                    Expanded(child: Text(r.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 14, fontWeight: FontWeight.w600))),
                     if (r.computer == 'cloud') ...[const SizedBox(width: 6), const CloudBadge()],
                     const SizedBox(width: 8),
                     if (r.started > 0) Elapsed(r.started, style: TextStyle(color: t.muted, fontSize: 12.5, fontFamily: 'Menlo', fontFamilyFallback: const ['monospace'])),
                   ]),
-                  const SizedBox(height: 4),
-                  Text([if (r.projectName.isNotEmpty) r.projectName, 'on ${store.computerLabel(r.computer)}'].join(' · '), style: TextStyle(color: t.muted, fontSize: 13)),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Row(children: [
                     _Typing(color: t.accent),
                     const SizedBox(width: 8),
@@ -314,13 +286,14 @@ class RunCard extends StatelessWidget {
                         duration: const Duration(milliseconds: 300),
                         layoutBuilder: (cur, prev) => Stack(alignment: Alignment.centerLeft, children: [...prev, ?cur]),
                         transitionBuilder: (c, a) => FadeTransition(opacity: a, child: SlideTransition(position: Tween(begin: const Offset(0, .4), end: Offset.zero).animate(a), child: c)),
-                        child: Text(r.step.isNotEmpty ? r.step : 'Working…', key: ValueKey(r.step), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 13)),
+                        child: Text(r.step.isNotEmpty ? r.step : 'Working…', key: ValueKey(r.step), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 12.5)),
                       ),
                     ),
+                    if (r.projectName.isNotEmpty) ...[const SizedBox(width: 8), Text(r.projectName, style: TextStyle(color: t.faint, fontSize: 12))],
                   ]),
                   if (r.jobs.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Wrap(spacing: 6, runSpacing: 6, children: [for (final j in r.jobs.take(4)) JobChip(j)]),
+                    const SizedBox(height: 8),
+                    Wrap(spacing: 6, runSpacing: 6, children: [for (final j in r.jobs.take(2)) JobChip(j)]),
                   ],
                 ]),
               ),
@@ -328,7 +301,6 @@ class RunCard extends StatelessWidget {
             ]),
           ),
         ),
-      ),
     );
   }
 }
@@ -379,7 +351,7 @@ class MadeTile extends StatelessWidget {
       color: t.raised,
       borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
+      child: InkWell(mouseCursor: hand, 
         onTap: () => Nav.instance.push(FileScreen(path: m.path, computer: m.computer)),
         child: Container(
           decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: t.border)),
@@ -449,7 +421,7 @@ class _ProjectTile extends StatelessWidget {
     return Material(
       color: t.raised,
       borderRadius: BorderRadius.circular(14),
-      child: InkWell(
+      child: InkWell(mouseCursor: hand, 
         borderRadius: BorderRadius.circular(14),
         onTap: () => Nav.instance.push(ProjectScreen(project: Project(key: p.key, path: p.path, name: name, sessions: p.count, lastActivity: p.mtime, exists: true))),
         child: Container(
@@ -465,6 +437,76 @@ class _ProjectTile extends StatelessWidget {
               ]),
             ),
             if (live) PulseDot(color: t.accent, size: 6),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// The hub's doorways, one row on wide windows and a 2-column grid on phones: the places that used to
+/// sit in the sidebar.
+class HubTiles extends StatelessWidget {
+  const HubTiles({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final store = AppStore.instance;
+    final nav = Nav.instance;
+    final projects = store.projects.where((p) => isProjectPath(p.path)).length;
+    final made = store.home.made.length;
+    final agents = store.agents.length;
+    final tiles = [
+      _HubTile(icon: Icons.folder_outlined, title: 'Projects', sub: projects == 0 ? 'Your work folders' : '$projects ${projects == 1 ? 'project' : 'projects'}', onTap: () => nav.go(RootView.projects)),
+      _HubTile(icon: Icons.description_outlined, title: 'Files', sub: made == 0 ? 'Made for you' : '$made made recently', onTap: () => nav.go(RootView.files)),
+      _HubTile(icon: Icons.groups_2_outlined, title: 'Agents & skills', sub: agents == 0 ? 'Your team' : '$agents ${agents == 1 ? 'agent' : 'agents'}', onTap: () => nav.go(RootView.agents)),
+      _HubTile(icon: Icons.extension_outlined, title: 'Connectors', sub: 'Apps & accounts', onTap: () => nav.push(const ConnectorsScreen())),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 22, 16, 4),
+      child: LayoutBuilder(builder: (context, box) {
+        final cols = box.maxWidth >= 640 ? 4 : 2;
+        final w = (box.maxWidth - 10 * (cols - 1)) / cols;
+        return Wrap(spacing: 10, runSpacing: 10, children: [for (final tile in tiles) SizedBox(width: w, child: tile)]);
+      }),
+    );
+  }
+}
+
+class _HubTile extends StatelessWidget {
+  const _HubTile({required this.icon, required this.title, required this.sub, required this.onTap});
+  final IconData icon;
+  final String title, sub;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Material(
+      color: t.raised.withValues(alpha: .72),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(mouseCursor: hand,
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          height: 64,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: t.border),
+            gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [t.accent.withValues(alpha: .08), t.accent.withValues(alpha: 0)]),
+          ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border(top: BorderSide(color: t.accent.withValues(alpha: .45))),
+          ),
+          child: Row(children: [
+            Icon(icon, size: 20, color: t.accent2),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 14.5, fontWeight: FontWeight.w600)),
+                Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.faint, fontSize: 12)),
+              ]),
+            ),
           ]),
         ),
       ),

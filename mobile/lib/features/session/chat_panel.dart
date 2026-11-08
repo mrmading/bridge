@@ -1,4 +1,4 @@
-/// "Files & progress" for one chat, as a bottom sheet: the files it touched, its todo list (the
+/// "Files & progress" for one chat, as a panel sliding in from the right: the files it touched, its todo list (the
 /// latest TodoWrite), and the details (teammate, model, mode, folder, computer, usage, id) with
 /// the Show technical details switch.
 library;
@@ -18,28 +18,21 @@ import 'session_screen.dart' show gpuCost;
 import 'session_utils.dart';
 
 Future<void> showChatPanel(BuildContext context, {required List<Msg> msgs, required String id, required String cwd, required Usage usage, Map<String, dynamic>? qwenUsage, required ValueChanged<String> onOpenFile}) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: .7,
-      minChildSize: .4,
-      maxChildSize: .95,
-      builder: (ctx, scroll) => _ChatPanel(msgs: msgs, id: id, cwd: cwd, usage: usage, qwenUsage: qwenUsage, onOpenFile: onOpenFile, scroll: scroll),
-    ),
+  return showSidePanel<void>(
+    context,
+    title: 'Files & progress',
+    width: 460,
+    builder: (_) => _ChatPanel(msgs: msgs, id: id, cwd: cwd, usage: usage, qwenUsage: qwenUsage, onOpenFile: onOpenFile),
   );
 }
 
 class _ChatPanel extends StatelessWidget {
-  const _ChatPanel({required this.msgs, required this.id, required this.cwd, required this.usage, this.qwenUsage, required this.onOpenFile, required this.scroll});
+  const _ChatPanel({required this.msgs, required this.id, required this.cwd, required this.usage, this.qwenUsage, required this.onOpenFile});
   final Map<String, dynamic>? qwenUsage;
   final List<Msg> msgs;
   final String id, cwd;
   final Usage usage;
   final ValueChanged<String> onOpenFile;
-  final ScrollController scroll;
 
   @override
   Widget build(BuildContext context) {
@@ -70,13 +63,13 @@ class _ChatPanel extends StatelessWidget {
     final t = context.t;
     final files = touchedFiles(msgs.where((m) => m.isTool)).entries.toList().reversed.toList();
     if (files.isEmpty) {
-      return ListView(controller: scroll, children: const [EmptyState(icon: Icons.description_outlined, title: 'No files yet', body: 'Files appear here as the work produces them.')]);
+      return ListView(children: const [EmptyState(icon: Icons.description_outlined, title: 'No files yet', body: 'Files appear here as the work produces them.')]);
     }
-    return ListView(controller: scroll, padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
       Text('TOUCHED IN THIS CHAT · ${files.length}', style: TextStyle(color: t.faint, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 1.1)),
       const SizedBox(height: 6),
       for (final f in files)
-        InkWell(
+        InkWell(mouseCursor: hand, 
           onTap: () {
             Navigator.pop(context);
             onOpenFile(f.key);
@@ -108,9 +101,9 @@ class _ChatPanel extends StatelessWidget {
     }
     final todos = (last?.input?['todos'] as List?) ?? const [];
     if (todos.isEmpty) {
-      return ListView(controller: scroll, children: const [EmptyState(icon: Icons.checklist_rounded, title: 'No plan yet', body: 'When the work has steps, the todo list shows here.')]);
+      return ListView(children: const [EmptyState(icon: Icons.checklist_rounded, title: 'No plan yet', body: 'When the work has steps, the todo list shows here.')]);
     }
-    return ListView(controller: scroll, padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
       for (final raw in todos)
         if (raw is Map)
           Builder(builder: (_) {
@@ -166,7 +159,7 @@ class _ChatPanel extends StatelessWidget {
         );
     return ListenableBuilder(
       listenable: store,
-      builder: (context, _) => ListView(controller: scroll, padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
+      builder: (context, _) => ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 24), children: [
         kv('Teammate', agentLabel(turn.agent)),
         kv('Model', '${modelLabel(turn.model)} · effort ${effortLabel(turn.effort)}'),
         kv('Freedom', modeInfo(turn.permissionMode).label),

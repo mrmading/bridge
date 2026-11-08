@@ -1,15 +1,16 @@
-/// The sidebar, Claude-style: Paquito (new chat), Search, the five places, then chats (working now with a
-/// pulse and a live timer, waiting ones flagged, the rest by day) and the account footer.
+/// The sidebar, Vellum-style: Paquito (opens the hub with projects, files, agents and connectors) and a
+/// new-chat button, Search, Inbox, then Chats (working now with a pulse and a live timer, waiting ones
+/// flagged, the rest by day) and the account footer.
 library;
 
 import 'package:flutter/material.dart';
 
+import '../../core/chat_tidy.dart';
 import '../../core/models.dart';
 import '../../core/nav.dart';
 import '../../core/store.dart';
 import '../../core/theme.dart';
 import '../../widgets/bridge.dart';
-import '../connectors/connectors_screen.dart';
 import '../search/search_screen.dart';
 import '../session/session_utils.dart';
 import '../settings/settings_screen.dart';
@@ -40,14 +41,16 @@ class AppDrawer extends StatelessWidget {
                 if (docked) const SizedBox(height: 40),
               ]),
             ),
-            Padding(padding: const EdgeInsets.fromLTRB(12, 2, 12, 8), child: PaquitoButton(onTap: () => nav.newChat())),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+              child: Row(children: [
+                Expanded(child: _PaquitoPill(on: const {RootView.home, RootView.projects, RootView.files, RootView.agents}.contains(nav.view), onTap: () => nav.go(RootView.home))),
+                const SizedBox(width: 8),
+                _RoundIcon(icon: Icons.add_rounded, tooltip: 'New chat', onTap: () => nav.newChat()),
+              ]),
+            ),
             _NavItem(icon: Icons.search_rounded, label: 'Search', onTap: () => nav.push(const SearchScreen())),
-            _NavItem(icon: Icons.home_outlined, label: 'Home', on: nav.view == RootView.home, onTap: () => nav.go(RootView.home)),
             _NavItem(icon: Icons.inbox_outlined, label: 'Inbox', on: nav.view == RootView.inbox, badge: store.waitingCount, onTap: () => nav.go(RootView.inbox)),
-            _NavItem(icon: Icons.folder_outlined, label: 'Projects', on: nav.view == RootView.projects, onTap: () => nav.go(RootView.projects)),
-            _NavItem(icon: Icons.description_outlined, label: 'Files', on: nav.view == RootView.files, onTap: () => nav.go(RootView.files)),
-            _NavItem(icon: Icons.groups_2_outlined, label: 'Agents & skills', on: nav.view == RootView.agents, onTap: () => nav.go(RootView.agents)),
-            _NavItem(icon: Icons.extension_outlined, label: 'Connectors', onTap: () => nav.push(const ConnectorsScreen())),
             const SizedBox(height: 4),
             Expanded(child: _Chats(store: store, current: nav.view == RootView.chat ? nav.chat?.id : null)),
             _Footer(store: store),
@@ -85,7 +88,7 @@ class PaquitoButton extends StatelessWidget {
       child: Material(
         color: t.accent,
         borderRadius: BorderRadius.circular(12),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(12),
           onTap: onTap,
           child: SizedBox(
@@ -115,6 +118,59 @@ class PaquitoButton extends StatelessWidget {
   }
 }
 
+/// The assistant's pill at the top of the sidebar: opens the Paquito hub (Home).
+class _PaquitoPill extends StatelessWidget {
+  const _PaquitoPill({required this.onTap, this.on = false});
+  final VoidCallback onTap;
+  final bool on;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final name = AppStore.instance.boot?.assistant ?? '';
+    return Material(
+      color: on ? t.accent : t.accent.withValues(alpha: .85),
+      shape: const StadiumBorder(),
+      child: InkWell(mouseCursor: hand,
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          height: 44,
+          child: Row(children: [
+            const SizedBox(width: 8),
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: t.accentFg.withValues(alpha: .16)),
+              child: Icon(Icons.auto_awesome_rounded, color: t.accentFg, size: 15),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: Text(name.isEmpty ? 'Paquito' : name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.accentFg, fontSize: 15.5, fontWeight: FontWeight.w700))),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoundIcon extends StatelessWidget {
+  const _RoundIcon({required this.icon, required this.tooltip, required this.onTap});
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: t.accentSoft,
+        shape: const CircleBorder(),
+        child: InkWell(mouseCursor: hand, customBorder: const CircleBorder(), onTap: onTap, child: SizedBox(width: 44, height: 44, child: Icon(icon, color: t.accent, size: 22))),
+      ),
+    );
+  }
+}
+
 class _NavItem extends StatelessWidget {
   const _NavItem({required this.icon, required this.label, required this.onTap, this.on = false, this.badge = 0});
   final IconData icon;
@@ -130,7 +186,7 @@ class _NavItem extends StatelessWidget {
       child: Material(
         color: on ? t.active : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: SizedBox(
@@ -172,7 +228,7 @@ class _Chats extends StatelessWidget {
     final groups = <String, List<SessionMeta>>{};
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    for (final s in store.recent) {
+    for (final s in tidyChats(store.recent)) {
       if (busy.contains(s.id)) continue;
       final d = DateTime.fromMillisecondsSinceEpoch(s.mtime);
       final diff = today.difference(DateTime(d.year, d.month, d.day)).inDays;
@@ -195,6 +251,14 @@ class _Chats extends StatelessWidget {
         );
 
     return ListView(padding: const EdgeInsets.only(bottom: 12), children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 16, 2),
+        child: Row(children: [
+          Icon(Icons.chat_bubble_outline_rounded, size: 15, color: t.muted),
+          const SizedBox(width: 8),
+          Text('Chats', style: TextStyle(color: t.muted, fontSize: 14, fontWeight: FontWeight.w600)),
+        ]),
+      ),
       if (running.isNotEmpty || needs.isNotEmpty) header('Working now', lead: PulseDot(color: t.accent, size: 6)),
       for (final n in needs)
         _ChatItem(
@@ -251,7 +315,7 @@ class _ChatItem extends StatelessWidget {
       child: Material(
         color: on ? t.active : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: SizedBox(
@@ -336,7 +400,7 @@ class RootAppBar extends StatelessWidget implements PreferredSizeWidget {
           child: Material(
             color: t.raised.withValues(alpha: .7),
             shape: StadiumBorder(side: BorderSide(color: t.border)),
-            child: InkWell(
+            child: InkWell(mouseCursor: hand, 
               customBorder: const StadiumBorder(),
               onTap: () => openTalk(context),
               child: Container(

@@ -4,12 +4,24 @@ import FlutterMacOS
 class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
+    flutterViewController.backgroundColor = NSColor(calibratedRed: 0.03, green: 0.04, blue: 0.06, alpha: 1)
+    // hover (hand cursor, hover highlights) must not depend on the window being key
+    flutterViewController.mouseTrackingMode = .always
     self.contentViewController = flutterViewController
-    // Desktop layout (docked sidebar) kicks in at 900 pt wide; open comfortably above it.
-    let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-    let size = NSSize(width: min(1320, screen.width - 80), height: min(860, screen.height - 60))
-    self.setFrame(NSRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2, width: size.width, height: size.height), display: true)
+    // Same chrome as the old native Bridge.app: no title, title bar blends into the dark app.
+    self.title = "Bridge"
+    self.titlebarAppearsTransparent = true
+    self.titleVisibility = .hidden
+    self.backgroundColor = NSColor(calibratedRed: 0.03, green: 0.04, blue: 0.06, alpha: 1)
     self.minSize = NSSize(width: 720, height: 560)
+    // Open filling the screen (menu bar and Dock stay visible), like a proper desktop app.
+    // macOS state restoration would put back an old size after this runs, so turn it off.
+    self.isRestorable = false
+    self.setFrameAutosaveName("")
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self, let screen = self.screen ?? NSScreen.main else { return }
+      self.setFrame(screen.visibleFrame, display: true)
+    }
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 

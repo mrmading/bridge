@@ -74,7 +74,7 @@ class _SearchScreenState extends State<SearchScreen> {
     ].where((a) => _q.isEmpty || _has(a.$1)).toList();
 
     Widget header(String s) => Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 6), child: Text(s.toUpperCase(), style: TextStyle(color: t.faint, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: .8)));
-    Widget row(IconData icon, String title, String sub, VoidCallback onTap, {Widget? lead}) => InkWell(
+    Widget row(IconData icon, String title, String sub, VoidCallback onTap, {Widget? lead}) => InkWell(mouseCursor: hand, 
           onTap: onTap,
           child: Container(
             constraints: const BoxConstraints(minHeight: 52),

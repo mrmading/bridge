@@ -662,7 +662,7 @@ class _TalkScreenState extends State<TalkScreen> {
     return Material(
       color: on ? t.accentSoft : t.raised,
       shape: StadiumBorder(side: BorderSide(color: on ? t.accent.withValues(alpha: .4) : t.border)),
-      child: InkWell(
+      child: InkWell(mouseCursor: hand, 
         customBorder: const StadiumBorder(),
         onTap: () => store.setHandsFree(!on),
         child: Container(
@@ -725,7 +725,9 @@ class _TalkScreenState extends State<TalkScreen> {
           Semantics(
             button: true,
             label: phase == 'thinking' || phase == 'working' || phase == 'speaking' ? 'Interrupt' : 'Talk',
-            child: GestureDetector(
+            child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () {
                 if (phase == 'thinking' || phase == 'working' || phase == 'speaking') {
@@ -734,7 +736,8 @@ class _TalkScreenState extends State<TalkScreen> {
                   _micTap();
                 }
               },
-              child: Orb(phase: phase, level: level, color: store.accent, size: orbSize),
+              child: Orb(phase: phase, level: level, color: store.accent, size: orbSize,
+                  )),
             ),
           ),
           const SizedBox(height: 18),
@@ -748,14 +751,18 @@ class _TalkScreenState extends State<TalkScreen> {
               const SizedBox(height: 10),
               _fade(
                 daText,
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child:
                 GestureDetector(
                   key: ValueKey('da:${_daCaption.hashCode}'),
                   onTap: _daCaption.isEmpty ? null : () => _openReply(context, _daCaption),
                   child: Column(children: [
                     Text(daText, textAlign: TextAlign.center, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 17, height: 1.4)),
                     if (daText.length > 130 || _daCaption.contains('\n'))
-                      Padding(padding: const EdgeInsets.only(top: 4), child: Text('tap to read more', style: TextStyle(color: t.faint, fontSize: 12))),
-                  ]),
+                      Padding(padding: const EdgeInsets.only(top: 4), child: Text('tap to read more', style: TextStyle(color: t.faint, fontSize: 12,))),
+                  ],
+                        )),
                 ),
               ),
             ]),
@@ -779,6 +786,9 @@ class _TalkScreenState extends State<TalkScreen> {
       padding: const EdgeInsets.fromLTRB(28, 4, 28, 18),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         _roundButton(context, Icons.keyboard_alt_outlined, 'Type instead', () => setState(() => _textMode = true)),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child:
         GestureDetector(
           onTap: offline ? null : _micTap,
           onLongPressStart: offline
@@ -798,7 +808,7 @@ class _TalkScreenState extends State<TalkScreen> {
               border: Border.all(color: _listening ? t.accent : t.borderStrong, width: 1.2),
               boxShadow: _listening ? [BoxShadow(color: t.accent.withValues(alpha: .45), blurRadius: 24)] : null,
             ),
-            child: Icon(_listening ? Icons.graphic_eq_rounded : Icons.mic_rounded, size: 30, color: _listening ? t.accentFg : (offline ? t.faint : t.fg)),
+            child: Icon(_listening ? Icons.graphic_eq_rounded : Icons.mic_rounded, size: 30, color: _listening ? t.accentFg : (offline ? t.faint : t.fg),)),
           ),
         ),
         _roundButton(context, Icons.close_rounded, 'End voice', () => Navigator.of(context).maybePop(), danger: true),
@@ -813,7 +823,7 @@ class _TalkScreenState extends State<TalkScreen> {
       child: Material(
         color: danger ? t.err : t.raised,
         shape: CircleBorder(side: BorderSide(color: danger ? Colors.transparent : t.border)),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           customBorder: const CircleBorder(),
           onTap: onTap,
           child: SizedBox.square(dimension: 54, child: Icon(icon, color: danger ? Colors.white : t.muted, size: 22)),

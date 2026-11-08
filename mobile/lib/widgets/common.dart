@@ -81,7 +81,7 @@ class Card2 extends StatelessWidget {
       child: Material(
         color: t.raised,
         borderRadius: BorderRadius.circular(14),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           onTap: onTap,
           borderRadius: BorderRadius.circular(14),
           child: Container(

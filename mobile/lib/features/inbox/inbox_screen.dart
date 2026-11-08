@@ -61,7 +61,7 @@ class _InboxScreenState extends State<InboxScreen> {
                     for (final (k, l) in const [('all', 'All'), ('need', 'Needs you'), ('run', 'Working'), ('done', 'Done')])
                       Padding(
                         padding: const EdgeInsets.only(right: 8),
-                        child: ChoiceChip(
+                        child: ChoiceChip(mouseCursor: hand, 
                           label: Text(l),
                           selected: _filter == k,
                           showCheckmark: false,
@@ -108,7 +108,7 @@ class _Row extends StatelessWidget {
       _ => (t.okSoft, t.ok, Icons.check_rounded, 'Finished'),
     };
     void open() => openSession(key: x.key, id: x.id, cwd: x.cwd, title: x.title, focus: x.kind == 'need', computer: x.computer);
-    return InkWell(
+    return InkWell(mouseCursor: hand, 
       onTap: open,
       child: Container(
         padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),

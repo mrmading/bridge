@@ -307,7 +307,7 @@ class _Chip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Tooltip(
       message: tip,
-      child: InkWell(
+      child: InkWell(mouseCursor: hand, 
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Container(
@@ -337,7 +337,7 @@ class _RoundBtn extends StatelessWidget {
       child: Material(
         color: bg ?? Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11), side: border ? BorderSide(color: t.border) : BorderSide.none),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(11),
           onTap: onTap,
           child: Container(
@@ -471,7 +471,7 @@ class _ModelSheetState extends State<_ModelSheet> {
         // Chips, not a segmented bar: six levels do not fit one row on a phone.
         child: Wrap(spacing: 8, runSpacing: 8, children: [
           for (final e in efforts)
-            ChoiceChip(
+            ChoiceChip(mouseCursor: hand, 
               label: Text(e == 'xhigh' ? 'Extra high' : effortLabel(e)),
               selected: (efforts.contains(store.turn.effort) ? store.turn.effort : efforts.first) == e,
               showCheckmark: false,
@@ -604,7 +604,7 @@ class RunsOn extends StatelessWidget {
         final offline = store.computerById(id)?.online == false;
         final color = offline ? t.warn : t.faint;
         return Center(
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           key: const ValueKey('runs-on'),
           borderRadius: BorderRadius.circular(16),
           onTap: store.hasCloud ? () => showComputerSheet(context) : null,

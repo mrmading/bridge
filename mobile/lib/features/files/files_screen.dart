@@ -140,7 +140,7 @@ class _FilesScreenState extends State<FilesScreen> {
           for (final k in _kinds.keys)
             Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
+              child: ChoiceChip(mouseCursor: hand, 
                 label: Text(k),
                 selected: _kind == k,
                 showCheckmark: false,

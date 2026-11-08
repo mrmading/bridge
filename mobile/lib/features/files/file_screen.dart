@@ -219,7 +219,7 @@ class EntryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    return InkWell(
+    return InkWell(mouseCursor: hand, 
       onTap: onTap,
       child: Container(
         constraints: const BoxConstraints(minHeight: 54),

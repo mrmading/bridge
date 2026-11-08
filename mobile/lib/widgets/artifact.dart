@@ -45,7 +45,7 @@ class ArtifactCard extends StatelessWidget {
       child: Material(
         color: t.raised,
         borderRadius: BorderRadius.circular(14),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           key: ValueKey('artifact:${a.path}'),
           borderRadius: BorderRadius.circular(14),
           onTap: onTap,
@@ -314,7 +314,9 @@ class _Toggle extends StatelessWidget {
     Widget seg(String label, bool isCode) {
       final on = code == isCode;
       return Expanded(
-        child: GestureDetector(
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
           key: ValueKey('artifact-${label.toLowerCase()}'),
           behavior: HitTestBehavior.opaque,
           onTap: () => onChanged(isCode),
@@ -322,7 +324,8 @@ class _Toggle extends StatelessWidget {
             duration: const Duration(milliseconds: 160),
             alignment: Alignment.center,
             decoration: BoxDecoration(color: on ? t.bg : Colors.transparent, borderRadius: BorderRadius.circular(9), border: on ? Border.all(color: t.border) : null),
-            child: Text(label, style: TextStyle(color: on ? t.fg : t.muted, fontSize: 13.5, fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
+            child: Text(label, style: TextStyle(color: on ? t.fg : t.muted, fontSize: 13.5, fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+                ))),
           ),
         ),
       );

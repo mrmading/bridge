@@ -366,7 +366,7 @@ class AppStore extends ChangeNotifier {
     if (!hasServer || conn != ConnState.ready) return;
     final results = await Future.wait<dynamic>([
       api.voiceHealth().catchError((_) => VoiceHealth.unknown),
-      api.recent(limit: 80).catchError((_) => <SessionMeta>[]),
+      api.recent(limit: 150).catchError((_) => <SessionMeta>[]),
       api.agents().catchError((_) => <AgentInfo>[]),
       api.roots().catchError((_) => <String>[]),
       api.projects().catchError((_) => <Project>[]),
@@ -382,7 +382,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> refreshRecent() async {
     if (!hasServer) return;
-    recent = await api.recent(limit: 80).catchError((_) => recent);
+    recent = await api.recent(limit: 150).catchError((_) => recent);
     notifyListeners();
   }
 

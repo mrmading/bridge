@@ -537,7 +537,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 4),
               if (store.roots.isEmpty) Text('None yet. Add them in Bridge on your computer.', style: TextStyle(color: t.muted, fontSize: 13)),
               for (final r in store.roots)
-                InkWell(
+                InkWell(mouseCursor: hand, 
                   onTap: () => Nav.instance.push(FileScreen(path: r, isDir: true)),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),

@@ -257,6 +257,124 @@ class Bloom extends StatelessWidget {
   }
 }
 
+/// A panel that slides in from the right edge over a dimmed backdrop (tap outside or Close to
+/// dismiss). Chat options and Files & progress open in one instead of a popup or bottom sheet.
+Future<T?> showSidePanel<T>(BuildContext context, {required String title, required WidgetBuilder builder, double width = 420}) {
+  return showGeneralDialog<T>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Close',
+    barrierColor: Colors.black.withValues(alpha: .45),
+    transitionDuration: const Duration(milliseconds: 240),
+    pageBuilder: (ctx, _, _) {
+      final t = ctx.t;
+      final w = MediaQuery.sizeOf(ctx).width;
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Material(
+          color: t.raised,
+          elevation: 12,
+          child: Container(
+            width: w < width + 40 ? w * .9 : width,
+            height: double.infinity,
+            decoration: BoxDecoration(border: Border(left: BorderSide(color: t.border))),
+            child: SafeArea(
+              left: false,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 8, 6, 4),
+                  child: Row(children: [
+                    Expanded(child: Text(title, style: TextStyle(color: t.fg, fontSize: 16, fontWeight: FontWeight.w700))),
+                    IconButton(tooltip: 'Close', onPressed: () => Navigator.of(ctx).pop(), icon: Icon(Icons.close_rounded, color: t.muted)),
+                  ]),
+                ),
+                Expanded(child: builder(ctx)),
+              ]),
+            ),
+          ),
+        ),
+      );
+    },
+    transitionBuilder: (_, a, _, child) => SlideTransition(
+      position: Tween(begin: const Offset(1, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic)),
+      child: child,
+    ),
+  );
+}
+
+/// The landing page's backdrop for the Paquito hub: a wide accent glow from the top, a brighter core,
+/// a faint corner glow and the 58 px grid fading out from the top (docs/style.css .glow and .grid).
+class HubBackdrop extends StatelessWidget {
+  const HubBackdrop({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final k = dark ? 1.0 : .55;
+    Widget glow(Alignment at, double radius, Color c, double a, double stop) => Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(gradient: RadialGradient(center: at, radius: radius, colors: [c.withValues(alpha: a * k), c.withValues(alpha: 0)], stops: [0, stop])),
+          ),
+        );
+    return IgnorePointer(
+      child: Stack(children: [
+        Positioned.fill(child: ColoredBox(color: t.bg)),
+        glow(const Alignment(0, -1.35), 1.25, t.accent, .30, .68),
+        glow(const Alignment(0, -1.1), .7, t.accent2, .22, .62),
+        glow(const Alignment(1.1, 1.15), 1.0, t.accent, .10, .72),
+        Positioned.fill(
+          child: ShaderMask(
+            blendMode: BlendMode.dstIn,
+            shaderCallback: (r) => RadialGradient(center: const Alignment(0, -1), radius: 1.1, colors: const [Colors.black, Colors.transparent], stops: const [0, .74]).createShader(r),
+            child: Opacity(opacity: .55, child: CustomPaint(painter: _GridPainter(t.fg.withValues(alpha: dark ? .04 : .06)))),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _GridPainter extends CustomPainter {
+  _GridPainter(this.color);
+  final Color color;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()..color = color..strokeWidth = 1;
+    for (double x = 0; x <= size.width; x += 58) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), p);
+    }
+    for (double y = 0; y <= size.height; y += 58) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GridPainter old) => old.color != color;
+}
+
+/// Headline text in the landing's gradient: white into pale blue into the accent.
+class GradientText extends StatelessWidget {
+  const GradientText(this.text, {super.key, required this.style, this.textAlign});
+  final String text;
+  final TextStyle style;
+  final TextAlign? textAlign;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return ShaderMask(
+      blendMode: BlendMode.srcIn,
+      shaderCallback: (r) => LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: dark ? [Colors.white, const Color(0xFFCFE9FF), t.accent] : [t.fg, t.accent, t.accent2],
+        stops: const [0, .45, 1],
+      ).createShader(r),
+      child: Text(text, textAlign: textAlign, style: style),
+    );
+  }
+}
+
 /// A small accent spinner (14 px), like the prototype's job spinner.
 class Spin extends StatelessWidget {
   const Spin({super.key, this.size = 14});
@@ -356,9 +474,13 @@ class SecHeader extends StatelessWidget {
       child: Row(children: [
         Icon(icon, size: 16, color: t.muted),
         const SizedBox(width: 8),
-        Flexible(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 14, fontWeight: FontWeight.w600))),
-        if (count != null) ...[const SizedBox(width: 8), Tag('$count', kind: countKind)],
-        const Spacer(),
+        // Title and count take the free width, so the link sits at the far edge.
+        Expanded(
+          child: Row(children: [
+            Flexible(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.muted, fontSize: 14, fontWeight: FontWeight.w600))),
+            if (count != null) ...[const SizedBox(width: 8), Tag('$count', kind: countKind)],
+          ]),
+        ),
         if (more != null)
           TextButton(
             onPressed: onMore,
@@ -399,7 +521,7 @@ class PickRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    return InkWell(
+    return InkWell(mouseCursor: hand, 
       onTap: onTap,
       child: Container(
         constraints: const BoxConstraints(minHeight: 52),

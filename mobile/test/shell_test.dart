@@ -55,7 +55,7 @@ void main() {
     await tester.binding.setSurfaceSize(null);
   });
 
-  testWidgets('Drawer: places, inbox badge, working now with a timer, chats by day', (tester) async {
+  testWidgets('Drawer: Paquito, inbox badge, working now with a timer, chats by day', (tester) async {
     await tester.binding.setSurfaceSize(const Size(402, 874));
     await seed();
     await tester.pumpWidget(app());
@@ -64,9 +64,15 @@ void main() {
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
-    for (final l in ['Paquito', 'Chief of Staff', 'Search', 'Home', 'Inbox', 'Projects', 'Files', 'Agents & skills']) {
-      expect(find.text(l), findsWidgets, reason: l);
+    final drawer = find.byType(Drawer);
+    for (final l in ['Paquito', 'Search', 'Inbox', 'Chats']) {
+      expect(find.descendant(of: drawer, matching: find.text(l)), findsWidgets, reason: l);
     }
+    // Vellum layout: the places live in the Paquito hub (Home), not the sidebar.
+    for (final l in ['Projects', 'Files', 'Agents & skills', 'Connectors']) {
+      expect(find.descendant(of: drawer, matching: find.text(l)), findsNothing, reason: l);
+    }
+    expect(find.byTooltip('New chat'), findsOneWidget);
     expect(find.descendant(of: find.byType(Drawer), matching: find.text('1')), findsOneWidget); // inbox badge = needs count
     expect(find.text('WORKING NOW'), findsOneWidget);
     expect(find.text('needs you'), findsOneWidget);

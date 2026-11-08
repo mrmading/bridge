@@ -235,7 +235,6 @@ class AssistantTurn extends StatelessWidget {
               : texts[i].kind == 'choices'
               ? ChoiceChips(options: texts[i].options, onChoice: onChoice)
               : AssistantText(key: ObjectKey(texts[i]), msg: texts[i], onChoice: i == lastText ? onChoice : null, padding: const EdgeInsets.only(top: 4, bottom: 4)),
-        if (live && tools.isEmpty) const Padding(padding: EdgeInsets.only(top: 6, bottom: 4), child: TypingDots()),
         for (final a in artifacts) ArtifactCard(artifact: a, onTap: open == null ? null : () => open(a.path)),
         for (final f in files.entries.take(4)) FileCard(path: f.key, isNew: f.value, onTap: onOpenFile == null ? null : () => onOpenFile!(f.key)),
         if (files.length > 4) Padding(padding: const EdgeInsets.only(top: 2), child: Text('+${files.length - 4} more in Files & progress', style: TextStyle(color: t.faint, fontSize: 12))),
@@ -267,7 +266,7 @@ class _WorkBlockState extends State<WorkBlock> {
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(color: t.raised.withValues(alpha: .7), borderRadius: BorderRadius.circular(12), border: Border.all(color: t.border)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        InkWell(
+        InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(12),
           onTap: widget.tools.isEmpty ? null : () => setState(() => _open = !_open),
           child: ConstrainedBox(
@@ -332,7 +331,7 @@ class FileCard extends StatelessWidget {
       child: Material(
         color: t.raised,
         borderRadius: BorderRadius.circular(12),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(12),
           onTap: onTap,
           child: Container(

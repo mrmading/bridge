@@ -15,6 +15,7 @@ import '../../core/artifacts.dart';
 import '../../core/clock.dart';
 import '../../core/models.dart';
 import '../../core/nav.dart';
+import '../../core/project_guess.dart';
 import '../../core/store.dart';
 import '../../core/theme.dart';
 import '../../widgets/artifact.dart';
@@ -51,6 +52,9 @@ class _SessionScreenState extends State<SessionScreen> {
   late bool _isNew = widget.chat.isNew;
   /// mac · cloud. A chat that moves reopens as a new screen, so this never changes in place.
   late final String _computer = widget.chat.computer;
+
+  /// Projects the user said no to in the "start a new chat there" chip.
+  final _splitDismissed = <String>{};
 
   final List<Msg> _msgs = [];
   final Map<String, Msg> _tools = {};
@@ -778,41 +782,69 @@ class _SessionScreenState extends State<SessionScreen> {
           IconButton(tooltip: 'Talk', onPressed: () => openTalk(context), icon: Icon(Icons.graphic_eq_rounded, color: t.muted)),
           if (_deskAvail) IconButton(tooltip: 'Computer', onPressed: _openComputer, icon: Icon(Icons.desktop_windows_outlined, color: t.muted)),
           IconButton(tooltip: 'Files & progress', onPressed: _openPanel, icon: Icon(Icons.view_agenda_outlined, color: t.muted)),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_horiz_rounded),
-            onSelected: (v) {
-              switch (v) {
-                case 'rename':
-                  _rename();
-                case 'copy':
-                  Clipboard.setData(ClipboardData(text: _id));
-                  toast(context, 'Chat id copied');
-                case 'stop':
-                  _stopTurn();
-                case 'cloud':
-                  _moveToCloud();
-                case 'folder':
-                  Nav.instance.push(FileScreen(path: _cwd, isDir: true, computer: _computer));
-                case 'connectors':
-                  showChatConnectors(context, sessionId: _id, cwd: _cwd, computer: _computer);
-              }
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'rename', child: Text('Rename')),
-              const PopupMenuItem(value: 'folder', child: Text('Browse project folder')),
-              const PopupMenuItem(value: 'copy', child: Text('Copy chat id')),
-              const PopupMenuItem(value: 'connectors', child: Text('Connectors')),
-              if (_computer == 'mac' && _store.hasCloud) const PopupMenuItem(value: 'cloud', child: Text('Move to cloud computer')),
-              PopupMenuItem(value: 'stop', enabled: _busy, child: const Text('Stop all running work')),
-            ],
-          ),
+          IconButton(tooltip: 'Chat options', onPressed: _openOptions, icon: const Icon(Icons.more_horiz_rounded)),
         ],
       ),
-      body: Column(children: [
-        Expanded(child: Stack(children: [_stream(context), if (_hasNew) _newChip(context)])),
-        _bottom(context),
-      ]),
+      // The pane is full width; the conversation keeps a comfortable line length in the middle of it.
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 920),
+          child: Column(children: [
+            Expanded(child: Stack(children: [_stream(context), if (_hasNew) _newChip(context)])),
+            _bottom(context),
+          ]),
+        ),
+      ),
     );
+  }
+
+  /// Chat options, in a panel sliding in from the right.
+  void _openOptions() {
+    void run(String v) {
+      switch (v) {
+        case 'rename':
+          _rename();
+        case 'copy':
+          Clipboard.setData(ClipboardData(text: _id));
+          toast(context, 'Chat id copied');
+        case 'stop':
+          _stopTurn();
+        case 'cloud':
+          _moveToCloud();
+        case 'folder':
+          Nav.instance.push(FileScreen(path: _cwd, isDir: true, computer: _computer));
+        case 'connectors':
+          showChatConnectors(context, sessionId: _id, cwd: _cwd, computer: _computer);
+        case 'panel':
+          _openPanel();
+      }
+    }
+
+    final items = <(String, IconData, String, bool)>[
+      ('rename', Icons.edit_outlined, 'Rename', true),
+      ('panel', Icons.view_agenda_outlined, 'Files & progress', true),
+      ('folder', Icons.folder_open_outlined, 'Browse project folder', true),
+      ('connectors', Icons.extension_outlined, 'Connectors', true),
+      ('copy', Icons.copy_rounded, 'Copy chat id', true),
+      if (_computer == 'mac' && _store.hasCloud) ('cloud', Icons.cloud_upload_outlined, 'Move to cloud computer', true),
+      ('stop', Icons.stop_circle_outlined, 'Stop all running work', _busy),
+    ];
+    showSidePanel<String>(
+      context,
+      title: 'Chat options',
+      width: 340,
+      builder: (ctx) => ListView(padding: const EdgeInsets.symmetric(vertical: 4), children: [
+        for (final (v, icon, label, on) in items)
+          ListTile(
+            enabled: on,
+            leading: Icon(icon, size: 20),
+            title: Text(label, style: const TextStyle(fontSize: 15)),
+            onTap: () => Navigator.of(ctx).pop(v),
+          ),
+      ]),
+    ).then((v) {
+      if (v != null && mounted) run(v);
+    });
   }
 
   /// Turns: a user message, then everything until the next one.
@@ -882,7 +914,7 @@ class _SessionScreenState extends State<SessionScreen> {
     final jobs = _liveJobs;
     final extra = <Widget>[
       if (_busy && jobs.isNotEmpty) JobCard(title: _jobs.step.isNotEmpty ? _jobs.step : 'Working in the background', since: _runSince, jobs: jobs),
-      if (_busy && jobs.isEmpty && turns.isNotEmpty && turnHasTools(turns.last.rest)) Padding(padding: const EdgeInsets.only(left: 4), child: StatusLine(_progressLine(), spinner: true)),
+      if (_busy && jobs.isEmpty) Padding(padding: const EdgeInsets.only(left: 4), child: StatusLine(_progressLine(), spinner: true)),
       for (final q in _queue) UserBubble(text: q, queued: true),
       const SizedBox(height: 12),
     ];
@@ -917,7 +949,7 @@ class _SessionScreenState extends State<SessionScreen> {
           color: t.accent,
           borderRadius: BorderRadius.circular(20),
           elevation: 3,
-          child: InkWell(
+          child: InkWell(mouseCursor: hand, 
             borderRadius: BorderRadius.circular(20),
             onTap: _scrollToBottomAnimated,
             child: Container(
@@ -952,6 +984,32 @@ class _SessionScreenState extends State<SessionScreen> {
                 padding: const EdgeInsets.fromLTRB(6, 2, 6, 6),
                 child: Text('You can keep chatting. New messages go in when the current step ends.', style: TextStyle(color: t.faint, fontSize: 12)),
               ),
+              // the message is about another project: offer a fresh chat there, never split on our own
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _input,
+                builder: (context, v, _) {
+                  final g = guessOtherProject(v.text, [
+                    ..._store.projects.where(
+                      (p) => p.exists && isProjectPath(p.path),
+                    ),
+                  ], _cwd);
+                  if (g == null || _splitDismissed.contains(g.path)) return const SizedBox.shrink();
+                  return _SplitSuggestion(
+                    name: g.name.isNotEmpty ? g.name : baseName(g.path),
+                    onUse: () {
+                      final text = _input.text;
+                      _input.clear();
+                      Nav.instance.startChat(
+                        cwd: g.path,
+                        message: text,
+                        computer: _computer,
+                      );
+                    },
+                    onDismiss: () =>
+                        setState(() => _splitDismissed.add(g.path)),
+                  );
+                },
+              ),
             Composer(
               controller: _input,
               focusNode: _focus,
@@ -960,7 +1018,60 @@ class _SessionScreenState extends State<SessionScreen> {
               onStop: _stopTurn,
               onSend: _send,
             ),
-          ]),
+          ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "This looks like Setpoint · Start a new chat there" above the composer.
+class _SplitSuggestion extends StatelessWidget {
+  const _SplitSuggestion({
+    required this.name,
+    required this.onUse,
+    required this.onDismiss,
+  });
+  final String name;
+  final VoidCallback onUse, onDismiss;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Center(
+        child: InputChip(mouseCursor: hand, 
+          avatar: ProjectIcon(name, size: 18),
+          label: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: 'This looks like ',
+                  style: TextStyle(color: t.muted),
+                ),
+                TextSpan(
+                  text: name,
+                  style: TextStyle(color: t.fg, fontWeight: FontWeight.w600),
+                ),
+                TextSpan(
+                  text: ' · Start a new chat there',
+                  style: TextStyle(
+                    color: t.accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            style: const TextStyle(fontSize: 13),
+          ),
+          onPressed: onUse,
+          onDeleted: onDismiss,
+          deleteButtonTooltipMessage: 'Keep it in this chat',
+          backgroundColor: t.raised.withValues(alpha: .6),
+          side: BorderSide(color: t.accent.withValues(alpha: .35)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18)),
         ),
       ),
     );
@@ -986,7 +1097,7 @@ class _JobsTrayState extends State<_JobsTray> {
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(color: t.raised, borderRadius: BorderRadius.circular(14), border: Border.all(color: t.accent.withValues(alpha: .3))),
       child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        InkWell(
+        InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(14),
           onTap: () => setState(() => _open = !_open),
           child: Container(

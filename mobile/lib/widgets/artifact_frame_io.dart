@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -22,7 +22,6 @@ class _ArtifactFrameState extends State<ArtifactFrame> {
     super.initState();
     _c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(NavigationDelegate(
         onProgress: (p) {
           if (mounted) setState(() => _progress = p);
@@ -34,7 +33,10 @@ class _ArtifactFrameState extends State<ArtifactFrame> {
           launchUrl(u, mode: LaunchMode.externalApplication).catchError((_) => false);
           return NavigationDecision.prevent;
         },
-      ));
+      )
+      );
+    // WKWebView on macOS has no transparency setting and throws "opaque is not implemented"
+    if (defaultTargetPlatform != TargetPlatform.macOS) _c.setBackgroundColor(Colors.white);
     _load();
   }
 

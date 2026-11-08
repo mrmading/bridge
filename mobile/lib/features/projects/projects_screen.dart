@@ -343,7 +343,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
     final t = context.t;
     final running = _store.isRunning(s.id) || s.running;
     final needs = _store.needsYou(s.id) || s.needs;
-    return InkWell(
+    return InkWell(mouseCursor: hand, 
       onTap: () => openSession(key: s.key.isNotEmpty ? s.key : p.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : p.path, title: s.title, focus: needs, computer: s.computer),
       child: Container(
         constraints: const BoxConstraints(minHeight: 52),

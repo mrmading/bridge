@@ -73,11 +73,11 @@ void main() {
 
   Widget host(Widget w) => MaterialApp(theme: buildTheme(Brightness.dark), home: Scaffold(body: SingleChildScrollView(child: w)));
 
-  testWidgets('a text-only turn is plain chat: typing dots while live, no work line', (tester) async {
+  testWidgets('a text-only turn is plain chat: no dots (the Thinking line shows progress), no work line', (tester) async {
     await tester.pumpWidget(host(AssistantTurn(msgs: [Msg(kind: 'thinking', text: 'hmm'), say('Hello there')], name: 'Paquito', live: true)));
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.byType(WorkBlock), findsNothing);
-    expect(find.byKey(const ValueKey('typing')), findsOneWidget);
+    expect(find.byKey(const ValueKey('typing')), findsNothing);
     expect(find.textContaining('Hello there'), findsOneWidget);
     await tester.pumpWidget(host(AssistantTurn(msgs: [say('Hello there')], name: 'Paquito')));
     expect(find.byKey(const ValueKey('typing')), findsNothing);

@@ -6,6 +6,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/store.dart';
@@ -65,6 +66,7 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
   final store = AppStore.instance;
   List<J> _conns = [];
   List<J> _catalog = [];
+  bool _deviceGithub = false;
   bool _loading = true;
   String _err = '';
   Timer? _poll;
@@ -88,6 +90,7 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
       setState(() {
         _conns = _l(j['connectors']);
         _catalog = _l(j['catalog']);
+        _deviceGithub = _m(j['device'])['github'] == true;
         _loading = false;
         _err = '';
       });
@@ -204,7 +207,8 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
         const SizedBox(height: 8),
         Wrap(spacing: 6, runSpacing: 4, children: [
           for (final a in auth) Tag(const {'oauth': 'OAuth', 'token': 'Token', 'none': 'No sign-in', 'device': 'Device code'}[a] ?? a),
-          if (limited) const Tag('Limited', kind: 'warn'),
+          if (_m(e['ownApp']).isNotEmpty) const Tag('Your own app'),
+              if (limited) const Tag('Limited', kind: 'warn'),
           if (e['verified'] != true) const Tag('Unverified', kind: 'warn'),
         ]),
         if (limited && (e['note'] ?? '').toString().isNotEmpty) ...[
@@ -242,12 +246,12 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
         ),
       );
 
-  Widget _helpLink(String url) => Align(
+  Widget _helpLink(String url, {String label = 'Where do I get this?'}) => Align(
         alignment: Alignment.centerLeft,
         child: TextButton.icon(
           onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication).catchError((_) => false),
           icon: const Icon(Icons.open_in_new_rounded, size: 16),
-          label: const Text('Where do I get this?'),
+          label: Text(label),
         ),
       );
 
@@ -255,7 +259,10 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
     final auth = [for (final a in (e['auth'] as List? ?? const [])) a.toString()];
     final tok = _m(e['token']);
     final params = _l(e['params']);
-    final token = TextEditingController();
+    final own = _m(e['ownApp']);
+    final token = TextEditingController(),
+        clientId = TextEditingController(),
+        clientSecret = TextEditingController();
     final pc = {for (final p in params) p['key'].toString(): TextEditingController()};
     var busy = false;
     await _sheet((ctx, set) {
@@ -268,6 +275,7 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
           };
       Future<void> go(String a) async {
         if (a == 'token' && token.text.trim().isEmpty) return toast(ctx, 'Paste the token first');
+        if (a == 'oauth' && own.isNotEmpty && clientId.text.trim().isEmpty) return toast(ctx, 'Paste the Client ID first');
         set(() => busy = true);
         final r = await _post('/api/connectors/add', body(a));
         if (!ctx.mounted) return;
@@ -275,7 +283,9 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
         final c = _m(r?['connector']);
         if (c.isEmpty) return;
         if (a == 'oauth') {
-          await _oauth(c['id'].toString());
+          await _oauth(c['id'].toString(),
+            clientId: clientId.text.trim(),
+            clientSecret: clientSecret.text.trim(),);
         } else if (a == 'device') {
           await _device(c['id'].toString());
         } else if (mounted) {
@@ -291,9 +301,12 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
         if ((e['note'] ?? '').toString().isNotEmpty) ...[const SizedBox(height: 6), Text(e['note'].toString(), style: TextStyle(color: t.faint, fontSize: 12.5))],
         for (final p in params) _field(pc[p['key'].toString()]!, '${p['label']} (optional)', hint: (p['placeholder'] ?? '').toString()),
         const SizedBox(height: 14),
-        if (auth.contains('oauth')) FilledButton(onPressed: busy ? null : () => go('oauth'), child: Text('Sign in with ${e['name']}')),
+        if (auth.contains('oauth') && own.isNotEmpty)
+            ..._ownAppFields(own, clientId, clientSecret),
+          if (auth.contains('oauth')) FilledButton(onPressed: busy ? null : () => go('oauth'), child: Text('Sign in with ${e['name']}')),
         if (auth.contains('none')) FilledButton(onPressed: busy ? null : () => go('none'), child: const Text('Connect, no sign-in')),
-        if (auth.contains('device')) ...[const SizedBox(height: 8), OutlinedButton(onPressed: busy ? null : () => go('device'), child: const Text('Sign in with a device code'))],
+        if (auth.contains('device') &&
+              (e['id'] != 'github' || _deviceGithub)) ...[const SizedBox(height: 8), OutlinedButton(onPressed: busy ? null : () => go('device'), child: const Text('Sign in with a device code'))],
         if (auth.contains('token')) ...[
           const SizedBox(height: 14),
           Text(auth.length > 1 ? 'Or paste a token' : 'Paste a token', style: TextStyle(color: t.fg, fontWeight: FontWeight.w600)),
@@ -306,33 +319,120 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
     });
   }
 
-  /// The vendor sends the browser to `<server>/connectors-callback.html`, which finishes on its own
-  /// when it is signed in to Bridge; otherwise the user pastes that address here.
-  Future<void> _oauth(String id) async {
-    final r = await _post('/api/connectors/oauth/start', {'id': id, 'redirectUri': '${store.api.base}/connectors-callback.html'});
-    final url = (r?['authorizeUrl'] ?? '').toString();
+  String get _redirectUri => '${store.api.base}/connectors-callback.html';
+
+  /// The one-time "bring your own app" step for servers with no self-registration (Slack, Google).
+  List<Widget> _ownAppFields(
+    J own,
+    TextEditingController id,
+    TextEditingController secret,
+  ) {
+    final t = context.t;
+    return [
+      Text(
+        'Your ${own['label'] ?? 'OAuth app'}',
+        style: TextStyle(color: t.fg, fontWeight: FontWeight.w600),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        (own['steps'] ?? '').toString(),
+        style: TextStyle(color: t.muted, fontSize: 13),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: SelectableText(
+              _redirectUri,
+              style: TextStyle(
+                color: t.accent,
+                fontSize: 12.5,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Copy redirect URL',
+            icon: const Icon(Icons.copy_rounded, size: 18),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _redirectUri));
+              toast(context, 'Redirect URL copied');
+            },
+          ),
+        ],
+      ),
+      if ((own['help'] ?? '').toString().isNotEmpty)
+        _helpLink(
+          own['help'].toString(),
+          label: 'Open ${Uri.parse(own['help'].toString()).host}',
+        ),
+      _field(id, 'Client ID'),
+      if (own['secret'] == true) _field(secret, 'Client Secret', secret: true),
+      const SizedBox(height: 12),
+    ];
+  }
+
+  /// The vendor sends the browser to `<server>/connectors-callback.html`, which finishes the sign-in on
+  /// its own; this sheet watches for the connector to turn connected. Pasting the address is the fallback.
+  Future<void> _oauth(String id, {
+    String clientId = '',
+    String clientSecret = '',
+  }) async {
+    final r = await _post('/api/connectors/oauth/start', {'id': id, 'redirectUri': _redirectUri,
+      if (clientId.isNotEmpty) 'clientId': clientId,
+      if (clientSecret.isNotEmpty) 'clientSecret': clientSecret});
+    if (r == null || !mounted) return;
+    if (r['needsClient'] == true) return _askOwnApp(id);
+    final url = (r['authorizeUrl'] ?? '').toString();
     if (url.isEmpty) return;
     await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication).catchError((_) => false);
     if (!mounted) return;
+    final before = _conns.cast<J?>().firstWhere(
+      (x) => x!['id'] == id,
+      orElse: () => null,
+    )?['testedAt'];
     final pasted = TextEditingController();
     var busy = false;
+    Timer? watch;
     await _sheet((ctx, set) {
+      watch ??= Timer.periodic(const Duration(seconds: 2), (_) async {
+        await _load();
+        final c = _conns.cast<J?>().firstWhere(
+          (x) => x!['id'] == id,
+          orElse: () => null,
+        );
+        if (c == null || c['testedAt'] == before || !ctx.mounted) return;
+        watch?.cancel();
+        Navigator.pop(ctx);
+        final (label, _) = connStatus(c);
+        if (mounted) toast(context, '${c['name']}: ${c['status'] == 'connected' ? label : (c['error'] ?? label)}');
+      });
       final t = ctx.t;
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
         Text('Finish signing in', style: TextStyle(color: t.fg, fontSize: 18, fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
-        Text('Approve Bridge in the page that just opened. If it does not come back here by itself, copy the address of the page you landed on and paste it below.', style: TextStyle(color: t.muted, fontSize: 14)),
-        _field(pasted, 'Paste the address you landed on', hint: '…/connectors-callback.html?code=…'),
+        Text('Approve Bridge in the browser page that just opened. This closes by itself once it is connected.', style: TextStyle(color: t.muted, fontSize: 14)),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: LinearProgressIndicator(),
+          ),
+          Text(
+            'If the page asks you to, paste its address here:',
+            style: TextStyle(color: t.faint, fontSize: 12.5),
+          ),
+        _field(pasted, 'Address of the page you landed on', hint: '…/connectors-callback.html?code=…'),
         const SizedBox(height: 12),
         FilledButton(
           onPressed: busy
               ? null
               : () async {
+                    if (pasted.text.trim().isEmpty) return toast(ctx, 'Paste the address first');
                   set(() => busy = true);
                   final r = await _post('/api/connectors/oauth/finish', {'url': pasted.text.trim()});
                   if (!ctx.mounted) return;
                   set(() => busy = false);
                   if (r != null) {
+                      watch?.cancel();
                     Navigator.pop(ctx);
                     final (label, _) = connStatus(_m(r['connector']));
                     if (mounted) toast(context, label);
@@ -340,11 +440,61 @@ class _ConnectorsScreenState extends State<ConnectorsScreen> {
                 },
           child: const Text('Finish'),
         ),
-        TextButton(onPressed: () { Navigator.pop(ctx); _load(); }, child: const Text('It already says connected')),
         TextButton(onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication), child: const Text('Open the sign-in page again')),
       ]);
     });
+    watch?.cancel();
     await _load();
+  }
+
+  /// A connector added as a plain URL whose server turns out to need the user's own OAuth app.
+  Future<void> _askOwnApp(String id) async {
+    final c = _conns.cast<J?>().firstWhere(
+      (x) => x!['id'] == id,
+      orElse: () => null,
+    );
+    final own = _m(_entry(c?['catalogId']?.toString())?['ownApp']);
+    final clientId = TextEditingController(),
+        clientSecret = TextEditingController();
+    var go = false;
+    await _sheet((ctx, set) {
+      final t = ctx.t;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${c?['name'] ?? 'This server'} needs your own app',
+            style: TextStyle(
+              color: t.fg,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ..._ownAppFields(
+            own.isEmpty
+                ? {
+                    'label': 'OAuth app',
+                    'secret': true,
+                    'steps': 'This server does not let apps register themselves. Create an OAuth app at the vendor with the redirect URL below, then paste its Client ID and Secret.',
+                  }
+                : own,
+            clientId,
+            clientSecret,
+          ),
+          FilledButton(
+            onPressed: () {
+              if (clientId.text.trim().isEmpty) return toast(ctx, 'Paste the Client ID first');
+              go = true;
+              Navigator.pop(ctx);
+            },
+            child: const Text('Continue to sign in'),
+          ),
+        ],
+      );
+    });
+    if (go && mounted) await _oauth(id, clientId: clientId.text.trim(), clientSecret: clientSecret.text.trim());
   }
 
   Future<void> _device(String id) async {
