@@ -14,6 +14,7 @@ import '../files/file_screen.dart';
 import '../home/home_screen.dart';
 import '../session/session_utils.dart';
 import '../shell/drawer.dart';
+import 'project_actions.dart';
 
 class ProjectsScreen extends StatefulWidget {
   const ProjectsScreen({super.key});
@@ -26,12 +27,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   String _q = '';
 
   List<Project> _merged() {
-    final out = [..._store.projects.where((p) => p.exists && isProjectPath(p.path))]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
-    final paths = out.map((p) => p.path).toSet();
-    for (final r in _store.roots) {
-      if (r.isEmpty || paths.contains(r) || !isProjectPath(r)) continue;
-      out.add(Project(key: projectKeyFor(r), path: r, name: baseName(r), sessions: 0, lastActivity: 0, exists: true));
-    }
+    final out = bridgeProjects(_store);
     final q = _q.toLowerCase();
     return q.isEmpty ? out : out.where((p) => '${p.name} ${p.path}'.toLowerCase().contains(q)).toList();
   }
@@ -79,9 +75,13 @@ class _ProjectRow extends StatelessWidget {
     final live = store.home.running.where((r) => r.key == p.key).length;
     final waiting = store.home.needs.where((n) => n.key == p.key).length;
     final name = p.name.isNotEmpty ? p.name : baseName(p.path);
-    return Card2(
-      onTap: () => Nav.instance.push(ProjectScreen(project: p)),
-      child: Row(children: [
+    // long-press (phone) or right-click (desktop) opens the same menu as the ⋯ button
+    return GestureDetector(
+      onLongPress: () => showProjectActions(context, p),
+      onSecondaryTap: () => showProjectActions(context, p),
+      child: Card2(
+        onTap: () => Nav.instance.push(ProjectScreen(project: p)),
+        child: Row(children: [
         ProjectIcon(name),
         const SizedBox(width: 12),
         Expanded(
@@ -93,8 +93,9 @@ class _ProjectRow extends StatelessWidget {
         ),
         if (waiting > 0) ...[Tag('$waiting needs you', kind: 'warn'), const SizedBox(width: 6)],
         if (live > 0) PulseDot(color: t.accent),
-        Icon(Icons.chevron_right_rounded, color: t.faint),
-      ]),
+        IconButton(tooltip: 'Project options', onPressed: () => showProjectActions(context, p), icon: Icon(Icons.more_horiz_rounded, color: t.muted)),
+        ]),
+      ),
     );
   }
 }
@@ -187,7 +188,15 @@ class _ProjectScreenState extends State<ProjectScreen> {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        appBar: AppBar(titleSpacing: 0, title: Text(_name)),
+        appBar: AppBar(titleSpacing: 0, title: Text(_name), actions: [
+          IconButton(
+            tooltip: 'Project options',
+            icon: const Icon(Icons.more_horiz_rounded),
+            onPressed: () async {
+              if (await showProjectActions(context, p) && context.mounted) Navigator.of(context).maybePop();
+            },
+          ),
+        ]),
         body: NestedScrollView(
           headerSliverBuilder: (context, _) => [
             SliverToBoxAdapter(child: _header(context)),

@@ -6,7 +6,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rmdir, stat, unlink } from "node:fs/promises";
 import { existsSync, readdirSync, readFileSync, rmdirSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
@@ -309,8 +309,11 @@ function persistCache() {
 }
 /** derived title + custom name, applied after the cache so a rename shows up without a rescan */
 async function sessionMeta(key: string, file: string): Promise<SessionMeta | null> {
-  const m = await computeMeta(key, file);
+  let m = await computeMeta(key, file);
   if (!m) return null;
+  // a thread merged in from another project resumes in this project's folder: the CLI finds its transcript by that folder
+  const home = projectHomes[key];
+  if (home && m.cwd && projectKey(m.cwd) !== key) m = { ...m, cwd: home };
   const custom = customTitles.get(m.id), auto = autoTitles.get(m.id);
   const provider = providerOf(m.model);
   return custom ? { ...m, title: custom, named: true, provider } : auto ? { ...m, title: auto.title, titledAt: auto.at, provider } : { ...m, provider };
@@ -389,11 +392,70 @@ async function listProjects() {
         try { const r = JSON.parse(line); if (r.cwd) { cwd = r.cwd; break; } } catch {}
       }
     }
+    if (projectHomes[d.name]) cwd = projectHomes[d.name];   // a project other projects were merged into keeps its own folder
     if (!cwd) cwd = "/" + d.name.replace(/^-/, "").split("-").join("/");
     if (SCOPE && cwd !== SCOPE && !cwd.startsWith(SCOPE + sep)) continue;
     out.push({ key: d.name, path: cwd, name: basename(cwd) || cwd, sessions: files.length, lastActivity: latest, exists: existsSync(cwd) });
   }
   return out.sort((a, b) => b.lastActivity - a.lastActivity);
+}
+
+/* Delete and merge. A project is a Claude Code transcript folder (~/.claude/projects/<key>) plus, maybe, a
+ * Bridge folder (roots). Neither action touches the work folder on disk. Delete moves the threads to Bridge's
+ * trash (recoverable: move the folder back). Merge moves every thread into an existing project and pins that
+ * project's folder in project-homes.json, so the merged threads list and resume there. */
+const PROJECT_HOMES_FILE = join(DATA_DIR, "project-homes.json");
+const projectHomes: Record<string, string> = (() => { try { return JSON.parse(readFileSync(PROJECT_HOMES_FILE, "utf8")) || {}; } catch { return {}; } })();
+const saveHomes = () => Bun.write(PROJECT_HOMES_FILE, JSON.stringify(projectHomes, null, 2));
+const validKey = (k: unknown): k is string => typeof k === "string" && /^[A-Za-z0-9-]{1,255}$/.test(k);
+const projectBusy = (key: string) => [...running.values()].some((r) => r.key === key || projectKey(r.cwd) === key || projectHomes[key] === r.cwd);
+async function dropRoot(path: string) {
+  if (!path) return;
+  const roots = await readRoots();
+  const next = roots.filter((r: string) => r !== path);
+  if (next.length === roots.length) return;
+  await Bun.write(ROOTS_FILE, JSON.stringify(next, null, 2));
+  ROOTS = next;
+}
+async function deleteProject(key: string, path: string) {
+  if (!validKey(key)) return { error: "bad project" };
+  if (projectBusy(key)) return { error: "A thread in this project is still working. Stop it first." };
+  const dir = join(PROJECTS_DIR, key);
+  let moved = 0, trash = "";
+  if (existsSync(dir)) {
+    moved = (await readdir(dir)).filter((f) => f.endsWith(".jsonl")).length;
+    await mkdir(join(DATA_DIR, "trash", "projects"), { recursive: true });
+    trash = join(DATA_DIR, "trash", "projects", key + "." + Date.now());
+    await rename(dir, trash);
+  }
+  await dropRoot(path);
+  if (projectHomes[key]) { delete projectHomes[key]; await saveHomes(); }
+  logRow({ ts: Date.now(), kind: "project.delete", msg: basename(path) || key, outcome: moved + " threads to trash", cwd: path });
+  return { ok: true, threads: moved, trash };
+}
+async function mergeProject(from: string, fromPath: string, into: string, intoPath: string) {
+  if (!validKey(from) || !validKey(into) || !intoPath) return { error: "bad project" };
+  if (from === into) return { error: "Pick a different project to merge into." };
+  if (projectBusy(from) || projectBusy(into)) return { error: "A thread in one of these projects is still working. Stop it first." };
+  const src = join(PROJECTS_DIR, from), dest = join(PROJECTS_DIR, into);
+  let moved = 0;
+  if (existsSync(src)) {
+    await mkdir(dest, { recursive: true });
+    for (const f of await readdir(src)) {
+      if (existsSync(join(dest, f))) continue;   // ids are UUIDs: a clash means it is already there
+      await rename(join(src, f), join(dest, f));
+      if (f.endsWith(".jsonl")) moved++;
+    }
+    // anything left clashed; keep it recoverable instead of deleting it
+    if ((await readdir(src)).length) { await mkdir(join(DATA_DIR, "trash", "projects"), { recursive: true }); await rename(src, join(DATA_DIR, "trash", "projects", from + ".merged." + Date.now())); }
+    else await rmdir(src);
+  }
+  projectHomes[into] = resolve(intoPath);
+  delete projectHomes[from];
+  await saveHomes();
+  await dropRoot(fromPath);
+  logRow({ ts: Date.now(), kind: "project.merge", msg: (basename(fromPath) || from) + " → " + basename(intoPath), outcome: moved + " threads moved", cwd: intoPath });
+  return { ok: true, threads: moved };
 }
 
 async function listSessions(key: string, limit = 200) {
@@ -2507,6 +2569,8 @@ async function route(req: Request): Promise<Response> {
       if (p === "/api/auth/cancel" && req.method === "POST") { endLogin(); return json({ ok: true }); }
       if (p === "/api/auth/logout" && req.method === "POST") return json(await doLogout());
       if (p === "/api/projects") return json(await listProjects());
+      if (p === "/api/projects/delete" && req.method === "POST") { const b = await req.json(); const r = await deleteProject(String(b.key || ""), String(b.path || "")); return json(r, r.error ? 409 : 200); }
+      if (p === "/api/projects/merge" && req.method === "POST") { const b = await req.json(); const r = await mergeProject(String(b.from || ""), String(b.fromPath || ""), String(b.into || ""), String(b.intoPath || "")); return json(r, r.error ? 409 : 200); }
       if (p === "/api/sessions") return json(await listSessions(q.get("key") || ""));
       if (p === "/api/recent") {
         const lim = Math.min(Number(q.get("limit") || 60), 200);
