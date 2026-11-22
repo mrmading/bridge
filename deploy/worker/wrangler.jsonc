@@ -13,7 +13,7 @@
   },
   "vars": {
     // the sprite; override per run with --var BACKEND_URL:<url> (deploy.sh does for local tests)
-    "BACKEND_URL": "https://bridge-x2x6.sprites.app"
+    "BACKEND_URL": "https://bridge2-x2x6.sprites.app"
   },
   // off: GET streams carry ?access_token=, and persisted invocation logs would keep those URLs. `wrangler tail` still works live.
   "observability": { "enabled": false }

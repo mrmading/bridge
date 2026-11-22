@@ -11,7 +11,7 @@
    /qwen*, /api/qwen*   404, never exposed
       │
       ▼
- Fly sprite `bridge` (org nestor-280)  https://bridge-x2x6.sprites.app
+ Fly sprite `bridge2` (org nestor-280)  https://bridge2-x2x6.sprites.app
    service `bridge` = ~/bridge/run.sh → sources ~/.bridge.env (600) → bun server.ts on :8080
    every /api call checks the Supabase access token + BRIDGE_ALLOWED_EMAILS
       │

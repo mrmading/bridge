@@ -17,7 +17,7 @@
 set -uo pipefail
 export COPYFILE_DISABLE=1   # no AppleDouble ._ files in the stream
 
-ORG="${SPRITE_ORG:-nestor-280}"; NAME="${SPRITE_NAME:-bridge}"
+ORG="${SPRITE_ORG:-nestor-280}"; NAME="${SPRITE_NAME:-bridge2}"
 SPRITE="${SPRITE_BIN:-$HOME/.local/bin/sprite}"
 STATE="${FILES_SYNC_DIR:-$HOME/.claude/bridge}"
 STAMP="$STATE/files-sync.stamp"; LOCK="$STATE/files-sync.lock"

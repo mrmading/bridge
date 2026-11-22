@@ -12,7 +12,7 @@
 #   sprite config update -o nestor-280 -s bridge --url-auth public
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; repo="$(cd "$here/.." && pwd)"
-ORG="${SPRITE_ORG:-nestor-280}"; NAME="${SPRITE_NAME:-bridge}"; BRANCH="${SPRITE_BRANCH:-friendly-ux}"
+ORG="${SPRITE_ORG:-nestor-280}"; NAME="${SPRITE_NAME:-bridge2}"; BRANCH="${SPRITE_BRANCH:-friendly-ux}"
 SECRETS="${SECRETS_FILE:-$HOME/.claude/.env}"
 SUPABASE_URL="${BRIDGE_SUPABASE_URL:-https://tozuyautmztgolnzgwvg.supabase.co}"
 SUPABASE_KEY="${BRIDGE_SUPABASE_KEY:-sb_publishable_jUP3eIb6TYedA8NRIvDBrQ_oj2wKJ-7}"
@@ -38,7 +38,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 [[ "${SKIP_WEB:-0}" == 1 ]] || stage="$("$here/stage.sh" "$commit")"
 
 # 1. code: bundle just what the sprite lacks (its HEAD if we know it, else everything) and check it out
-have="$(sx 'cd ~/bridge && git rev-parse HEAD' 2>/dev/null || true)"
+have="$(sx 'cd ~/bridge && git rev-parse --verify -q HEAD' 2>/dev/null || true)"; [[ "$have" =~ ^[0-9a-f]{40}$ ]] || have=""   # a fresh sprite's empty repo has no HEAD
 git -C "$repo" update-ref refs/deploy/sprite "$commit"
 if [[ -n "$have" ]] && git -C "$repo" merge-base --is-ancestor "$have" "$commit" 2>/dev/null && [[ "$have" != "$commit" ]]; then
   git -C "$repo" bundle create "$tmp/x.bundle" refs/deploy/sprite "^$have"

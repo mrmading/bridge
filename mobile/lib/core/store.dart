@@ -306,7 +306,7 @@ class AppStore extends ChangeNotifier {
     return _homeServer;
   }
 
-  static const _homeServer = 'https://bridge-x2x6.sprites.app';
+  static const _homeServer = 'https://bridge2-x2x6.sprites.app';
 
   /// When the current connect attempt began; the starting screen counts up from it.
   DateTime connectStarted = DateTime.now();
