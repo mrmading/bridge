@@ -44,6 +44,24 @@ class StatusPill extends StatelessWidget {
   }
 }
 
+/// The small "Archived" chip on a thread whose screenshots were turned into text (see server archive.ts).
+class ArchivedChip extends StatelessWidget {
+  const ArchivedChip({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(color: t.active, borderRadius: BorderRadius.circular(20), border: Border.all(color: t.border)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.inventory_2_outlined, size: 10, color: t.faint),
+        const SizedBox(width: 4),
+        Text('Archived', style: TextStyle(color: t.faint, fontSize: 10.5, fontWeight: FontWeight.w700, letterSpacing: .3)),
+      ]),
+    );
+  }
+}
+
 class SectionHeader extends StatelessWidget {
   const SectionHeader(this.title, {super.key, this.trailing, this.count});
   final String title;

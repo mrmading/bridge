@@ -83,7 +83,7 @@ class Project {
 }
 
 class SessionMeta {
-  SessionMeta({required this.id, required this.key, required this.title, required this.preview, required this.mtime, required this.turns, this.model = '', this.cwd = '', this.branch = '', this.named = false, this.projectKey = '', this.projectName = '', this.projectPath = '', this.running = false, this.needs = false, this.computer = 'mac', this.provider = ''});
+  SessionMeta({required this.id, required this.key, required this.title, required this.preview, required this.mtime, required this.turns, this.model = '', this.cwd = '', this.branch = '', this.named = false, this.projectKey = '', this.projectName = '', this.projectPath = '', this.running = false, this.needs = false, this.computer = 'mac', this.provider = '', this.archived = false});
   final String id, key, title, preview, model, cwd, branch, projectKey, projectName, projectPath;
   /// '' / claude · qwen
   final String provider;
@@ -93,6 +93,8 @@ class SessionMeta {
   final bool named;
   /// A turn is running on the server right now / the chat is waiting on an answer.
   final bool running, needs;
+  /// Idle past the archive window: its screenshots were replaced by text descriptions (server archive.ts).
+  final bool archived;
   factory SessionMeta.fromJson(Map<String, dynamic> j) => SessionMeta(
         id: _s(j['id']),
         key: _s(j['key']),
@@ -112,6 +114,7 @@ class SessionMeta {
         needs: _b(j['needs']),
         computer: _computer(j['computer']),
         provider: _s(j['provider']),
+        archived: _b(j['archived']),
       );
   String get folder {
     final p = projectPath.isNotEmpty ? projectPath : cwd;
@@ -185,10 +188,12 @@ class Usage {
 }
 
 class Transcript {
-  Transcript({required this.msgs, required this.title, required this.cwd, required this.branch, required this.model, required this.offset, required this.usage, this.qwenUsage});
+  Transcript({required this.msgs, required this.title, required this.cwd, required this.branch, required this.model, required this.offset, required this.usage, this.qwenUsage, this.archived = false});
   final List<Msg> msgs;
   /// RunPod GPU usage for the whole chat ({jobs, gpuMs, usd, estimated}); null for Claude chats.
   final Map<String, dynamic>? qwenUsage;
+  /// The thread was archived: its images are now `[screenshot archived: …]` text.
+  final bool archived;
   final String title, cwd, branch, model;
   final int offset;
   final Usage usage;
@@ -204,6 +209,7 @@ class Transcript {
       offset: _i(j['offset']),
       usage: u,
       qwenUsage: meta['qwenUsage'] is Map ? Map<String, dynamic>.from(meta['qwenUsage'] as Map) : null,
+      archived: _b(meta['archived']),
     );
   }
 }

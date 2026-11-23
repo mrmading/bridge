@@ -58,6 +58,11 @@ Transcripts live at `~/.claude/projects/<key>/<sessionId>.jsonl`. `key` = cwd wi
 | `cwd` | string? | first `cwd` seen |
 | `branch` | string? | `gitBranch` at that line |
 | `named` | true? | present only when a custom title exists |
+| `archived` | true? | the thread archive policy (`archive.ts`) has run on it: its images are now `[screenshot archived: …]` / `[image archived: …]` text blocks. Also on `/api/session` `meta.archived`. The app shows an "Archived" chip and renders those blocks as muted lines. |
+
+### `GET /api/archive/status`
+The thread archive policy: `{ enabled, days, concurrency, keepOriginals, archived, images, bytesSaved, failed, descriptions, descriptionsFailed, originals, originalsBytes, restored, running, lastRun, runs, paths }`.
+`enabled` is `BRIDGE_ARCHIVE=1` on that server (the daily run); the rest comes from `DATA_DIR/archive/index.json`. Proxied to the cloud with `?computer=cloud`.
 
 ### `GET /api/projects` (L1539, `listProjects` L198)
 Array, sorted by `lastActivity` desc. Only dirs with ≥1 `.jsonl`.

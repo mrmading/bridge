@@ -81,6 +81,26 @@ which `wrangler deployments list` shows.
 - Knobs: `BRIDGE_DESKTOP=0` (off), `BRIDGE_DESKTOP_DISPLAY` (:99), `BRIDGE_DESKTOP_VNC_PORT` (5999),
   `BRIDGE_DESKTOP_CDP_PORT` (9229), `BRIDGE_DESKTOP_WIDTH`/`HEIGHT` (1280x800), `BRIDGE_DESKTOP_HOME` (~/.bridge-desktop).
 
+## Thread archive (screenshots → text after 30 idle days)
+
+`archive.ts` implements the policy "inactive threads after 30 days become archived: the uploads are deleted and
+summarized as text". Every base64 image in an idle thread's transcript (and its `<id>/subagents/*.jsonl`) is replaced
+by a `{type:"text", text:"[screenshot archived: <1–3 sentences>]"}` block (`[image archived: …]` for a pasted image);
+every other line stays byte-identical, the file keeps its mtime, and Claude Code still resumes it. Descriptions come from
+`claude -p --model haiku` on the sprite's signed-in CLI (one call per unique image, cached by sha256 in
+`DATA_DIR/archive/descriptions.json`); when that fails the block carries a label built from the tool + URL/path and is
+logged `describe_failed` for `--redo-failed`. Originals are kept gzipped under `DATA_DIR/archive/originals/` until
+`purge-originals` — the only path that deletes them.
+
+- Off by default. `BRIDGE_ARCHIVE=1` makes the server run it 10 min after boot and then daily; a thread with a turn in
+  flight is never touched. `GET /api/archive/status` reports it.
+- By hand on the sprite (same code, same index): `bun archive.ts scan` (dry run), `bun archive.ts run [--days 30]
+  [--limit N] [--session ID] [--redo-failed]`, `bun archive.ts status`, `bun archive.ts restore --session ID`,
+  `bun archive.ts purge-originals --older-than DAYS`.
+- Knobs: `BRIDGE_ARCHIVE_DAYS` (30), `BRIDGE_ARCHIVE_CONCURRENCY` (2 haiku calls at a time),
+  `BRIDGE_ARCHIVE_KEEP_ORIGINALS=0` (delete instead of keeping the gzip — the stated end state, not the default),
+  `BRIDGE_ARCHIVE_TIMEOUT_MS` (120000 per image), `BRIDGE_CLAUDE_BIN`.
+
 ## Notes
 
 - SSE: the Worker passes the upstream body through untouched and sets `cache-control: no-cache, no-transform`.

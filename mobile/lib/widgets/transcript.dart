@@ -19,6 +19,54 @@ const _monoFallback = ['SF Mono', 'Roboto Mono', 'monospace', 'Courier'];
 TextStyle mono(double size, Color color, {FontWeight? weight, double height = 1.4}) =>
     TextStyle(fontFamily: _monoFamily, fontFamilyFallback: _monoFallback, fontSize: size, color: color, fontWeight: weight, height: height);
 
+/// `[screenshot archived: …]` / `[image archived: …]` — what the server's archive policy leaves where an
+/// image used to be. Returns (kind, description) for such a line, null for anything else.
+final _archivedNote = RegExp(r'^\[(screenshot|image) archived: ([\s\S]*)\]$');
+({String kind, String text})? archivedNote(String line) {
+  final m = _archivedNote.firstMatch(line.trim());
+  return m == null ? null : (kind: m.group(1)!, text: m.group(2)!.trim());
+}
+
+/// Splits text into its archived-image notes and the remaining lines.
+({List<({String kind, String text})> notes, String rest}) splitArchived(String text) {
+  final notes = <({String kind, String text})>[];
+  final rest = <String>[];
+  for (final line in text.split('\n')) {
+    final n = archivedNote(line);
+    if (n != null) {
+      notes.add(n);
+    } else {
+      rest.add(line);
+    }
+  }
+  return (notes: notes, rest: rest.join('\n').trim());
+}
+
+/// A muted, italic one-liner standing in for an archived image: "Screenshot · Login page with an error banner".
+class ArchivedImageLine extends StatelessWidget {
+  const ArchivedImageLine({super.key, required this.kind, required this.text});
+  final String kind, text;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(padding: const EdgeInsets.only(top: 2), child: Icon(Icons.image_not_supported_outlined, size: 14, color: t.faint)),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text.rich(
+            TextSpan(children: [
+              TextSpan(text: '${kind == 'image' ? 'Image' : 'Screenshot'} · ', style: TextStyle(color: t.faint, fontStyle: FontStyle.italic, fontSize: 13, fontWeight: FontWeight.w600)),
+              TextSpan(text: text, style: TextStyle(color: t.muted, fontStyle: FontStyle.italic, fontSize: 13, height: 1.35)),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
 /// One row of the stream. [onChoice] receives a tapped ```choices option; [onSaveSecret] saves a
 /// token from a ```secret card (null: the cards are read-only).
 class MsgRow extends StatelessWidget {
@@ -58,20 +106,24 @@ class UserBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
+    // a pasted image the archive policy turned into text shows as a muted line under the bubble, not inside it
+    final split = splitArchived(stripBridgeBlock(text));
     return Padding(
       padding: const EdgeInsets.fromLTRB(48, 10, 14, 4),
       child: Align(
         alignment: Alignment.centerRight,
         child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: queued ? t.sunken : t.active,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: queued ? t.borderStrong : t.border),
+          if (split.rest.isNotEmpty || split.notes.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: queued ? t.sunken : t.active,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: queued ? t.borderStrong : t.border),
+              ),
+              child: SelectableText(split.rest, style: TextStyle(color: queued ? t.muted : t.fg, fontSize: 16, height: 1.4)),
             ),
-            child: SelectableText(stripBridgeBlock(text).trim(), style: TextStyle(color: queued ? t.muted : t.fg, fontSize: 16, height: 1.4)),
-          ),
+          for (final n in split.notes) Padding(padding: const EdgeInsets.only(top: 2, right: 4), child: ArchivedImageLine(kind: n.kind, text: n.text)),
           if (queued) Padding(padding: const EdgeInsets.only(top: 4, right: 4), child: Text('queued', style: mono(11, t.faint))),
         ]),
       ),
@@ -387,7 +439,9 @@ class _ToolCardState extends State<ToolCard> {
     } catch (_) {
       input = '${m.input}';
     }
-    var result = m.result?.content ?? '';
+    // archived screenshots come back as `[screenshot archived: …]` lines: shown as muted notes, not as raw result text
+    final split = splitArchived(m.result?.content ?? '');
+    var result = split.rest;
     final lines = result.split('\n');
     if (lines.length > 300) result = '${lines.take(300).join('\n')}\n… ${lines.length - 300} more lines';
     Widget block(String label, String text, Color color) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -406,7 +460,11 @@ class _ToolCardState extends State<ToolCard> {
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         block('INPUT', input, t.muted),
-        if (m.result != null) ...[
+        if (split.notes.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          for (final n in split.notes) ArchivedImageLine(kind: n.kind, text: n.text),
+        ],
+        if (m.result != null && (result.isNotEmpty || split.notes.isEmpty)) ...[
           const SizedBox(height: 10),
           block(m.result!.isError ? 'ERROR' : 'RESULT', result.isEmpty ? '(empty)' : result, m.result!.isError ? t.err : t.fg),
         ],

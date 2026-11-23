@@ -11,6 +11,7 @@ import '../../core/nav.dart';
 import '../../core/store.dart';
 import '../../core/theme.dart';
 import '../../widgets/bridge.dart';
+import '../../widgets/common.dart';
 import '../projects/projects_screen.dart';
 import '../search/search_screen.dart';
 import '../session/session_utils.dart';
@@ -305,6 +306,7 @@ class _Chats extends StatelessWidget {
               cloud: s.computer == 'cloud',
               model: store.providerShort(store.providerOf(s.id)),
               on: current == s.id,
+              archived: s.archived,
               onTap: () => openSession(key: s.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, computer: s.computer),
             ),
         ],
@@ -315,10 +317,12 @@ class _Chats extends StatelessWidget {
 }
 
 class _ChatItem extends StatelessWidget {
-  const _ChatItem({required this.title, required this.onTap, this.on = false, this.dot, this.trailing, this.cloud = false, this.model = '', this.lead});
+  const _ChatItem({required this.title, required this.onTap, this.on = false, this.dot, this.trailing, this.cloud = false, this.model = '', this.lead, this.archived = false});
   /// a project's letter tile, in the Projects section
   final Widget? lead;
   final bool cloud;
+  /// the thread's screenshots were turned into text (server archive policy)
+  final bool archived;
   /// An open model's short name ("Qwen 3.8"); '' for Claude.
   final String model;
   final String title;
@@ -345,6 +349,7 @@ class _ChatItem extends StatelessWidget {
               if (lead != null) ...[lead!, const SizedBox(width: 10)],
               Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: on ? t.fg : t.muted, fontSize: 14))),
               if (cloud) ...[const SizedBox(width: 6), const CloudBadge(size: 13)],
+              if (archived) ...[const SizedBox(width: 6), const ArchivedChip()],
               if (model.isNotEmpty) ...[const SizedBox(width: 6), Tag(model, kind: 'think')],
               if (trailing != null) ...[const SizedBox(width: 8), trailing!],
               const SizedBox(width: 12),

@@ -14,6 +14,7 @@ import { Desktop, desktopConfig, mcpConfig, isDesktopTool, DESKTOP_PROTOCOL } fr
 import { createConnectors } from "./connectors/routes.ts";
 import { createReorganize } from "./reorganize.ts";
 import { createSecrets, type Scope } from "./secrets.ts";
+import { createArchiver } from "./archive.ts";
 
 const HOME = homedir();
 const CLAUDE_DIR = join(HOME, ".claude");
@@ -175,7 +176,7 @@ const LANGS: Record<string, string> = {
 
 type SessionMeta = {
   id: string; key: string; title: string; preview: string; mtime: number;
-  size: number; turns: number; model?: string; cwd?: string; branch?: string; named?: boolean; desk?: boolean; oneshot?: boolean; v?: number;
+  size: number; turns: number; model?: string; cwd?: string; branch?: string; named?: boolean; desk?: boolean; oneshot?: boolean; v?: number; archived?: boolean;
 };
 
 async function firstLines(file: string, bytes = 65536): Promise<string[]> {
@@ -316,6 +317,7 @@ async function sessionMeta(key: string, file: string): Promise<SessionMeta | nul
   if (home && m.cwd && projectKey(m.cwd) !== key) m = { ...m, cwd: home };
   const custom = customTitles.get(m.id), auto = autoTitles.get(m.id);
   const provider = providerOf(m.model);
+  if (archiver.isArchived(m.id)) m = { ...m, archived: true };   // archive.ts: images replaced by text after BRIDGE_ARCHIVE_DAYS idle
   return custom ? { ...m, title: custom, named: true, provider } : auto ? { ...m, title: auto.title, titledAt: auto.at, provider } : { ...m, provider };
 }
 /** a chat is on Qwen when its transcript says the model was qwen; everything else is Claude */
@@ -840,6 +842,20 @@ const DESK_KEY = randomUUID();
 type LogRow = { ts: number; kind: string; msg: string; outcome?: string; session?: string; cwd?: string; cost?: number; ms?: number; model?: string };
 const LOG: LogRow[] = [];
 function logRow(r: LogRow) { LOG.push(r); if (LOG.length > 800) LOG.splice(0, LOG.length - 800); }
+
+/** The thread archive policy (archive.ts): a thread idle for BRIDGE_ARCHIVE_DAYS (30) has its screenshots replaced by text
+ *  descriptions, the original kept gzipped under DATA_DIR/archive. Runs 10 minutes after boot and daily, only with BRIDGE_ARCHIVE=1;
+ *  a thread with a turn in flight here is never touched. `bun archive.ts scan|run|status|restore` is the same code by hand. */
+const archiver = createArchiver({ projectsDir: PROJECTS_DIR, dataDir: DATA_DIR, claudeBin: CLAUDE_BIN, isRunning: (id) => !!runFor(id),
+  log: (kind, msg, x) => logRow({ ts: Date.now(), kind, msg, session: x?.session }) });
+async function archiveTick() {
+  const t0 = Date.now();
+  try {
+    const r = await archiver.run();
+    logRow({ ts: Date.now(), kind: "archive.run", msg: r.archived.length + " threads, " + r.images + " images, " + r.skipped.length + " skipped", outcome: r.failed ? r.failed + " not described" : "ok", ms: Date.now() - t0 });
+  } catch (e) { logRow({ ts: Date.now(), kind: "archive.run", msg: String(e).slice(0, 200), outcome: "error", ms: Date.now() - t0 }); }
+}
+if (process.env.BRIDGE_ARCHIVE === "1") setTimeout(() => { archiveTick(); setInterval(archiveTick, 24 * 3600_000); }, 10 * 60_000);
 
 /** env vars declared in settings.json, so spawned sessions see the same world as the TUI */
 let settingsEnv: Record<string, string> = {};
@@ -1811,7 +1827,7 @@ async function setComputers(body: any) {
 /** tokens & keys typed into a masked field (secrets.ts): global → ~/.claude/.env, project → DATA_DIR/secrets */
 const secrets = createSecrets({ globalFile: join(CLAUDE_DIR, ".env"), dataDir: DATA_DIR });
 /* the cloud's chats, proxied: same requests, sent on to the cloud's Bridge */
-const PROXY_GET = new Set(["/api/secrets", "/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw", "/api/reorganize", "/api/reorganize/plan"]);
+const PROXY_GET = new Set(["/api/secrets", "/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw", "/api/reorganize", "/api/reorganize/plan", "/api/archive/status"]);
 const PROXY_POST = new Set(["/api/secrets", "/api/secrets/remove", "/api/chat", "/api/abort", "/api/rename", "/api/save", ...["decide", "undecide", "project", "apply", "undo"].map((x) => "/api/reorganize/" + x)]);
 /** sorting the work folder into projects, by hand, one folder at a time (reorganize.ts) */
 const reorganize = createReorganize({ home: HOME, claudeDir: CLAUDE_DIR });
@@ -2604,6 +2620,7 @@ async function route(req: Request): Promise<Response> {
         else if (auto) { out.meta.title = auto.title; (out.meta as any).titledAt = auto.at; }
         (out.meta as any).provider = providerOf(out.meta.model);
         (out.meta as any).qwenUsage = qwenSpend.get(q.get("id") || "") || null;
+        (out.meta as any).archived = archiver.isArchived(q.get("id") || "");
         // where a follower should start: the bytes up to the last complete line
         const cut = raw.lastIndexOf("\n");
         return json({ ...out, offset: cut >= 0 ? Buffer.byteLength(raw.slice(0, cut + 1)) : 0 });
@@ -2619,6 +2636,7 @@ async function route(req: Request): Promise<Response> {
         return json({ versions, dims, generated: state?.generated_at || null, mtime: st?.mtimeMs || 0, installed: existsSync(join(CLAUDE_DIR, "LIFEOS")) });
       }
       if (p === "/api/home") return json(await mergedHome());
+      if (p === "/api/archive/status") return json({ enabled: process.env.BRIDGE_ARCHIVE === "1", ...(await archiver.status()) });
       if (p === "/api/jobs") {
         const id = q.get("id") || "";
         const r = runFor(id);

@@ -362,6 +362,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
           running || needs ? PulseDot(color: needs ? t.warn : t.accent) : Padding(padding: const EdgeInsets.all(4), child: StatusDot(t.ok, size: 7)),
           const SizedBox(width: 8),
           Expanded(child: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 14.5, fontWeight: FontWeight.w500))),
+          if (s.archived) ...[const SizedBox(width: 6), const ArchivedChip()],
           const SizedBox(width: 8),
           Text(relTime(s.mtime), style: TextStyle(color: t.faint, fontSize: 12)),
         ]),
