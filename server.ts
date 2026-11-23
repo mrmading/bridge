@@ -6,10 +6,15 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdir, readdir, readFile, rename, rmdir, stat, unlink } from "node:fs/promises";
+import { existsSync, readdirSync, readFileSync, rmdirSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { Desktop, desktopConfig, mcpConfig, isDesktopTool, DESKTOP_PROTOCOL } from "./desktop.ts";
+import { createConnectors } from "./connectors/routes.ts";
+import { createReorganize } from "./reorganize.ts";
+import { createSecrets, type Scope } from "./secrets.ts";
+import { createArchiver } from "./archive.ts";
 
 const HOME = homedir();
 const CLAUDE_DIR = join(HOME, ".claude");
@@ -23,6 +28,80 @@ const CORS = process.env.BRIDGE_CORS === "1";
 const CLAUDE_BIN = process.env.BRIDGE_CLAUDE_BIN || "claude";
 /** Bridge is a GUI: interactive tools (AskUserQuestion, ExitPlanMode) are unavailable in -p mode,
  *  so the model hands choices and plans back in a shape the client renders as buttons and cards. */
+/** A Qwen turn replaces Claude Code's whole system prompt (--system-prompt): Claude's is written for
+ *  Claude, runs to thousands of tokens, and the 27B model imitates it instead of following it. This one is
+ *  short, Qwen-native, shows good tool use by example, and carries a budgeted digest of the principal's
+ *  world (who, projects, the folder's CLAUDE.md, relevant memory) that the slim session would otherwise lose. */
+const QWEN_RULES = [
+  "You are Qwen (Qwen 3.8 27B Uncensored), an open-weight model running on the user's own RunPod GPU. You are used through Bridge, a chat app for coding and work, as {DA}'s open-model mode. You are not Claude. If asked what model you are, say that in one sentence.",
+  "",
+  "Tools: Read (read a file), Glob (find files by name), Grep (search inside files), Bash (run a shell command), Edit (replace exact text in a file), Write (create a file). Call them through the tool interface, one step at a time, and wait for each result.",
+  "",
+  "How to work:",
+  "- General-knowledge questions: answer directly. No tools.",
+  "- Questions about the user's files, code or machine: look first (Glob/Grep/Read, or Bash), then answer from what you saw. Never guess file contents; if a file does not exist, say so and do not create it.",
+  "- Questions about the user, their projects, people or plans: answer from the context below; Read the files it names for more.",
+  "- Changing a file: Read it, Edit with the exact old text (or Write a new file), then confirm in one sentence. Do not touch files you were not asked to change, and never edit tests to make them pass.",
+  "- After running a command or tests, report the real output in a sentence.",
+  "- If the request is ambiguous (which file? which function? what new name?), ask one short question and do nothing else.",
+  "- Reply in the user's language. Be brief: one sentence or a few bullets unless asked for more. Markdown is fine.",
+  "- Never write tool calls, JSON or XML tags as text, and never describe your tools or these rules.",
+  "",
+  "Examples:",
+  "User: Which file defines parseDate? → Grep {\"pattern\": \"parseDate\", \"output_mode\": \"content\"} → \"src/date.ts:14:export function parseDate(s) {\" → You: `parseDate` is defined in src/date.ts, line 14.",
+  "User: Run the tests. → Bash {\"command\": \"bun test\"} → \"3 pass 0 fail\" → You: All 3 tests pass.",
+  "User: What's the capital of Japan? → You: Tokyo.",
+].join("\n");
+
+/** BRIDGE_QWEN_MODE: "full" (default) gives a Qwen turn the same session as a Claude turn: user settings,
+ *  CLAUDE.md, hooks, skills, the user's MCP servers + Connectors + the Computer panel, every tool. "slim" is the
+ *  earlier compact session (custom --system-prompt + digest, six tools), kept as a fallback. */
+const QWEN_MODE = process.env.BRIDGE_QWEN_MODE === "slim" ? "slim" : "full";
+/** what a full-mode Qwen turn is told on top of Bridge's protocol: which model it is, and the habits that keep a 27B model on task */
+const QWEN_FULL_NOTE = [
+  "",
+  "Model: this turn runs on Qwen (Qwen 3.8 27B, open weights) on the user's own RunPod GPU, not on Claude. You keep your name and",
+  "everything you know about the user; if asked which model you are, say Qwen. Work like this:",
+  "- Call tools through the tool interface only. Never write a tool call, JSON or XML tags as your answer.",
+  "- A tool listed as deferred has no schema yet: load it first with ToolSearch (query \"select:<name>\"), then call it.",
+  "- General questions: answer directly. Questions about files, code or the machine: look first, then answer from what you saw.",
+  "- Be brief and concrete; after a command or tests, report the real output in a sentence. If a request is ambiguous, ask one short question.",
+  "- In plan mode nothing has been changed: write the plan in future tense under a markdown heading that starts with `## Plan`, and never claim you created, ran or verified anything.",
+].join("\n");
+const QWEN_DIGEST_CHARS = 10_000; // ≈ 3k tokens
+async function qwenSystemPrompt(cwd: string, prompt: string): Promise<string> {
+  const read = async (p: string) => { try { return await Bun.file(p).text(); } catch { return ""; } };
+  const section = (md: string, heading: string) => {
+    const i = md.indexOf("\n## " + heading);
+    if (i < 0) return "";
+    const rest = md.slice(i + 1);
+    const j = rest.indexOf("\n## ", 3);
+    return (j < 0 ? rest : rest.slice(0, j)).trim();
+  };
+  let da = "the user's assistant";
+  try { da = JSON.parse(await read(join(CLAUDE_DIR, "settings.json"))).daidentity?.name || da; } catch {}
+  const user = join(CLAUDE_DIR, "LIFEOS", "USER");
+  const who = section(await read(join(user, "PRINCIPAL", "PRINCIPAL_IDENTITY.md")), "Quick Reference");
+  const projectsMd = await read(join(user, "PROJECTS.md"));
+  const projects = [section(projectsMd, "Projects Table"), section(projectsMd, "Routing Aliases")].filter(Boolean).join("\n\n");
+  const memDir = join(CLAUDE_DIR, "projects", HOME.replace(/[\/.]/g, "-"), "memory");
+  // the MEMORY.md index lines that share the most words with the prompt
+  const words = new Set(prompt.toLowerCase().match(/[a-z0-9]{4,}/g) || []);
+  const memory = (await read(join(memDir, "MEMORY.md"))).split("\n").filter((l) => l.startsWith("- "))
+    .map((l) => ({ l, n: (l.toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter((w) => words.has(w)).length }))
+    .filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 10).map((x) => x.l).join("\n");
+  const local = cwd !== HOME ? (await read(join(cwd, "CLAUDE.md"))).slice(0, 5000) : "";
+
+  const parts = [
+    who && "## Who you work for\n" + who + "\n(Full profile: " + join(user, "PRINCIPAL", "PRINCIPAL_IDENTITY.md") + ")",
+    projects && "## Their projects\n" + projects + "\n(Source: " + join(user, "PROJECTS.md") + "; ~ is " + HOME + ")",
+    local && "## This folder's CLAUDE.md\n" + local,
+    memory && "## Memory notes that may be relevant (files in " + memDir + ")\n" + memory,
+  ].filter(Boolean) as string[];
+  let digest = "";
+  for (const p of parts) if (digest.length + p.length <= QWEN_DIGEST_CHARS) digest += (digest ? "\n\n" : "") + p;
+  return QWEN_RULES.replace("{DA}", da) + (digest ? "\n\n# Context\n\n" + digest : "");
+}
 const BRIDGE_PROTOCOL = [
   "You are running inside Bridge, a desktop GUI for Claude Code. The session is non-interactive: AskUserQuestion and",
   "ExitPlanMode are not available. Two conventions replace them:",
@@ -30,6 +109,12 @@ const BRIDGE_PROTOCOL = [
   "   `choices`, one short option per line (2-6 lines). Bridge renders them as buttons; the click becomes the next message.",
   "2. In plan mode, finish your reply with the complete plan as markdown under a heading that starts with `Plan`.",
   "   Bridge renders it as a plan card with Approve / Revise buttons; Approve sends the next message with edits enabled.",
+  "3. When you need a token, API key or password, never ask for it in chat and never tell the user to edit an env file.",
+  "   End your reply with a fenced block whose info string is `secret`, one line per secret: `NAME scope where-to-get-it`",
+  "   (NAME in CAPS_SNAKE; scope `global` for a key used everywhere, `project` for one that belongs to this codebase only).",
+  "   Bridge shows a masked field and saves the value straight to its store (global: ~/.claude/.env; project: Bridge's",
+  "   per-folder store, outside the repo). From the next turn on it is in your environment as $NAME; you never see the value",
+  "   and must never print or echo it. The user's next message says it is saved. If a token is pasted in chat anyway, say so.",
 ].join("\n");
 
 /* ────────────────────────────── helpers ────────────────────────────── */
@@ -40,7 +125,7 @@ const json = (data: unknown, status = 200) =>
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
   });
 
-const SENSITIVE = [/\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\.credentials/, /id_rsa/, /\/\.env/, /\.pem$/, /keychain/i];
+const SENSITIVE = [/\/bridge\/secrets\//, /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\.credentials/, /id_rsa/, /\/\.env/, /\.pem$/, /keychain/i];
 /** Bridge only ever touches the folders you have added — not the whole machine. */
 let ROOTS: string[] = [];
 function guard(p: string): string | null {
@@ -49,6 +134,18 @@ function guard(p: string): string | null {
   return null;
 }
 const isSensitive = (p: string) => SENSITIVE.some((r) => r.test(p));
+/** a file a chat made can sit outside the Bridge folders (the CLI's scratchpad, Downloads); it still opens when that chat's own transcript names it */
+/** video files Bridge previews inline (served by /api/raw only; never inlined into a model turn) */
+const VIDEO_TYPES: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".ogv": "video/ogg" };
+async function guardFor(p: string, sid: string): Promise<string | null> {
+  const abs = guard(p);
+  if (abs || !p || !/^[0-9a-f-]{8,64}$/i.test(sid || "")) return abs;
+  const f = sessionFile(sid);
+  if (!f || !existsSync(f)) return null;
+  const want = resolve(p);
+  const raw = await readFile(f, "utf8").catch(() => "");
+  return raw.includes(JSON.stringify(want).slice(1, -1)) ? want : null;
+}
 
 function frontmatter(text: string): Record<string, string> {
   if (!text.startsWith("---")) return {};
@@ -79,7 +176,7 @@ const LANGS: Record<string, string> = {
 
 type SessionMeta = {
   id: string; key: string; title: string; preview: string; mtime: number;
-  size: number; turns: number; model?: string; cwd?: string; branch?: string; named?: boolean;
+  size: number; turns: number; model?: string; cwd?: string; branch?: string; named?: boolean; desk?: boolean; oneshot?: boolean; v?: number; archived?: boolean;
 };
 
 async function firstLines(file: string, bytes = 65536): Promise<string[]> {
@@ -115,6 +212,10 @@ const CACHE_FILE = join(DATA_DIR, "session-meta.json");
 /** user-chosen session names. Claude Code owns the transcripts, so Bridge never rewrites
  *  them; a sidecar keyed by session id survives resume, compaction and cache eviction. */
 const TITLES_FILE = join(DATA_DIR, "titles.json");
+/** Connectors: MCP servers from a catalog, any URL, or self-made; state + secrets under DATA_DIR/connectors */
+const connectors = await createConnectors({ dataDir: join(DATA_DIR, "connectors"), claudeBin: CLAUDE_BIN,
+  proxy: (path, method, body, auth) => proxyCloud(path, method, body, auth),
+  log: (kind, msg) => logRow({ ts: Date.now(), kind, msg }) });
 const customTitles = new Map<string, string>();
 try {
   const disk = JSON.parse(await Bun.file(TITLES_FILE).text());
@@ -125,6 +226,51 @@ async function setTitle(id: string, title: string) {
   if (t) customTitles.set(id, t); else customTitles.delete(id);
   await Bun.write(TITLES_FILE, JSON.stringify(Object.fromEntries(customTitles), null, 2));
   return t;
+}
+/** Bridge's own short thread names. Claude Code writes an `ai-title` a few seconds into the first
+ *  turn and it runs long ("Upload active sessions to bridge app computer"), so until then a thread was
+ *  named by its raw prompt. Bridge names it twice instead: a cleaned-up first few words the moment the
+ *  message is sent, then a 2-4 word title from a one-shot haiku call (~2 s). A name the user typed
+ *  (titles.json) always wins; this sidecar is below it and above Claude Code's ai-title. */
+const AUTO_TITLES_FILE = join(DATA_DIR, "auto-titles.json");
+const autoTitles = new Map<string, { title: string; at: number }>();
+try {
+  const disk = JSON.parse(await Bun.file(AUTO_TITLES_FILE).text());
+  for (const [k, v] of Object.entries(disk) as any) if (v && typeof v.title === "string") autoTitles.set(k, v);
+} catch {}
+let autoSaveTimer: any = null;
+function setAutoTitle(id: string, title: string) {
+  autoTitles.set(id, { title, at: Date.now() });
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => Bun.write(AUTO_TITLES_FILE, JSON.stringify(Object.fromEntries(autoTitles))).catch(() => {}), 500);
+}
+const FILLER = /^(?:(?:hey|hi|hello|ok(?:ay)?|so|now|also|then|and|but|yes|yeah|great|cool|thanks|thank you|pl+e?a?se?|pls|plz|can|could|would|will|you|we|i|u|kindly|just|quickly|go ahead and|let'?s|lets|want|wanna|need|to|me|us|help|try|would like|like|tell|show|give|explain|check|what'?s|whats|what|is|are|the|a|an|about|me|do|does)\b[\s,!.?:;-]*)+/i;
+/** the instant name: the request minus greetings and "please can you", first five words, capitalised */
+function quickTitle(prompt: string) {
+  let s = String(prompt || "").replace(/```[\s\S]*?```/g, " ").replace(/https?:\/\/\S+/g, " ").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  const stripped = s.replace(FILLER, "").trim();
+  if (stripped.split(" ").length >= 2) s = stripped;
+  const w = s.split(" ").slice(0, 5).join(" ").replace(/[\s,.;:!?-]+$/, "");
+  return w ? w[0].toUpperCase() + w.slice(1) : "New thread";
+}
+/** the real name: one haiku turn with no hooks, tools, MCP or saved session, so it neither costs a
+ *  LifeOS start-up nor leaves a stray thread behind. Empty on any failure — the quick title stays. */
+async function aiThreadTitle(prompt: string): Promise<string> {
+  const text = String(prompt || "").slice(0, 1500);
+  if (!text.trim()) return "";
+  try {
+    const proc = Bun.spawn([CLAUDE_BIN, "-p", "--model", "haiku", "--no-session-persistence", "--setting-sources", "",
+      "--strict-mcp-config", "--disable-slash-commands", "--tools", "",
+      "--system-prompt", "You name chat threads. Reply with ONLY a 2-4 word title in Title Case for the user's request. " +
+        "Name the subject, not the action word 'help'. Fix typos, keep product and proper names, no quotes, no trailing punctuation."],
+      { cwd: tmpdir(), stdin: new Blob([text]), stdout: "pipe", stderr: "ignore", env: { ...process.env, ...settingsEnv } as any });
+    const timer = setTimeout(() => proc.kill(), 20_000);
+    const out = (await new Response(proc.stdout).text()).trim().split("\n").pop() || "";
+    clearTimeout(timer);
+    if ((await proc.exited) !== 0) return "";
+    const t = out.replace(/^["'`*#\s]+|["'`*.\s]+$/g, "").replace(/^title:\s*/i, "");
+    return t && t.split(/\s+/).length <= 6 && t.length <= 48 ? t : "";
+  } catch { return ""; }
 }
 const metaCache = new Map<string, { m: number; v: SessionMeta }>();
 try {
@@ -140,7 +286,8 @@ function defaultRoots(): string[] {
 async function readRoots(): Promise<string[]> {
   try {
     const r = JSON.parse(await Bun.file(ROOTS_FILE).text());
-    if (Array.isArray(r) && r.length) return r.filter((x: string) => typeof x === "string");
+    // a folder list copied from another machine (the cloud computer got the Mac's) names folders that don't exist here; drop those so the defaults apply
+    if (Array.isArray(r) && r.length) { const ok = r.filter((x: string) => typeof x === "string" && existsSync(x)); if (ok.length) return ok; }
   } catch {}
   return [];
 }
@@ -163,23 +310,38 @@ function persistCache() {
 }
 /** derived title + custom name, applied after the cache so a rename shows up without a rescan */
 async function sessionMeta(key: string, file: string): Promise<SessionMeta | null> {
-  const m = await computeMeta(key, file);
+  let m = await computeMeta(key, file);
   if (!m) return null;
-  const custom = customTitles.get(m.id);
-  return custom ? { ...m, title: custom, named: true } : m;
+  // a thread merged in from another project resumes in this project's folder: the CLI finds its transcript by that folder
+  const home = projectHomes[key];
+  if (home && m.cwd && projectKey(m.cwd) !== key) m = { ...m, cwd: home };
+  const custom = customTitles.get(m.id), auto = autoTitles.get(m.id);
+  const provider = providerOf(m.model);
+  if (archiver.isArchived(m.id)) m = { ...m, archived: true };   // archive.ts: images replaced by text after BRIDGE_ARCHIVE_DAYS idle
+  return custom ? { ...m, title: custom, named: true, provider } : auto ? { ...m, title: auto.title, titledAt: auto.at, provider } : { ...m, provider };
 }
+/** a chat is on Qwen when its transcript says the model was qwen; everything else is Claude */
+const providerOf = (model?: string) => (/qwen/i.test(String(model || "")) ? "qwen" : "claude");
 async function computeMeta(key: string, file: string): Promise<SessionMeta | null> {
   const st = await stat(file).catch(() => null);
   if (!st || st.size === 0) return null;
   const cached = metaCache.get(file);
-  if (cached && cached.m === st.mtimeMs) return cached.v;
+  if (cached && cached.m === st.mtimeMs && cached.v.v === 8) return cached.v;
   const id = basename(file, ".jsonl");
-  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0 };
+  const meta: SessionMeta = { id, key, title: "", preview: "", mtime: st.mtimeMs, size: st.size, turns: 0, v: 8 };
   for (const line of await firstLines(file, 300_000)) {
     let r: any; try { r = JSON.parse(line); } catch { continue; }
     if (r.cwd && !meta.cwd) { meta.cwd = r.cwd; meta.branch = r.gitBranch; }
+    // a request without Claude Code's own tools (no Read, Bash, Edit, Write) is a one-shot inference call — a prompt hook's
+    // `claude --print --tools ''`, which still carries connector tools — never a chat
+    if (r.type === "api-request-shape" && meta.oneshot === undefined && Array.isArray(r.shape?.tools)) {
+      const names = new Set(r.shape.tools.map((t: any) => t?.name));
+      meta.oneshot = !["Read", "Bash", "Edit", "Write"].some((n) => names.has(n));
+    }
     if (r.type === "ai-title" && r.aiTitle) meta.title = r.aiTitle;
-    if (r.type === "user" && !r.isSidechain && typeof r.message?.content === "string") meta.turns++;
+    // the model is read from the head too: hook output at the tail can push the last reply out of the tail window
+    if (r.type === "assistant" && r.message?.model && r.message.model !== "<synthetic>") meta.model = r.message.model;
+    if (r.type === "user" && !r.isSidechain && typeof r.message?.content === "string") { meta.turns++; if (meta.turns === 1 && r.message.content.startsWith("<bridge>")) meta.desk = true; }
     if (!meta.preview && r.type === "user" && !r.isSidechain && typeof r.message?.content === "string")
       meta.preview = r.message.content.replace(/<[^>]+>/g, " ").slice(0, 220).trim();
     if (!meta.preview && r.type === "user" && Array.isArray(r.message?.content)) {
@@ -191,14 +353,26 @@ async function computeMeta(key: string, file: string): Promise<SessionMeta | nul
   for (const line of await lastLines(file)) {
     let r: any; try { r = JSON.parse(line); } catch { continue; }
     if (r.type === "ai-title" && r.aiTitle) meta.title = r.aiTitle;
-    if (r.type === "assistant" && r.message?.model) meta.model = r.message.model;
+    if (r.type === "assistant" && r.message?.model && r.message.model !== "<synthetic>") meta.model = r.message.model;
   }
+  // neither window saw a reply (big request snapshots in between): look further back, once per change
+  if (!meta.model) for (const line of await lastLines(file, 2_000_000)) {
+    if (!line.includes('"type":"assistant"')) continue;
+    try { const r = JSON.parse(line); if (r.message?.model && r.message.model !== "<synthetic>") meta.model = r.message.model; } catch {}
+  }
+  // a prompt hook that re-runs the desk's message in its own `claude -p` leaves the <bridge> block with its tags stripped
+  if (/^now: \d{4}-\d\d-\d\dT[\d:.]+Z\s+(running chats|live sessions):/.test(meta.preview)) meta.desk = true;
+  // LifeOS prompt hooks (PromptProcessing's "CONTEXT:\n…\n\nCURRENT MESSAGE:", an older "SENTIMENT:" pass) run their own
+  // claude --print; transcripts from before the request-shape record exist only show it in their first prompt
+  if (/^(CONTEXT:\s|SENTIMENT:\s)/.test(meta.preview)) meta.oneshot = true;
   meta.title ||= meta.preview.slice(0, 60) || "Untitled session";
   metaCache.set(file, { m: st.mtimeMs, v: meta });
   persistCache();
   return meta;
 }
 
+/** BRIDGE_SCOPE limits a server to the projects under one folder (a second Bridge on the same machine, say) */
+const SCOPE = process.env.BRIDGE_SCOPE ? resolve(process.env.BRIDGE_SCOPE) : "";
 async function listProjects() {
   const dirs = await readdir(PROJECTS_DIR, { withFileTypes: true }).catch(() => []);
   const out: any[] = [];
@@ -220,10 +394,70 @@ async function listProjects() {
         try { const r = JSON.parse(line); if (r.cwd) { cwd = r.cwd; break; } } catch {}
       }
     }
+    if (projectHomes[d.name]) cwd = projectHomes[d.name];   // a project other projects were merged into keeps its own folder
     if (!cwd) cwd = "/" + d.name.replace(/^-/, "").split("-").join("/");
+    if (SCOPE && cwd !== SCOPE && !cwd.startsWith(SCOPE + sep)) continue;
     out.push({ key: d.name, path: cwd, name: basename(cwd) || cwd, sessions: files.length, lastActivity: latest, exists: existsSync(cwd) });
   }
   return out.sort((a, b) => b.lastActivity - a.lastActivity);
+}
+
+/* Delete and merge. A project is a Claude Code transcript folder (~/.claude/projects/<key>) plus, maybe, a
+ * Bridge folder (roots). Neither action touches the work folder on disk. Delete moves the threads to Bridge's
+ * trash (recoverable: move the folder back). Merge moves every thread into an existing project and pins that
+ * project's folder in project-homes.json, so the merged threads list and resume there. */
+const PROJECT_HOMES_FILE = join(DATA_DIR, "project-homes.json");
+const projectHomes: Record<string, string> = (() => { try { return JSON.parse(readFileSync(PROJECT_HOMES_FILE, "utf8")) || {}; } catch { return {}; } })();
+const saveHomes = () => Bun.write(PROJECT_HOMES_FILE, JSON.stringify(projectHomes, null, 2));
+const validKey = (k: unknown): k is string => typeof k === "string" && /^[A-Za-z0-9-]{1,255}$/.test(k);
+const projectBusy = (key: string) => [...running.values()].some((r) => r.key === key || projectKey(r.cwd) === key || projectHomes[key] === r.cwd);
+async function dropRoot(path: string) {
+  if (!path) return;
+  const roots = await readRoots();
+  const next = roots.filter((r: string) => r !== path);
+  if (next.length === roots.length) return;
+  await Bun.write(ROOTS_FILE, JSON.stringify(next, null, 2));
+  ROOTS = next;
+}
+async function deleteProject(key: string, path: string) {
+  if (!validKey(key)) return { error: "bad project" };
+  if (projectBusy(key)) return { error: "A thread in this project is still working. Stop it first." };
+  const dir = join(PROJECTS_DIR, key);
+  let moved = 0, trash = "";
+  if (existsSync(dir)) {
+    moved = (await readdir(dir)).filter((f) => f.endsWith(".jsonl")).length;
+    await mkdir(join(DATA_DIR, "trash", "projects"), { recursive: true });
+    trash = join(DATA_DIR, "trash", "projects", key + "." + Date.now());
+    await rename(dir, trash);
+  }
+  await dropRoot(path);
+  if (projectHomes[key]) { delete projectHomes[key]; await saveHomes(); }
+  logRow({ ts: Date.now(), kind: "project.delete", msg: basename(path) || key, outcome: moved + " threads to trash", cwd: path });
+  return { ok: true, threads: moved, trash };
+}
+async function mergeProject(from: string, fromPath: string, into: string, intoPath: string) {
+  if (!validKey(from) || !validKey(into) || !intoPath) return { error: "bad project" };
+  if (from === into) return { error: "Pick a different project to merge into." };
+  if (projectBusy(from) || projectBusy(into)) return { error: "A thread in one of these projects is still working. Stop it first." };
+  const src = join(PROJECTS_DIR, from), dest = join(PROJECTS_DIR, into);
+  let moved = 0;
+  if (existsSync(src)) {
+    await mkdir(dest, { recursive: true });
+    for (const f of await readdir(src)) {
+      if (existsSync(join(dest, f))) continue;   // ids are UUIDs: a clash means it is already there
+      await rename(join(src, f), join(dest, f));
+      if (f.endsWith(".jsonl")) moved++;
+    }
+    // anything left clashed; keep it recoverable instead of deleting it
+    if ((await readdir(src)).length) { await mkdir(join(DATA_DIR, "trash", "projects"), { recursive: true }); await rename(src, join(DATA_DIR, "trash", "projects", from + ".merged." + Date.now())); }
+    else await rmdir(src);
+  }
+  projectHomes[into] = resolve(intoPath);
+  delete projectHomes[from];
+  await saveHomes();
+  await dropRoot(fromPath);
+  logRow({ ts: Date.now(), kind: "project.merge", msg: (basename(fromPath) || from) + " → " + basename(intoPath), outcome: moved + " threads moved", cwd: intoPath });
+  return { ok: true, threads: moved };
 }
 
 async function listSessions(key: string, limit = 200) {
@@ -596,13 +830,32 @@ async function findSessions(q: string, scope: string, key: string, cwd = "") {
 /* ───────────────────────────── live chat ───────────────────────────── */
 
 const live = new Map<string, ChildProcess>();
-type Run = { id: string; cwd: string; model?: string; started: number; prompt: string };
+/** a Bridge turn in flight. `key` is the transcript folder; `sid` is set when the CLI answers under another id */
+type Run = { id: string; key: string; sid?: string; cwd: string; model?: string; agent?: string; provider: string; started: number; prompt: string };
 const running = new Map<string, Run>();
+/** the cloud computer's screen (desktop.ts): on a Linux host set up by deploy/desktop-install.sh, started on demand,
+ *  stopped when idle. A run that used it (`desk`) keeps it awake. The key guards the loopback /desktop/ routes. */
+const desk = new Desktop(desktopConfig(), () => [...running.values()].some((r: any) => r.desk), (m) => logRow({ ts: Date.now(), kind: "desktop", msg: m }));
+const DESK_KEY = randomUUID();
 
 /** everything Bridge does, newest last — the Activity page reads this */
 type LogRow = { ts: number; kind: string; msg: string; outcome?: string; session?: string; cwd?: string; cost?: number; ms?: number; model?: string };
 const LOG: LogRow[] = [];
 function logRow(r: LogRow) { LOG.push(r); if (LOG.length > 800) LOG.splice(0, LOG.length - 800); }
+
+/** The thread archive policy (archive.ts): a thread idle for BRIDGE_ARCHIVE_DAYS (30) has its screenshots replaced by text
+ *  descriptions, the original kept gzipped under DATA_DIR/archive. Runs 10 minutes after boot and daily, only with BRIDGE_ARCHIVE=1;
+ *  a thread with a turn in flight here is never touched. `bun archive.ts scan|run|status|restore` is the same code by hand. */
+const archiver = createArchiver({ projectsDir: PROJECTS_DIR, dataDir: DATA_DIR, claudeBin: CLAUDE_BIN, isRunning: (id) => !!runFor(id),
+  log: (kind, msg, x) => logRow({ ts: Date.now(), kind, msg, session: x?.session }) });
+async function archiveTick() {
+  const t0 = Date.now();
+  try {
+    const r = await archiver.run();
+    logRow({ ts: Date.now(), kind: "archive.run", msg: r.archived.length + " threads, " + r.images + " images, " + r.skipped.length + " skipped", outcome: r.failed ? r.failed + " not described" : "ok", ms: Date.now() - t0 });
+  } catch (e) { logRow({ ts: Date.now(), kind: "archive.run", msg: String(e).slice(0, 200), outcome: "error", ms: Date.now() - t0 }); }
+}
+if (process.env.BRIDGE_ARCHIVE === "1") setTimeout(() => { archiveTick(); setInterval(archiveTick, 24 * 3600_000); }, 10 * 60_000);
 
 /** env vars declared in settings.json, so spawned sessions see the same world as the TUI */
 let settingsEnv: Record<string, string> = {};
@@ -611,27 +864,59 @@ try {
   settingsEnv = JSON.parse(raw).env || {};
 } catch {}
 
-async function runClaude(req: any, send: (o: any) => void, done: () => void) {
+/** `watched` says whether the page that started the turn is still connected: when it is, the page
+ *  announces the end itself; when it is gone, the server does, so a turn finishing in an empty room
+ *  still reaches the principal. */
+async function runClaude(req: any, send: (o: any) => void, done: () => void, watched: () => boolean = () => false) {
+  const provider = req.provider === "qwen" ? "qwen" : "claude";
   // a signed-out CLI fails deep inside the stream; catch it here and hand the UI the sign-in sheet
-  const auth = await authStatus();
-  if (!auth.loggedIn) { send({ t: "auth", d: auth }); send({ t: "end", code: 0 }); done(); return null; }
+  // Qwen needs no Claude account: the CLI talks to the adapter at /qwen with a placeholder key
+  if (provider === "claude") {
+    const auth = await authStatus();
+    if (!auth.loggedIn) { send({ t: "auth", d: auth }); send({ t: "end", code: 0 }); done(); return null; }
+  }
   const sessionId: string = req.sessionId || randomUUID();
   // `--agent` does not reach a -p turn (see § agent routing), so the agent is asked for in the
   // system prompt, where the main loop can act on it with the Agent tool. The flag goes along
   // too: it costs nothing and starts working the day the CLI honours it.
-  const agent = typeof req.agent === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(req.agent) ? req.agent : "";
+  const agent = !(provider === "qwen" && QWEN_MODE === "slim") && typeof req.agent === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(req.agent) ? req.agent : "";
   const protocol = agent ? BRIDGE_PROTOCOL + "\n" + [
     "",
     "3. This turn belongs to the `" + agent + "` agent. Dispatch it with the Agent tool",
     "   (subagent_type: \"" + agent + "\"), give it the request in full with the context it needs, and answer",
     "   from what it returns. Handle the turn yourself only if that agent plainly cannot do this work.",
   ].join("\n") : BRIDGE_PROTOCOL;
+  const slimQwen = provider === "qwen" && QWEN_MODE === "slim";
+  const screen = !slimQwen && desk.supported;
   const args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-    "--append-system-prompt", protocol];
+    ...(slimQwen ? ["--system-prompt", await qwenSystemPrompt(guard(req.cwd || HOME) || HOME, String(req.prompt || ""))]
+      : ["--append-system-prompt", protocol + (screen ? DESKTOP_PROTOCOL : "") + (provider === "qwen" ? QWEN_FULL_NOTE : "")])];
+  // slim Qwen: no user CLAUDE.md, memory, hooks, agents or skills, no MCP servers, the six core tools
+  if (slimQwen) args.push("--setting-sources", "project,local", "--strict-mcp-config", "--disable-slash-commands",
+    "--tools", "Bash,Read,Edit,Write,Glob,Grep", "--exclude-dynamic-system-prompt-sections");
+  // Settings env beats the process env, and ~/.claude/settings.json points the CLI at the user's own gateway
+  // (ANTHROPIC_BASE_URL). That file is the *project* settings of a chat in ~ too, so even a slim turn there
+  // went to the gateway and on to Anthropic ("Invalid API key"). The adapter route goes in as flag settings,
+  // the one source above both. 64k is the model's window (num_ctx), so the CLI compacts before the adapter trims.
+  if (provider === "qwen") args.push("--settings", JSON.stringify({ ...(slimQwen ? { autoMemoryEnabled: false } : {}), env: {
+    ANTHROPIC_BASE_URL: "http://127.0.0.1:" + PORT + "/qwen", ANTHROPIC_SMALL_FAST_MODEL: "qwen", CLAUDE_CODE_MAX_CONTEXT_TOKENS: "65536",
+    CLAUDE_CODE_SUBAGENT_MODEL: "qwen", API_TIMEOUT_MS: "1800000", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    // subagents run in the foreground: a backgrounded one let Qwen end the turn with "the agent is still running"
+    CLAUDE_CODE_FORK_SUBAGENT: "0", CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" } }));
+  // Connectors (connectors/): the MCP servers this chat has switched on (slim Qwen's --strict-mcp-config sees exactly these).
+  // Both flags take several values, so they go before another flag, never right before the prompt.
+  const conn = await connectors.turnConfig({ sessionId: req.resume || req.sessionId || "", cwd: guard(req.cwd || HOME) || HOME, only: Array.isArray(req.connectors) ? req.connectors.map(String) : undefined });
+  if (conn) args.push("--mcp-config", conn.file, "--allowedTools", conn.allowed.join(","));
+  // the screen: Playwright MCP on the visible Chrome + the computer tools (desktop.ts); the `=` form keeps each flag to one value
+  if (screen) args.push("--mcp-config=" + JSON.stringify(mcpConfig(desk.cfg, { base: "http://127.0.0.1:" + PORT + "/desktop/" + DESK_KEY,
+    node: Bun.which("node") || "node", bun: process.execPath, repo: dirname(Bun.fileURLToPath(import.meta.url)) })), "--allowedTools=mcp__browser,mcp__computer");
   if (req.resume) args.push("--resume", req.resume);
   else args.push("--session-id", sessionId);
-  args.push("--permission-mode", req.permissionMode || "acceptEdits");
-  if (req.model) args.push("--model", req.model);
+  // the cloud computer is a throwaway sandbox, so its chats run unattended (BRIDGE_SKIP_PERMISSIONS=1, set by deploy/sprite.sh); plan mode still plans
+  if (SKIP_PERMISSIONS && req.permissionMode !== "plan") args.push("--dangerously-skip-permissions", "--permission-mode", "bypassPermissions");
+  else args.push("--permission-mode", req.permissionMode || "acceptEdits");
+  if (provider === "qwen") args.push("--model", "qwen");
+  else if (req.model) args.push("--model", req.model);
   if (agent) args.push("--agent", agent);
   if (req.effort) args.push("--effort", req.effort);
 
@@ -677,13 +962,46 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void) {
 
   const cwd = guard(req.cwd || HOME) || HOME;
   const stdio = inputEnvelope ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"];
-  const child = spawn(CLAUDE_BIN, args, { cwd, env: { ...process.env, ...settingsEnv, FORCE_COLOR: "0" }, stdio });
+  // tokens saved through Bridge's masked field: global ones, then this folder's (secrets.ts)
+  const secretEnv = await secrets.envFor(cwd).catch(() => ({}));
+  const env: Record<string, string | undefined> = { ...process.env, ...settingsEnv, ...secretEnv, FORCE_COLOR: "0" };
+  if (desk.supported) env.DISPLAY = desk.cfg.display;   // a headed program started from Bash lands on the screen the user watches
+  if (provider === "qwen") {
+    Object.assign(env, {
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:" + PORT + "/qwen", ANTHROPIC_API_KEY: QWEN_KEY,
+      // a RunPod turn takes 45-130s (longer cold); side calls would each start a slow job
+      API_TIMEOUT_MS: "1800000", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", ANTHROPIC_SMALL_FAST_MODEL: "qwen",
+    });
+    delete env.ANTHROPIC_AUTH_TOKEN;
+  }
+  if (conn) Object.assign(env, conn.env);
+  const usageId = req.resume || sessionId;
+  const qmod = provider === "qwen" ? await loadQwen().catch(() => null) : null;
+  const usageBefore: QwenUsage | null = qmod?.qwenUsage ? qmod.qwenUsage(usageId) : null;
+  clearStaleAuthLock();
+  const child = spawn(CLAUDE_BIN, args, { cwd, env: env as any, stdio });
   const key = req.resume || sessionId;
   live.set(key, child);
   const prompt = String(req.prompt).replace(/\s+/g, " ").trim().slice(0, 140);
-  running.set(key, { id: key, cwd, model: req.model, started: Date.now(), prompt });
+  const run: Run = { id: key, key: projectKey(cwd), cwd, model: provider === "qwen" ? "qwen" : req.model, agent, provider, started: Date.now(), prompt };
+  running.set(key, run);
+  homeCache = null; recentAll = null;
   logRow({ ts: Date.now(), kind: "turn.start", msg: prompt, session: key, cwd, model: req.model });
-  send({ t: "start", sessionId: key, cwd, args });
+  // a new thread is named at once (quick title), then properly when haiku answers; a resumed one keeps its name
+  const fresh = !req.resume && !customTitles.has(key) && !autoTitles.has(key);
+  const quick = quickTitle(String(req.prompt || ""));
+  if (fresh) setAutoTitle(key, quick);
+  emitEvent({ kind: "started", at: Date.now(), id: key, key: run.key, folder: basename(cwd), cwd, title: autoTitles.get(key)?.title || quick, text: prompt });
+  let outcome: { error: boolean; text: string } | null = null;
+  send({ t: "start", sessionId: key, cwd, args, title: fresh ? quick : undefined });
+  if (fresh) aiThreadTitle(String(req.prompt || "")).then((t) => {
+    if (!t || customTitles.has(key)) return;                     // the user renamed it in the meantime
+    setAutoTitle(key, t);
+    homeCache = null; recentAll = null;
+    send({ t: "title", title: t, at: Date.now() });
+    emitEvent({ kind: "titled", at: Date.now(), id: key, key: run.key, folder: basename(cwd), cwd, title: t, text: quick });
+    logRow({ ts: Date.now(), kind: "thread.titled", msg: quick + " → " + t, session: key, cwd });
+  });
 
   if (inputEnvelope && child.stdin) {
     child.stdin.write(JSON.stringify(inputEnvelope) + "\n");
@@ -700,7 +1018,19 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void) {
       if (!line) continue;
       try {
         const parsed = JSON.parse(line);
+        if (parsed?.type === "system" && parsed.subtype === "init" && parsed.session_id && parsed.session_id !== key) run.sid = parsed.session_id;
+        if (parsed?.type === "assistant" && Array.isArray(parsed.message?.content) && parsed.message.content.some((b: any) => b?.type === "tool_use" && isDesktopTool(b.name))) { (run as any).desk = true; desk.touch(); }
         if (parsed?.type === "result") {
+          outcome = { error: !!parsed.is_error, text: String(parsed.result || "") };
+          // the CLI prices an unknown model at made-up rates; a Qwen turn reports what its RunPod jobs really used
+          if (provider === "qwen") {
+            const now: QwenUsage | null = qmod?.qwenUsage ? qmod.qwenUsage(usageId) : null;
+            if (now && usageBefore) {
+              const d = { jobs: now.jobs - usageBefore.jobs, gpuMs: now.gpuMs - usageBefore.gpuMs, usd: +(now.usd - usageBefore.usd).toFixed(6), estimated: now.estimated };
+              parsed.total_cost_usd = d.usd; parsed.qwen_usage = d;
+              addQwenSpend(run.sid || usageId, d);
+            } else { delete parsed.total_cost_usd; parsed.qwen_usage = null; }
+          }
           logRow({ ts: Date.now(), kind: parsed.is_error ? "turn.error" : "turn.done",
             msg: running.get(key)?.prompt || parsed.subtype || "turn", outcome: parsed.subtype,
             session: key, cwd, model: req.model,
@@ -711,10 +1041,34 @@ async function runClaude(req: any, send: (o: any) => void, done: () => void) {
       catch { send({ t: "raw", d: line }); }
     }
   });
-  child.stderr.on("data", (c) => send({ t: "stderr", d: c.toString() }));
-  child.on("close", (code) => { live.delete(key); running.delete(key); if (code) logRow({ ts: Date.now(), kind: "turn.exit", msg: prompt, outcome: "exit " + code, session: key, cwd }); send({ t: "end", code }); done(); });
+  child.stderr.on("data", (c) => {
+    // a Qwen turn authenticates with the adapter's key, so the CLI always warns that claude.ai connectors are off and that it doesn't know the model "qwen"; both are by design
+    const d = provider === "qwen" ? c.toString().split("\n").filter((l: string) => !/claude\.ai connectors are disabled|\[claude-code:unrecognized_model\]/i.test(l)).join("\n") : c.toString();
+    if (d.trim()) send({ t: "stderr", d });
+  });
+  child.on("close", (code) => {
+    live.delete(key); running.delete(key); homeCache = null; recentAll = null;
+    if (code) logRow({ ts: Date.now(), kind: "turn.exit", msg: prompt, outcome: "exit " + code, session: key, cwd });
+    if (!stopped.delete(key)) announceEnd(run, outcome, code, watched());
+    send({ t: "end", code }); done();
+  });
   child.on("error", (e) => { logRow({ ts: Date.now(), kind: "turn.error", msg: String(e), session: key, cwd }); send({ t: "error", d: String(e) }); live.delete(key); running.delete(key); done(); });
   return sessionId;
+}
+/** turns stopped by hand end quietly */
+const stopped = new Set<string>();
+async function announceEnd(run: Run, outcome: { error: boolean; text: string } | null, code: number | null, watched: boolean) {
+  const id = run.sid || run.id;
+  const file = sessionFile(id, run.key);
+  const meta = file && existsSync(file) ? await sessionMeta(run.key, file) : null;
+  const title = meta?.title || run.prompt.slice(0, 60);
+  const folder = basename(run.cwd) || run.cwd;
+  const failed = !outcome || outcome.error || !!code;
+  const t = file ? await tailState(file, true) : null;
+  const ask = !failed && t?.waiting ? t.waiting : null;
+  const text = ask ? ask.text : plain(outcome?.text || "", 300);
+  emitEvent({ kind: ask ? "waiting" : failed ? "error" : "done", at: Date.now(), id, key: run.key, folder, cwd: run.cwd, title, text, options: ask?.options });
+  if (!watched) notifyDesktop(folder + (ask ? " needs you" : failed ? " stopped with an error" : " finished"), title, text);
 }
 
 
@@ -835,10 +1189,58 @@ async function authStatus(force = false): Promise<AuthStatus> {
   return v;
 }
 
-type Login = { child: ChildProcess; url: string; out: string; done: boolean; code: number | null; wasIn: boolean };
+/* Claude Code holds `.oauth_refresh.lock` (a directory) while it swaps an expired subscription token
+ * for a new one. Two things turn that into "Failed to refresh OAuth token: another Claude Code process is
+ * refreshing it": a process killed mid-refresh (a stopped turn ends in SIGKILL) leaves the lock behind for
+ * good, and when the token runs out every process that starts in the same moment races for the lock and
+ * all but one give up. So Bridge sweeps orphaned locks, and refreshes once on its own a little before
+ * expiry, so turns never meet an expired token. Only the expiry time is read from the credentials file.
+ * On a Mac the token lives in the Keychain, so there is no expiry to read (and Bridge never reads the
+ * Keychain): there a tiny call every few minutes lets one process refresh inside the CLI's own early
+ * window, before many turns can race for the lock. */
+const AUTH_LOCK = join(CLAUDE_DIR, ".oauth_refresh.lock");
+const AUTH_CREDS = join(CLAUDE_DIR, ".credentials.json");
+function clearStaleAuthLock(maxAgeMs = 60_000) {
+  try {
+    if (Date.now() - statSync(AUTH_LOCK).mtimeMs < maxAgeMs) return;
+    rmdirSync(AUTH_LOCK);
+    logRow({ ts: Date.now(), kind: "auth.lock", msg: "cleared a stale Claude token-refresh lock" });
+  } catch {}
+}
+function tokenExpiresAt(): number {
+  try { return Number(JSON.parse(readFileSync(AUTH_CREDS, "utf8"))?.claudeAiOauth?.expiresAt) || 0; } catch { return 0; }
+}
+let refreshing = false;
+let lastPing = 0;
+const PING_MS = 4 * 60_000;
+async function keepTokenFresh() {
+  clearStaleAuthLock();
+  const exp = tokenExpiresAt();
+  const keychain = !exp && process.platform === "darwin" && !existsSync(AUTH_CREDS);
+  if (refreshing || existsSync(AUTH_LOCK)) return;
+  if (keychain ? Date.now() - lastPing < PING_MS : !exp || exp - Date.now() > 20 * 60_000) return;
+  lastPing = Date.now();
+  refreshing = true;
+  try {
+    // any API call makes the CLI refresh first; the cheapest model and no tools keep it to one tiny request
+    const proc = Bun.spawn([CLAUDE_BIN, "-p", "reply ok", "--model", "haiku", "--max-turns", "1", "--strict-mcp-config", "--no-session-persistence", "--tools", ""],
+      { cwd: HOME, env: { ...process.env, ...settingsEnv }, stdout: "ignore", stderr: "pipe" });
+    const t = setTimeout(() => proc.kill(), 90_000);
+    const err = await new Response(proc.stderr).text();
+    const code = await proc.exited; clearTimeout(t);
+    const ok = keychain ? code === 0 : tokenExpiresAt() > exp;
+    if (!keychain || !ok) logRow({ ts: Date.now(), kind: ok ? "auth.refresh" : "auth.fail", msg: ok ? "Claude token refreshed ahead of expiry" : "token refresh failed: " + err.trim().slice(-160) });
+  } catch {} finally { refreshing = false; }
+}
+setInterval(() => { keepTokenFresh(); }, 60_000);
+
+type Login = { child: ChildProcess; url: string; out: string; done: boolean; code: number | null; wasIn: boolean; timer?: ReturnType<typeof setTimeout> };
 let login: Login | null = null;
+/** an abandoned sign-in (tab closed, code never pasted) is killed after this, so it can't wedge Claude's auth lock */
+const LOGIN_TTL_MS = 15 * 60_000;
 function endLogin() {
   if (!login) return;
+  clearTimeout(login.timer);
   try { if (!login.done) login.child.kill("SIGTERM"); } catch {}
   login = null;
 }
@@ -873,6 +1275,7 @@ async function startLogin(mode: string, email?: string) {
     endLogin();
     return { error: why.slice(-400) };
   }
+  L.timer = setTimeout(() => { if (login === L) endLogin(); }, LOGIN_TTL_MS);
   logRow({ ts: Date.now(), kind: "auth.login", msg: "sign-in started (" + (mode === "console" ? "console" : "claude.ai") + ")" });
   return { url: L.url, mode };
 }
@@ -908,22 +1311,32 @@ async function doLogout() {
   return { ok: !st.loggedIn, status: st, out: out.trim().slice(-200) };
 }
 
-/* ─────────────── live terminal sessions (the registry the CLI keeps) ───────────────
- * Every interactive `claude` writes ~/.claude/sessions/<pid>.json — pid, session id, the
- * folder it started in, a display name and a busy/idle status it keeps current. Bridge reads
- * that registry, drops anything whose process is gone, and mirrors the rest as tabs. Print-mode
- * turns (Bridge's own, and anyone's `claude -p`) do not register, so they never show up here. */
-const SESSIONS_DIR = join(CLAUDE_DIR, "sessions");
+/* ─────────────── what Bridge's own chats are doing ───────────────
+ * Bridge replaced the terminal: every chat starts here and runs as a `claude -p` child of this
+ * server, so it keeps going when the page closes. The transcript on disk is the truth about a
+ * turn in flight; these readers turn its tail into the things a person wants to see — what it is
+ * doing right now, what is running in the background, and whether a finished chat is waiting on
+ * an answer. Every reader is cached by file size + mtime, because the pages poll them. */
 /** the CLI names a project folder after the cwd with every non-alphanumeric turned into "-" */
 const projectKey = (cwd: string) => String(cwd).replace(/[^A-Za-z0-9]/g, "-");
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** a session's transcript, under the key it was started with or, failing that, wherever it is */
+function sessionFile(id: string, key = ""): string {
+  if (key) { const f = join(PROJECTS_DIR, key, id + ".jsonl"); if (existsSync(f)) return f; }
+  try {
+    for (const d of readdirSync(PROJECTS_DIR)) {
+      const f = join(PROJECTS_DIR, d, id + ".jsonl");
+      if (existsSync(f)) return f;
+    }
+  } catch {}
+  return key ? join(PROJECTS_DIR, key, id + ".jsonl") : "";
+}
 
 type Waiting = { kind: "question" | "plan" | "permission"; text: string; options?: string[] } | null;
 type TailState = { last: string; lastTs: number; lastUser: string; waiting: Waiting; turns: number; cwd: string };
 const tailCache = new Map<string, { m: number; v: TailState }>();
 /** What the end of a transcript says: the last thing the model said, and whether it is
- *  standing on a question. A pending AskUserQuestion / ExitPlanMode (tool_use with no
- *  tool_result) is the hard signal; an idle session whose last words end in "?" is the soft one. */
+ *  standing on a question. A pending (or, in -p mode, refused) AskUserQuestion / ExitPlanMode is
+ *  the hard signal; a `choices` block or last words ending in "?" are the soft ones. */
 async function tailState(file: string, idle: boolean): Promise<TailState> {
   const st = await stat(file).catch(() => null);
   const empty: TailState = { last: "", lastTs: 0, lastUser: "", waiting: null, turns: 0, cwd: "" };
@@ -932,150 +1345,300 @@ async function tailState(file: string, idle: boolean): Promise<TailState> {
   if (hit && hit.m === st.mtimeMs) return { ...hit.v, waiting: softWaiting(hit.v, idle) };
   const lines = await lastLines(file, 120_000);
   const pending = new Map<string, any>();
+  let lastAsk: any = null;
   const v: TailState = { ...empty };
   for (const line of lines) {
     let r: any; try { r = JSON.parse(line); } catch { continue; }
     if (r.isSidechain) continue;
-    if (r.cwd) v.cwd = r.cwd;                       // where the work is actually happening now
+    if (r.cwd) v.cwd = r.cwd;
     const ts = r.timestamp ? Date.parse(r.timestamp) : 0;
     if (r.type === "assistant") {
       for (const c of r.message?.content || []) {
-        if (c.type === "text" && c.text?.trim()) { v.last = c.text; v.lastTs = ts; }
-        else if (c.type === "tool_use") pending.set(c.id, { name: c.name, input: c.input });
+        if (c.type === "text" && c.text?.trim()) { v.last = c.text; v.lastTs = ts; lastAsk = null; }
+        else if (c.type === "tool_use") {
+          pending.set(c.id, { name: c.name, input: c.input });
+          lastAsk = c.name === "AskUserQuestion" || c.name === "ExitPlanMode" ? { name: c.name, input: c.input } : null;
+        }
       }
     } else if (r.type === "user") {
       const c = r.message?.content;
-      if (typeof c === "string") { const t = c.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, "").trim(); if (t) { v.lastUser = t; v.turns++; } }
+      if (typeof c === "string") { const t = c.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, "").trim(); if (t) { v.lastUser = t; v.turns++; lastAsk = null; } }
       else if (Array.isArray(c)) {
         for (const x of c) {
           if (x.type === "tool_result") pending.delete(x.tool_use_id);
-          else if (x.type === "text" && x.text?.trim()) { v.lastUser = x.text; v.turns++; }
+          else if (x.type === "text" && x.text?.trim()) { v.lastUser = x.text; v.turns++; lastAsk = null; }
         }
       }
     }
   }
-  const ask = [...pending.values()].find((p) => p.name === "AskUserQuestion");
-  const plan = [...pending.values()].find((p) => p.name === "ExitPlanMode");
-  if (ask) {
+  const ask = lastAsk || [...pending.values()].find((p) => p.name === "AskUserQuestion" || p.name === "ExitPlanMode");
+  if (ask?.name === "AskUserQuestion") {
     const q = (ask.input?.questions || [])[0] || {};
     v.waiting = { kind: "question", text: String(q.question || q.header || "is asking you a question"), options: (q.options || []).map((o: any) => String(o.label || o)).slice(0, 6) };
-  } else if (plan) v.waiting = { kind: "plan", text: "has a plan waiting for your approval" };
+  } else if (ask?.name === "ExitPlanMode") v.waiting = { kind: "plan", text: "has a plan waiting for your approval" };
   tailCache.set(file, { m: st.mtimeMs, v: { ...v, waiting: v.waiting } });
   return { ...v, waiting: softWaiting(v, idle) };
 }
 function softWaiting(v: TailState, idle: boolean): Waiting {
   if (v.waiting) return v.waiting;
   if (!idle || !v.last) return null;
+  // a token asked for through a ```secret card: the thread cannot go on until it is typed in
+  const secret = /```secret\s*\n([\s\S]*?)```/.exec(v.last);
+  if (secret) {
+    const names = secret[1].split("\n").map((l) => (l.trim().split(/\s+/)[0] || "").replace(/^\$/, "")).filter((n) => /^[A-Z][A-Z0-9_]{1,63}$/.test(n));
+    if (names.length) return { kind: "question", text: "needs a token: " + names.join(", "), options: [] };
+  }
+  const choices = /```choices\s*\n([\s\S]*?)```/.exec(v.last);
+  if (choices) {
+    const before = v.last.slice(0, choices.index).trim().split("\n").map((l) => l.trim()).filter(Boolean).pop() || "";
+    const options = choices[1].split("\n").map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim()).filter(Boolean).slice(0, 6);
+    return { kind: "question", text: plain(before, 300) || "wants you to pick an option", options };
+  }
+  // an offer after finished work ("Want me to…?", "Anything else?") is optional, not something waiting on the person
+  const offer = /^(?:🗣️\s*)?(?:[^:]{0,40}:\s*)?(?:want me to|do you want|would you like|shall i|should i also|anything else|need anything|happy to|let me know|or should i|i can also)\b/i;
   const tail = v.last.trim().split("\n").map((l) => l.trim()).filter(Boolean).pop() || "";
   const clean = tail.replace(/[*_`#>]/g, "").trim();
-  if (/\?$/.test(clean) && clean.length > 8 && clean.length < 300) return { kind: "question", text: clean };
+  if (/\?$/.test(clean) && clean.length > 8 && clean.length < 300) return offer.test(clean) ? null : { kind: "question", text: clean };
+  // a question asked mid-reply and followed by a short sign-off still waits on the person
+  const q = v.last.replace(/```[\s\S]*?```/g, " ").split("\n").map((l) => l.replace(/[*_`#>]/g, "").trim()).filter((l) => /\?$/.test(l) && l.length > 12 && l.length < 300).pop();
+  if (q && !offer.test(q) && v.last.length - v.last.lastIndexOf(q.slice(-20)) < 400) return { kind: "question", text: q };
   return null;
 }
 const plain = (t: string, n = 240) => String(t || "").replace(/```[\s\S]*?```/g, " ").replace(/[═━─]{2,}[^═━─\n]*[═━─]{2,}/g, " ").replace(/<[^>]+>/g, " ").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
 
-type LiveSession = {
-  pid: number; id: string; key: string; cwd: string; name: string; status: string; startedAt: number; updatedAt: number;
-  file: string; title: string; folder: string; last: string; lastTs: number; lastUser: string; waiting: Waiting; turns: number; version?: string;
-};
-/** pids Bridge itself spawned — never mirrored, even if a future CLI registers them */
-const ownPids = new Set<number>();
-/** The desk's `claude` registers as interactive too, and a second Bridge on this machine runs
- *  its own desk whose pid is not in ownPids. Anything the SDK drives says so in its entrypoint
- *  ("sdk-cli"); a person at a terminal is "cli". The desk's session id is the backstop. */
-function isDeskSession(r: any) {
-  if (/^sdk/.test(String(r.entrypoint || ""))) return true;
-  try { return r.sessionId === DA.sessionId || (!!DA.prevSessionId && r.sessionId === DA.prevSessionId); } catch { return false; }
-}
-async function liveSessions(): Promise<LiveSession[]> {
-  const files = await readdir(SESSIONS_DIR).catch(() => [] as string[]);
-  const out: LiveSession[] = [];
-  for (const f of files) {
-    if (!f.endsWith(".json")) continue;
-    let r: any; try { r = JSON.parse(await readFile(join(SESSIONS_DIR, f), "utf8")); } catch { continue; }
-    if (!r.pid || !r.sessionId || !r.cwd) continue;
-    if (r.kind && r.kind !== "interactive") continue;
-    if (ownPids.has(r.pid) || !alive(r.pid)) continue;
-    if (isDeskSession(r)) continue;                 // a desk — ours, or a second Bridge's — is not a terminal
-    const key = projectKey(r.cwd);
-    const file = join(PROJECTS_DIR, key, r.sessionId + ".jsonl");
-    const has = existsSync(file);
-    const meta = has ? await sessionMeta(key, file) : null;
-    const tail = has ? await tailState(file, r.status === "idle") : { last: "", lastTs: 0, lastUser: "", waiting: null, turns: 0, cwd: "" };
-    const work = tail.cwd || r.cwd;
-    out.push({
-      pid: r.pid, id: r.sessionId, key, cwd: r.cwd, name: r.name || ("claude " + r.pid), status: r.status || "idle",
-      startedAt: r.startedAt || 0, updatedAt: r.updatedAt || r.startedAt || 0, file, version: r.version,
-      title: meta?.title || tail.lastUser.slice(0, 60) || basename(work), folder: work === HOME ? "home" : basename(work) || work,
-      last: plain(tail.last, 400), lastTs: tail.lastTs, lastUser: plain(tail.lastUser, 200), waiting: tail.waiting, turns: tail.turns,
-    });
+/** a tool call in words a person would use, present tense: what is happening right now */
+const fileName = (p: any) => String(p || "").split("/").pop() || "a file";
+function stepFor(name: string, i: any): string {
+  i = i || {};
+  switch (name) {
+    case "Read": return "Reading " + fileName(i.file_path);
+    case "Write": return "Writing " + fileName(i.file_path);
+    case "Edit": case "MultiEdit": return "Editing " + fileName(i.file_path);
+    case "NotebookEdit": return "Editing " + fileName(i.notebook_path);
+    case "Bash": return i.description ? String(i.description).replace(/\.$/, "") : "Running a command";
+    case "Grep": return "Searching the code for “" + String(i.pattern || "").slice(0, 40) + "”";
+    case "Glob": return "Looking for files";
+    case "WebSearch": return "Searching the web for “" + String(i.query || "").slice(0, 50) + "”";
+    case "WebFetch": try { return "Reading " + new URL(i.url).host; } catch { return "Reading a web page"; }
+    case "Task": case "Agent": return (i.subagent_type ? i.subagent_type + ": " : "Helper: ") + (i.description || "working");
+    case "TodoWrite": return "Updating the checklist";
+    case "Skill": return "Using the " + (i.skill || "") + " skill";
+    case "Workflow": return "Running a workflow" + (i.name ? " · " + i.name : "");
+    case "AskUserQuestion": return "Asking you a question";
+    case "ExitPlanMode": return "Presenting a plan";
+    default: return "Using " + name.replace(/^mcp__[^_]+__/, "").replace(/_/g, " ");
   }
-  return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/** Watch the registry for the moments worth telling the principal about: a turn finishing
- *  (busy → idle), a session stopping on a question, a terminal opening or closing. */
-type LiveEvent = { kind: "started" | "ended" | "done" | "waiting"; at: number; pid: number; id: string; key: string; name: string; folder: string; cwd: string; title: string; text: string; options?: string[] };
-const EVENTS: LiveEvent[] = [];
-let lastLive: LiveSession[] = [];
-const seenLive = new Map<number, { status: string; waiting: string; first: boolean }>();
-let watchBooted = false;
-async function watchLive() {
-  let cur: LiveSession[];
-  try { cur = await liveSessions(); } catch { return; }
-  lastLive = cur;
-  const now = Date.now();
-  const emit = (kind: LiveEvent["kind"], s: LiveSession, text: string, options?: string[]) => {
-    const ev: LiveEvent = { kind, at: now, pid: s.pid, id: s.id, key: s.key, name: s.name, folder: s.folder, cwd: s.cwd, title: s.title, text, options };
-    EVENTS.push(ev); if (EVENTS.length > 200) EVENTS.shift();
-    logRow({ ts: now, kind: "live." + kind, msg: (kind === "waiting" ? "needs you: " : "") + (text || s.title), session: s.id, cwd: s.cwd, outcome: s.name });
-    daBroadcast({ t: "event", d: ev });
-    if (kind === "waiting") notifyDesktop(s.folder + " needs you", s.title, text);
-    else if (kind === "done") notifyDesktop(s.folder + " finished a turn", s.title, text);
-  };
-  const present = new Set<number>();
-  for (const s of cur) {
-    present.add(s.pid);
-    const w = s.waiting ? s.waiting.kind + ":" + s.waiting.text : "";
-    const prev = seenLive.get(s.pid);
-    if (!prev) {
-      seenLive.set(s.pid, { status: s.status, waiting: w, first: true });
-      if (watchBooted) emit("started", s, s.title);
-      else if (w && s.waiting) emit("waiting", s, s.waiting.text, s.waiting.options);   // already waiting when Bridge came up
-      continue;
+type Job = { kind: "subagent" | "background" | "workflow" | "tool"; title: string; since: number; agent?: string };
+type TurnTail = { step: string; jobs: Job[]; last: number };
+const turnCache = new Map<string, { m: number; s: number; at: number; v: TurnTail }>();
+/** The turn in flight, from the transcript tail: the latest action as a sentence, and every piece
+ *  of work still out — subagents and workflows with no result yet, anything sent to the
+ *  background, and any call that has been pending for more than 30 seconds. */
+async function turnTail(file: string): Promise<TurnTail> {
+  const st = await stat(file).catch(() => null);
+  if (!st) return { step: "Starting", jobs: [], last: 0 };
+  const hit = turnCache.get(file);
+  // "pending > 30s" depends on the clock, so even an unchanged file is re-read now and then
+  if (hit && hit.m === st.mtimeMs && hit.s === st.size && Date.now() - hit.at < 10_000) return hit.v;
+  const rows: any[] = [];
+  for (const line of await lastLines(file, 600_000)) { try { rows.push(JSON.parse(line)); } catch {} }
+  // the turn began at the last thing the person typed (a task notification is not that)
+  let start = 0;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r.type !== "user" || r.isSidechain || r.isMeta) continue;
+    const c = r.message?.content;
+    const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((x: any) => x.type === "text").map((x: any) => x.text).join("") : "";
+    if (text.trim() && !/^\s*<(task-notification|system-reminder|local-command|command-)/.test(text)) { start = i; break; }
+  }
+  const uses = new Map<string, { name: string; input: any; ts: number; result?: string; err?: boolean }>();
+  const order: string[] = [];
+  let laterText = "", lastKind = "", last = 0;
+  for (const r of rows.slice(start)) {
+    if (r.isSidechain) continue;
+    const ts = r.timestamp ? Date.parse(r.timestamp) : 0;
+    if (ts) last = ts;
+    if (r.type === "assistant") {
+      for (const c of r.message?.content || []) {
+        if (c.type === "tool_use") { uses.set(c.id, { name: c.name, input: c.input, ts }); order.push(c.id); lastKind = "tool"; }
+        else if (c.type === "text" && c.text?.trim()) lastKind = "text";
+      }
+    } else if (r.type === "user") {
+      const c = r.message?.content;
+      if (typeof c === "string") laterText += c;
+      else if (Array.isArray(c)) for (const x of c) {
+        if (x.type === "tool_result") { const u = uses.get(x.tool_use_id); if (u) { u.result = flattenResult(x.content); u.err = !!x.is_error; } }
+        else if (x.type === "text") laterText += x.text || "";
+      }
     }
-    if (prev.status === "busy" && s.status === "idle" && !w) emit("done", s, s.last);
-    if (w && w !== prev.waiting && s.waiting) emit("waiting", s, s.waiting.text, s.waiting.options);
-    prev.status = s.status; prev.waiting = w;
   }
-  for (const [pid] of seenLive) if (!present.has(pid)) {
-    seenLive.delete(pid);
-    const gone = lastLiveByPid.get(pid);
-    if (gone && watchBooted && !takenOver.delete(pid)) emit("ended", gone, gone.title);   // a takeover is not news
+  const now = Date.now();
+  const jobs: Job[] = [];
+  for (const id of order) {
+    const u = uses.get(id)!;
+    const inp = u.input || {};
+    // a background launch answers at once ("Async agent launched … agentId: X", "running in background with ID: X")
+    const bg = !!inp.run_in_background || /async agent launched|running in (the )?background/i.test(u.result || "");
+    const pending = u.result === undefined;
+    // a background launch answers at once with an id; it is still running until a notification names that id
+    if (!pending && bg && !u.err) {
+      const bid = /(?:agentId|ID)[:\s]+([A-Za-z0-9_-]{4,})/.exec(u.result || "")?.[1];
+      if (bid && laterText.includes(bid) && /task-notification|completed|finished/i.test(laterText)) continue;
+    } else if (!pending) continue;
+    const since = u.ts || now;
+    if (u.name === "Task" || u.name === "Agent") jobs.push({ kind: "subagent", title: String(inp.description || inp.prompt || "Helper").slice(0, 120), since, agent: inp.subagent_type || "general-purpose" });
+    else if (u.name === "Workflow") jobs.push({ kind: "workflow", title: String(inp.name || inp.description || "Workflow").slice(0, 120), since });
+    else if (bg) jobs.push({ kind: "background", title: String(inp.description || inp.command || stepFor(u.name, inp)).slice(0, 120), since });
+    else if (now - since > 30_000) jobs.push({ kind: "tool", title: stepFor(u.name, inp).slice(0, 120), since });
   }
-  lastLiveByPid.clear(); for (const s of cur) lastLiveByPid.set(s.pid, s);
-  watchBooted = true;
+  const lastUse = order.length ? uses.get(order[order.length - 1])! : null;
+  const helpers = jobs.filter((j) => j.kind === "subagent").length;
+  const step = helpers >= 2 ? "Asked " + helpers + " helpers to work in parallel"
+    : lastKind === "text" && jobs.length ? "Waiting for " + (jobs.length === 1 ? "a background job" : jobs.length + " background jobs") + " to finish"
+    : lastKind === "text" ? "Writing the answer"
+    : lastUse ? stepFor(lastUse.name, lastUse.input)
+    : "Thinking";
+  const v = { step, jobs, last };
+  turnCache.set(file, { m: st.mtimeMs, s: st.size, at: now, v });
+  return v;
 }
-const lastLiveByPid = new Map<number, LiveSession>();
-setInterval(watchLive, 1500);
-watchLive();
 
-/** Hand a live terminal session to Bridge. Two writers on one transcript fork it, so the
- *  terminal has to let go first: only when it is idle (no turn in flight), and only the exact
- *  process the registry names for that session. SIGTERM is the CLI's clean exit; the transcript
- *  is already on disk line by line, so the tab then resumes the same session id with --resume. */
-const takenOver = new Set<number>();
-async function takeover(pid: number, id: string) {
-  const s = (await liveSessions()).find((x) => x.pid === pid && x.id === id);
-  if (!s) return { ok: false, error: "That terminal session is no longer live." };
-  if (s.status === "busy") return { ok: false, error: "It is mid-turn in the terminal. Take it over once it goes idle." };
-  takenOver.add(pid);
-  try { process.kill(pid, "SIGTERM"); } catch (e) { return { ok: false, error: "Could not signal the terminal: " + String(e) }; }
-  for (let i = 0; i < 40 && alive(pid); i++) await Bun.sleep(150);
-  if (alive(pid)) { try { process.kill(pid, "SIGHUP"); } catch {} for (let i = 0; i < 20 && alive(pid); i++) await Bun.sleep(150); }
-  if (alive(pid)) return { ok: false, error: "The terminal did not exit. Close it there (/exit) and the tab becomes yours." };
-  logRow({ ts: Date.now(), kind: "live.takeover", msg: "took over " + s.title, session: s.id, cwd: s.cwd, outcome: s.name });
-  watchLive();
-  return { ok: true, id: s.id, key: s.key, cwd: s.cwd };
+/** files a chat wrote, read incrementally: a transcript only grows, so each call reads the new bytes */
+const madeCache = new Map<string, { size: number; files: Map<string, number> }>();
+async function writtenFiles(file: string): Promise<Map<string, number>> {
+  const st = await stat(file).catch(() => null);
+  if (!st) return new Map();
+  const hit = madeCache.get(file);
+  if (hit && hit.size === st.size) return hit.files;
+  const from = hit && st.size > hit.size ? hit.size : 0;
+  const files = from && hit ? hit.files : new Map<string, number>();
+  const buf = Buffer.from(await Bun.file(file).slice(from, st.size).arrayBuffer());
+  const end = buf.lastIndexOf(10);
+  if (end < 0) return files;
+  for (const line of buf.subarray(0, end + 1).toString("utf8").split("\n")) {
+    if (!line.includes('"tool_use"') || !/"name":"(Write|Edit|NotebookEdit)"/.test(line)) continue;
+    let r: any; try { r = JSON.parse(line); } catch { continue; }
+    const ts = r.timestamp ? Date.parse(r.timestamp) : st.mtimeMs;
+    for (const c of r.message?.content || []) {
+      if (c.type !== "tool_use") continue;
+      const p = c.input?.file_path || c.input?.notebook_path;
+      if (!p) continue;
+      if (c.name === "Write" || (c.name === "Edit" && c.input?.old_string === "") || (c.name === "NotebookEdit" && c.input?.edit_mode === "insert" && !existsSync(p))) files.set(p, ts);
+    }
+  }
+  madeCache.set(file, { size: from + end + 1, files });
+  return files;
+}
+const NOT_MADE = [/\/\.[^/]+(\/|$)/, /\/node_modules\//, /(^|\/)(package-lock\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|Podfile\.lock|pubspec\.lock)$/, /\.lock$/, /\.jsonl$/, /^\/(private\/)?tmp\//, /^\/var\/folders\//];
+
+/** sessions touched since `since`, newest first; one listing shared by every poller for a few seconds */
+let recentCache: { at: number; v: any[] } | null = null;
+async function recentSessions(since: number) {
+  if (!recentCache || Date.now() - recentCache.at > 8_000) {
+    const all: any[] = [];
+    for (const proj of await listProjects()) {
+      if (proj.lastActivity < Date.now() - 8 * 86400_000) continue;
+      for (const s of await listSessions(proj.key, 80)) all.push({ ...s, project: proj.key, projectName: proj.name, projectPath: proj.path });
+    }
+    recentCache = { at: Date.now(), v: all.sort((a, b) => b.mtime - a.mtime) };
+  }
+  return recentCache.v.filter((s) => s.mtime >= since);
+}
+let projectsCache: { at: number; v: any[] } | null = null;
+let recentAll: { at: number; v: any[] } | null = null;
+async function projectsCached() {
+  if (!projectsCache || Date.now() - projectsCache.at > 15_000) projectsCache = { at: Date.now(), v: await listProjects() };
+  return projectsCache.v;
+}
+
+/** the id a run is known by, or the one the CLI handed back if it forked the session */
+function runFor(id: string): Run | undefined {
+  const r = running.get(id);
+  if (r) return r;
+  for (const x of running.values()) if (x.sid === id) return x;
+  return undefined;
+}
+async function runView(r: Run) {
+  const file = sessionFile(r.sid || r.id, r.key);
+  const meta = file && existsSync(file) ? await sessionMeta(r.key, file) : null;
+  const t = file ? await turnTail(file) : { step: "Starting", jobs: [], last: 0 };
+  return {
+    id: r.sid || r.id, key: r.key, title: meta?.title || customTitles.get(r.id) || autoTitles.get(r.id)?.title || quickTitle(r.prompt),
+    projectName: folderName(r.cwd), cwd: r.cwd, started: r.started, elapsed: Date.now() - r.started,
+    prompt: r.prompt, model: r.model || meta?.model || "", step: t.step, jobs: t.jobs, agent: r.agent || "", provider: r.provider,
+  };
+}
+
+const SKIP_PERMISSIONS = process.env.BRIDGE_SKIP_PERMISSIONS === "1";
+const NEEDS_WINDOW = 72 * 3600_000;
+// chats run in temp folders (eval suites, throwaway tests) never wait on anyone
+const isScratchProject = (key: string) => /^-(?:private-)?(?:var-folders|tmp)-/.test(key);
+async function needsList(runningIds: Set<string>) {
+  const out: any[] = [];
+  for (const s of await recentSessions(Date.now() - NEEDS_WINDOW)) {
+    if (runningIds.has(s.id) || isDeskId(s.id, s) || isScratchProject(s.project)) continue;
+    const file = join(PROJECTS_DIR, s.project, s.id + ".jsonl");
+    const t = await tailState(file, true);
+    if (!t.waiting) continue;
+    out.push({ id: s.id, key: s.project, title: s.title, projectName: folderName(s.projectPath), ask: plain(t.waiting.text, 200), since: t.lastTs || s.mtime, options: t.waiting.options || [] });
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+async function madeList() {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const s of await recentSessions(Date.now() - 7 * 86400_000)) {
+    if (isDeskId(s.id, s)) continue;
+    const files = await writtenFiles(join(PROJECTS_DIR, s.project, s.id + ".jsonl"));
+    for (const [path, ts] of files) {
+      if (seen.has(path) || NOT_MADE.some((re) => re.test(path)) || !existsSync(path)) continue;
+      seen.add(path);
+      const st = await stat(path).catch(() => null);
+      if (!st || !st.isFile()) continue;
+      out.push({ path, name: basename(path), ext: extname(path).slice(1).toLowerCase(), sessionId: s.id, key: s.project, sessionTitle: s.title, mtime: Math.max(ts, 0) || st.mtimeMs });
+    }
+  }
+  return out.sort((a, b) => b.mtime - a.mtime).slice(0, 150);
+}
+let homeCache: { at: number; v: any } | null = null;
+let homeBusy: Promise<any> | null = null;
+async function homeData() {
+  if (homeCache && Date.now() - homeCache.at < 3_000) return homeCache.v;
+  if (homeBusy) return homeBusy;
+  homeBusy = (async () => {
+    const id = await daIdentity();
+    const runs = await Promise.all([...running.values()].map(runView));
+    const ids = new Set<string>(); for (const r of running.values()) { ids.add(r.id); if (r.sid) ids.add(r.sid); }
+    const [needs, made, projects] = await Promise.all([needsList(ids), madeList(), projectsCached()]);
+    const v = {
+      user: id.user, assistant: id.name, running: runs, needs, made,
+      // a project is a folder you work in: not your home, not Claude's own tree, not a worktree or a temp dir that is gone
+      projects: projects.filter((p) => p.exists && p.path !== HOME && !p.path.startsWith(CLAUDE_DIR) && !/\/\.claude\/worktrees\/|^\/(private\/)?tmp(\/|$)|^\/var\/folders\//.test(p.path)).map((p) => ({ key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity })),
+    };
+    homeCache = { at: Date.now(), v };
+    return v;
+  })().finally(() => { homeBusy = null; });
+  return homeBusy;
+}
+/** the desk's own transcripts are the Copilot's, not chats */
+/** a chat started in the home folder belongs to no project: call it Home, not by the account name */
+const folderName = (cwd: string) => (!cwd || cwd === HOME ? "Home" : basename(cwd) || cwd);
+const isDeskId = (id: string, meta?: { desk?: boolean; oneshot?: boolean }) => {
+  if (meta?.desk || meta?.oneshot) return true;
+  try { return id === DA.sessionId || (!!DA.prevSessionId && id === DA.prevSessionId); } catch { return false; }
+};
+
+/** Moments worth telling the principal about, for the Copilot and the open pages: a chat
+ *  started, finished, failed, or stopped on a question. */
+type LiveEvent = { kind: "started" | "titled" | "done" | "error" | "waiting"; at: number; id: string; key: string; folder: string; cwd: string; title: string; text: string; options?: string[]; computer?: string };
+const EVENTS: LiveEvent[] = [];
+function emitEvent(ev: LiveEvent) {
+  ev.computer ||= "mac";
+  EVENTS.push(ev); if (EVENTS.length > 200) EVENTS.shift();
+  try { daBroadcast({ t: "event", d: ev }); } catch {}
 }
 
 /** a macOS notification — the one signal that reaches the principal when Bridge is not in front */
@@ -1086,10 +1649,332 @@ function notifyDesktop(title: string, subtitle: string, body: string) {
   try { Bun.spawn(["osascript", "-e", script], { stdout: "ignore", stderr: "ignore" }); } catch {}
 }
 
+/* ─────────────── computers: this Mac and the cloud computer ───────────────
+ * A chat runs on this Mac or on the cloud computer: another Bridge server (a Fly sprite) that keeps
+ * working when the Mac sleeps. This server is the hub: it lists the cloud's chats next to its own and
+ * proxies everything about a cloud chat, so the pages talk to one origin. The cloud is reached through
+ * the sprite CLI's own tunnel (`sprite proxy`, authenticated by the CLI's login — Bridge never touches a
+ * credential), kept alive as a child process, or through a plain URL. Every read of the cloud is
+ * bounded (~1.2s) and cached, so a sleeping sprite never slows the Mac's pages. */
+type CloudCfg = { url?: string; sprite?: { org: string; name: string; port: number } };
+const COMPUTERS_FILE = join(DATA_DIR, "computers.json");
+const MOVED_FILE = join(DATA_DIR, "moved.json");
+const SPRITE_BIN = process.env.BRIDGE_SPRITE_BIN || join(HOME, ".local", "bin", "sprite");
+const TUNNEL_PORT = Number(process.env.BRIDGE_TUNNEL_PORT || PORT + 121);
+let cloudCfg: CloudCfg = {};
+try { cloudCfg = JSON.parse(await Bun.file(COMPUTERS_FILE).text()) || {}; } catch {}
+/** chats moved to the cloud: the Mac stops listing its copy */
+const moved = new Map<string, number>();
+try { for (const [k, v] of Object.entries(JSON.parse(await Bun.file(MOVED_FILE).text()))) moved.set(k, Number(v)); } catch {}
+const cloudConfigured = () => !!(cloudCfg.url || cloudCfg.sprite);
+
+let tunnel: { child: ChildProcess; key: string; started: number } | null = null;
+let tunnelRetryAt = 0;
+function ensureTunnel() {
+  const s = cloudCfg.sprite;
+  if (!s) return;
+  const key = s.org + "/" + s.name + ":" + s.port;
+  if (tunnel && tunnel.key === key && tunnel.child.exitCode === null && tunnel.child.signalCode === null) return;
+  if (tunnel) stopTunnel();
+  if (Date.now() < tunnelRetryAt || !existsSync(SPRITE_BIN)) return;
+  const child = spawn(SPRITE_BIN, ["proxy", "-o", s.org, "-s", s.name, TUNNEL_PORT + ":" + s.port], { stdio: ["ignore", "pipe", "pipe"] });
+  const t = { child, key, started: Date.now() };
+  tunnel = t;
+  child.on("close", (code) => {
+    if (tunnel !== t) return;
+    tunnel = null;
+    // a tunnel that dies at once (offline, signed out) is retried gently, not in a loop
+    if (Date.now() - t.started < 10_000) tunnelRetryAt = Date.now() + 15_000;
+    logRow({ ts: Date.now(), kind: "cloud.tunnel", msg: "sprite proxy exited", outcome: "exit " + code });
+  });
+  child.on("error", () => { if (tunnel === t) tunnel = null; tunnelRetryAt = Date.now() + 30_000; });
+  logRow({ ts: Date.now(), kind: "cloud.tunnel", msg: "sprite proxy " + key + " → localhost:" + TUNNEL_PORT });
+}
+function stopTunnel() { try { tunnel?.child.kill("SIGTERM"); } catch {} tunnel = null; }
+function cloudBase(): string {
+  if (cloudCfg.url) return cloudCfg.url.replace(/\/+$/, "");
+  if (cloudCfg.sprite) { ensureTunnel(); return "http://127.0.0.1:" + TUNNEL_PORT; }
+  return "";
+}
+
+/** one bounded request to the cloud: undefined when it cannot be reached, null when it answered with no JSON (an older Bridge) */
+async function remoteJSON(path: string, timeoutMs = 1200, init?: RequestInit): Promise<any> {
+  const base = cloudBase();
+  if (!base) return undefined;
+  try {
+    const r = await fetch(base + path, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    if (!r.ok) return r.status === 404 ? null : undefined;
+    return await r.json().catch(() => null);
+  } catch { return undefined; }
+}
+type CloudHealth = { at: number; online: boolean; home: string; version: string; error: string };
+let health: CloudHealth = { at: 0, online: false, home: "", version: "", error: "" };
+let healthBusy: Promise<CloudHealth> | null = null;
+/** is the cloud there? Cached; a stale answer is served while a fresh one is fetched behind it */
+async function cloudHealth(fresh = false): Promise<CloudHealth> {
+  if (!cloudConfigured()) return { at: Date.now(), online: false, home: "", version: "", error: "not connected" };
+  const age = Date.now() - health.at, ttl = health.online ? 10_000 : 5_000;
+  if (!fresh && age < ttl) return health;
+  if (!healthBusy) healthBusy = (async () => {
+    // the tunnel needs a moment after it starts before the port answers
+    let roots = await remoteJSON("/api/roots", 1500);
+    if (roots === undefined && tunnel && Date.now() - tunnel.started < 6000) { await Bun.sleep(1500); roots = await remoteJSON("/api/roots", 1500); }
+    const online = Array.isArray(roots);
+    let { home, version } = health;
+    if (online && (!home || !health.online)) {
+      const b = await remoteJSON("/api/bootstrap", 6000);
+      if (b) { home = b.home || home; version = b.version || version; }
+    }
+    health = { at: Date.now(), online, home, version, error: online ? "" : cloudCfg.sprite && !existsSync(SPRITE_BIN) ? "sprite CLI not installed" : "unreachable" };
+    return health;
+  })().finally(() => { healthBusy = null; });
+  if (health.at && !fresh) return health;        // never wait when there is an answer to give
+  return healthBusy;
+}
+const rcache = new Map<string, { at: number; v: any }>();
+/** a cached read of the cloud; when it is offline the last good answer is not served as current */
+async function remoteCached(path: string, maxAge: number): Promise<any> {
+  const hit = rcache.get(path);
+  if (hit && Date.now() - hit.at < maxAge) return hit.v;
+  const h = await cloudHealth();
+  if (!h.online) return undefined;
+  const v = await remoteJSON(path, 1200);
+  if (v !== undefined) rcache.set(path, { at: Date.now(), v });
+  else if (hit && Date.now() - hit.at < 30_000) return hit.v;
+  return v;
+}
+const remoteFolder = (cwd: string) => (!cwd || cwd === health.home ? "Home" : basename(cwd) || cwd);
+/** the cloud's own desk transcripts and one-shot inference calls are not chats; an older Bridge there does not filter them */
+const notAChatRemote = (s: any) => s?.desk || s?.oneshot || /^now: \d{4}-\d\d-\d\dT[\d:.]+Z\s+(running chats|live sessions):/.test(String(s?.preview || s?.title || ""));
+
+/** the cloud's Home data; an older Bridge there (no /api/home) still yields its running turns and projects */
+async function cloudHomeData(): Promise<any> {
+  const v = await remoteCached("/api/home", 4000);
+  if (v === undefined) return undefined;
+  if (v && Array.isArray(v.running)) return v;
+  const [act, projs] = await Promise.all([remoteCached("/api/activity", 4000), remoteCached("/api/projects", 30_000)]);
+  if (!act) return undefined;
+  return {
+    legacy: true, needs: [], made: [],
+    running: (act.live || []).map((r: any) => ({ id: r.id, key: projectKey(r.cwd), title: r.title || String(r.prompt || "").slice(0, 60), projectName: remoteFolder(r.cwd), cwd: r.cwd,
+      started: r.started, elapsed: Date.now() - r.started, prompt: r.prompt, model: r.model || "", step: "Working", jobs: [] })),
+    projects: (projs || []).filter((p: any) => p.exists !== false).map((p: any) => ({ key: p.key, name: p.name, path: p.path, count: p.sessions, mtime: p.lastActivity })),
+  };
+}
+const tag = (computer: string) => (x: any) => ({ ...x, computer });
+/** this Mac's Home, plus the cloud's when there is one; a cloud id wins over a Mac copy of the same chat */
+async function mergedHome() {
+  const mac = await homeData();
+  const out: any = { ...mac, running: mac.running.map(tag("mac")), needs: mac.needs.map(tag("mac")), made: mac.made.map(tag("mac")), projects: mac.projects.map(tag("mac")) };
+  if (!cloudConfigured()) return out;
+  const c = await cloudHomeData();
+  if (!c) { out.cloudOffline = true; return out; }
+  const notMoved = (x: any) => !moved.has(x.id || x.sessionId);
+  const cloudIds = new Set<string>([...c.running, ...c.needs].map((x: any) => x.id));
+  out.running = out.running.filter((x: any) => !cloudIds.has(x.id)).concat(c.running.map(tag("cloud")));
+  out.needs = out.needs.filter((x: any) => !cloudIds.has(x.id) && notMoved(x)).concat(c.needs.map(tag("cloud"))).sort((a: any, b: any) => b.since - a.since);
+  out.made = out.made.concat((c.made || []).map(tag("cloud"))).sort((a: any, b: any) => b.mtime - a.mtime).slice(0, 150);
+  out.projects = out.projects.concat((c.projects || []).filter((p: any) => p.path !== health.home && !/\/\.claude(\/|$)/.test(p.path)).map(tag("cloud")));
+  out.cloudOffline = false;
+  return out;
+}
+async function mergedRecent(mac: any[], lim: number) {
+  let items = mac.filter((s) => !moved.has(s.id)).map(tag("mac"));
+  let offline = false;
+  if (cloudConfigured()) {
+    const [r, h] = await Promise.all([remoteCached("/api/recent?limit=" + lim, 4000), cloudHomeData()]);
+    if (!Array.isArray(r)) offline = true;
+    else {
+      const runIds = new Set((h?.running || []).map((x: any) => x.id)), needIds = new Set((h?.needs || []).map((x: any) => x.id));
+      const cloud = r.filter((s: any) => !notAChatRemote(s)).map((s: any) => ({ ...s, running: !!s.running || runIds.has(s.id), needs: !!s.needs || needIds.has(s.id), computer: "cloud" }));
+      const ids = new Set(cloud.map((s: any) => s.id));
+      items = items.filter((s) => !ids.has(s.id)).concat(cloud).sort((a, b) => b.mtime - a.mtime).slice(0, lim);
+    }
+  }
+  return { items, offline };
+}
+async function computersList() {
+  const id = await daIdentity();
+  const h = await cloudHealth();
+  return [
+    { id: "mac", name: id.user + "'s Mac", kind: "local", online: true, home: HOME },
+    { id: "cloud", name: "Cloud computer", kind: "remote", online: h.online, url: cloudCfg.url || (cloudCfg.sprite ? "sprite://" + cloudCfg.sprite.org + "/" + cloudCfg.sprite.name : ""),
+      configured: cloudConfigured(), via: cloudCfg.url ? "url" : cloudCfg.sprite ? "sprite-proxy" : "", home: h.home, version: h.version, error: h.error,
+      sprite: cloudCfg.sprite || null, spriteCli: existsSync(SPRITE_BIN) },
+  ];
+}
+async function setComputers(body: any) {
+  const next: CloudCfg = {};
+  if (body?.clear) { /* disconnect */ }
+  else if (typeof body?.url === "string" && body.url.trim()) {
+    const u = body.url.trim();
+    if (!/^https?:\/\/[^\s]+$/.test(u)) return { error: "a cloud URL starts with http:// or https://" };
+    next.url = u;
+  } else if (body?.sprite) {
+    const s = typeof body.sprite === "string" ? body.sprite : (body.sprite.org || "") + "/" + (body.sprite.name || "") + (body.sprite.port ? ":" + body.sprite.port : "");
+    const m = /^([\w.-]+)\/([\w.-]+)(?::(\d{2,5}))?$/.exec(s.trim());
+    if (!m) return { error: "name the sprite as org/sprite, optionally :port (the remote Bridge port, 8080 by default)" };
+    next.sprite = { org: m[1], name: m[2], port: Number(m[3] || 8080) };
+  } else return { error: "send { url }, { sprite: \"org/name\" } or { clear: true }" };
+  stopTunnel(); tunnelRetryAt = 0;
+  cloudCfg = next; rcache.clear(); health = { at: 0, online: false, home: "", version: "", error: "" };
+  await Bun.write(COMPUTERS_FILE, JSON.stringify(cloudCfg, null, 2));
+  logRow({ ts: Date.now(), kind: "cloud.config", msg: cloudConfigured() ? "cloud computer: " + (next.url || next.sprite!.org + "/" + next.sprite!.name) : "cloud computer disconnected" });
+  await cloudHealth(true);
+  return { ok: true, computers: await computersList() };
+}
+
+/** tokens & keys typed into a masked field (secrets.ts): global → ~/.claude/.env, project → DATA_DIR/secrets */
+const secrets = createSecrets({ globalFile: join(CLAUDE_DIR, ".env"), dataDir: DATA_DIR });
+/* the cloud's chats, proxied: same requests, sent on to the cloud's Bridge */
+const PROXY_GET = new Set(["/api/secrets", "/api/session", "/api/sessions", "/api/follow", "/api/jobs", "/api/file", "/api/dir", "/api/raw", "/api/reorganize", "/api/reorganize/plan", "/api/archive/status"]);
+const PROXY_POST = new Set(["/api/secrets", "/api/secrets/remove", "/api/chat", "/api/abort", "/api/rename", "/api/save", ...["decide", "undecide", "project", "apply", "undo"].map((x) => "/api/reorganize/" + x)]);
+/** sorting the work folder into projects, by hand, one folder at a time (reorganize.ts) */
+const reorganize = createReorganize({ home: HOME, claudeDir: CLAUDE_DIR });
+/** which cloud chats have a page attached right now: those announce their own end */
+const cloudWatched = new Map<string, number>();
+function passThrough(src: ReadableStream<Uint8Array>, onText: (s: string) => void, onEnd: () => void) {
+  const reader = src.getReader(), dec = new TextDecoder();
+  let ended = false;
+  const end = () => { if (!ended) { ended = true; onEnd(); } };
+  return new ReadableStream<Uint8Array>({
+    async pull(ctrl) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) { ctrl.close(); end(); return; }
+        onText(dec.decode(value, { stream: true }));
+        ctrl.enqueue(value);
+      } catch (e) { try { ctrl.error(e); } catch {} end(); }
+    },
+    cancel() { end(); reader.cancel().catch(() => {}); },
+  });
+}
+async function proxyCloud(path: string, method: string, body?: any, auth = ""): Promise<Response> {
+  const base = cloudBase();
+  if (!base) return json({ error: "No cloud computer is connected. Connect one in Settings › Computers." }, 503);
+  const p = path.split("?")[0];
+  const long = p === "/api/chat" || p === "/api/follow";
+  let r: Response;
+  try {
+    // a cloud Bridge behind its own gate takes the same Supabase session
+    const headers: Record<string, string> = body ? { "content-type": "application/json" } : {};
+    if (auth) headers.authorization = auth;
+    r = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined,
+      signal: long ? undefined : AbortSignal.timeout(20_000) });
+  } catch (e) {
+    health = { ...health, at: Date.now(), online: false, error: "unreachable" };
+    return json({ error: "The cloud computer is offline: " + String((e as any)?.message || e) }, 502);
+  }
+  // an older Bridge on the cloud has no /api/jobs: its activity feed still says whether the turn runs
+  if (p === "/api/jobs" && r.status === 404) {
+    const id = new URL(base + path).searchParams.get("id") || "";
+    const act = await remoteJSON("/api/activity", 3000);
+    const run = (act?.live || []).find((x: any) => x.id === id);
+    return json(run ? { running: true, started: run.started, elapsed: Date.now() - run.started, step: "Working", jobs: [] } : { running: false, started: 0, elapsed: 0, step: "", jobs: [] });
+  }
+  const headers: Record<string, string> = { "cache-control": "no-store" };
+  const ct = r.headers.get("content-type"); if (ct) headers["content-type"] = ct;
+  if (p === "/api/chat" && r.body) {
+    rcache.delete("/api/home"); rcache.delete("/api/activity");
+    let id = "", buf = "";
+    const stream = passThrough(r.body, (s) => {
+      if (id) return;
+      buf = (buf + s).slice(-4000);
+      const m = /"t":"start","sessionId":"([\w-]+)"/.exec(buf);
+      if (m) { id = m[1]; cloudWatched.set(id, (cloudWatched.get(id) || 0) + 1); }
+    }, () => { if (id) { const n = (cloudWatched.get(id) || 1) - 1; if (n > 0) cloudWatched.set(id, n); else cloudWatched.delete(id); } });
+    return new Response(stream, { status: r.status, headers });
+  }
+  return new Response(r.body, { status: r.status, headers });
+}
+
+/** a cloud turn that ends is news too: the running set is watched and its departures announced */
+let cloudRuns = new Map<string, any>();
+let cloudWatchBooted = false;
+async function watchCloud() {
+  if (!cloudConfigured()) { cloudRuns.clear(); cloudWatchBooted = false; return; }
+  const c = await cloudHomeData();
+  if (!c) return;
+  const now = new Map<string, any>(c.running.map((r: any) => [r.id, r]));
+  for (const [id, r] of now) if (!cloudRuns.has(id) && cloudWatchBooted)
+    emitEvent({ kind: "started", at: Date.now(), id, key: r.key, folder: r.projectName, cwd: r.cwd, title: r.title, text: r.prompt || "", computer: "cloud" });
+  for (const [id, r] of cloudRuns) if (!now.has(id)) {
+    rcache.delete("/api/recent?limit=120");
+    const need = (c.needs || []).find((n: any) => n.id === id);
+    const text = need ? need.ask : "";
+    emitEvent({ kind: need ? "waiting" : "done", at: Date.now(), id, key: r.key, folder: r.projectName, cwd: r.cwd, title: r.title, text, options: need?.options, computer: "cloud" });
+    if (!cloudWatched.has(id)) notifyDesktop(r.projectName + " (cloud)" + (need ? " needs you" : " finished"), r.title, text);
+  }
+  cloudRuns = now; cloudWatchBooted = true;
+}
+setInterval(() => { watchCloud().catch(() => {}); }, 5000);
+
+/** Keep the cloud computer's copy of this Mac's files current: deploy/files-sync.sh sends what changed
+ *  since its last run (one-way, never deletes, no secrets). It runs here, not from launchd, because only
+ *  this app has macOS permission to read ~/Desktop. Mac only; BRIDGE_FILES_SYNC=0 turns it off. */
+const FILES_SYNC = join(dirname(Bun.fileURLToPath(import.meta.url)), "deploy", "files-sync.sh");
+let filesSyncing = false;
+async function filesSync() {
+  if (filesSyncing) return;
+  filesSyncing = true;
+  const t0 = Date.now();
+  try {
+    const s = cloudCfg.sprite;
+    const p = Bun.spawn(["/bin/bash", FILES_SYNC], { stdout: "pipe", stderr: "pipe",
+      env: { ...process.env, SPRITE_BIN, ...(s ? { SPRITE_ORG: s.org, SPRITE_NAME: s.name } : {}) } });
+    const kill = setTimeout(() => p.kill(), 2 * 3600_000);
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    clearTimeout(kill);
+    const line = (out.trim().split("\n").pop() || err.trim().split("\n").pop() || "").replace(/^files-sync: /, "");
+    if (code || !/^0 files/.test(line)) logRow({ ts: Date.now(), kind: "files.sync", msg: line.slice(0, 240), outcome: code ? "exit " + code : "ok", ms: Date.now() - t0 });
+  } catch (e) { logRow({ ts: Date.now(), kind: "files.sync", msg: String(e).slice(0, 160), outcome: "error" }); }
+  finally { filesSyncing = false; }
+}
+if (process.platform === "darwin" && process.env.BRIDGE_FILES_SYNC !== "0" && existsSync(SPRITE_BIN) && existsSync(FILES_SYNC)) {
+  setTimeout(() => { filesSync(); setInterval(filesSync, 10 * 60_000); }, 60_000);
+}
+
+/** Move a chat to the cloud: its transcript (and the folder of subagent and tool-result files beside it)
+ *  is packed here and unpacked on the sprite under the project key its folder has there, through the
+ *  sprite CLI's exec — then the chat simply resumes on the cloud. Paths under this Mac's home are
+ *  rewritten to the cloud's home so the session finds its folder. */
+async function moveToCloud(key: string, id: string) {
+  const s = cloudCfg.sprite;
+  if (!s) return { error: "Moving a chat needs the cloud computer connected through the sprite CLI (Settings › Computers)." };
+  if (runFor(id)) return { error: "This chat is running here. Move it once the turn is done." };
+  const h = await cloudHealth(true);
+  if (!h.online || !h.home) return { error: "The cloud computer is offline." };
+  const file = sessionFile(id, key);
+  if (!file || !existsSync(file)) return { error: "No transcript for this chat." };
+  const meta = await sessionMeta(key, file);
+  const cwd = meta?.cwd || HOME;
+  const remoteCwd = cwd === HOME ? h.home : cwd.startsWith(HOME + "/") ? h.home + cwd.slice(HOME.length) : h.home;
+  const remoteKey = projectKey(remoteCwd);
+  const stage = join(DATA_DIR, "tmp", "move-" + id);
+  await mkdir(stage, { recursive: true });
+  const text = (await readFile(file, "utf8")).split(HOME + "/").join(h.home + "/").split('"cwd":"' + HOME + '"').join('"cwd":"' + h.home + '"');
+  await Bun.write(join(stage, id + ".jsonl"), text);
+  const side = join(dirname(file), id);
+  const parts = [id + ".jsonl"];
+  if (existsSync(side)) { await Bun.spawn(["cp", "-R", side, join(stage, id)]).exited; parts.push(id); }
+  const dest = h.home + "/.claude/projects/" + remoteKey;
+  const sh = "set -e; mkdir -p " + JSON.stringify(dest) + " " + JSON.stringify(remoteCwd) + "; tar -xzf - -C " + JSON.stringify(dest) + "; test -s " + JSON.stringify(dest + "/" + id + ".jsonl") + " && echo moved";
+  const tar = Bun.spawn(["tar", "-czf", "-", "-C", stage, ...parts], { stdout: "pipe", stderr: "pipe" });
+  const ex = Bun.spawn([SPRITE_BIN, "exec", "-o", s.org, "-s", s.name, "--", "sh", "-c", sh], { stdin: tar.stdout, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([new Response(ex.stdout).text(), new Response(ex.stderr).text(), ex.exited]);
+  Bun.spawn(["rm", "-rf", stage]);
+  if (code !== 0 || !/moved/.test(out)) return { error: "The copy did not land on the cloud computer: " + (err || out).trim().slice(-300) };
+  moved.set(id, Date.now());
+  await Bun.write(MOVED_FILE, JSON.stringify(Object.fromEntries(moved), null, 2));
+  rcache.clear(); homeCache = null;
+  logRow({ ts: Date.now(), kind: "cloud.move", msg: "moved " + (meta?.title || id) + " to the cloud", session: id, cwd });
+  return { ok: true, computer: "cloud", id, key: remoteKey, cwd: remoteCwd };
+}
+
 /* ────────────────────── following a transcript as it grows ──────────────────────
- * A mirrored tab is the terminal's transcript, read from the byte the tab already has. The
- * file is polled for growth; whole lines are normalised and streamed, a partial last line
- * waits for its newline. Nothing is written — the terminal owns the session. */
+ * A chat reopened while its turn is still running (the page was closed, or another device
+ * started it) re-attaches here: the transcript is read from the byte the page already has, polled
+ * for growth, and whole lines are normalised and streamed; a partial last line waits for its newline. */
 function followTranscript(file: string, from: number, send: (o: any) => void, signal: { closed: boolean }) {
   let offset = Math.max(0, from | 0);
   let rest = "";
@@ -1124,20 +2009,19 @@ function followTranscript(file: string, from: number, send: (o: any) => void, si
 const DA_FILE = join(DATA_DIR, "da.json");
 const DA_PROTOCOL = (assistant: string, user: string) => [
   "You are " + assistant + ", running as the Copilot in Bridge — a voice-first view above the session tabs, with no sessions of its own, where " + user +
-  " asks for summaries and talks through the whole picture without opening a session. Bridge speaks your reply aloud.",
+  " asks for summaries and talks through the whole picture without opening a chat. Bridge speaks your reply aloud.",
   "",
-  "State: every message from Bridge begins with a <bridge> block listing the live Claude Code terminal sessions on this machine — name,",
-  "folder, busy or idle, what each last said, whether one is waiting on " + user + ", and the recent events. Treat it as the current truth;",
-  "never read it back verbatim and never invent session state that is not in it.",
+  "State: every message from Bridge begins with a <bridge> block listing the chats running in Bridge right now — title, folder, how long,",
+  "what each is doing — the finished chats waiting on " + user + " to answer, and the recent events. Treat it as the current truth;",
+  "never read it back verbatim and never invent chat state that is not in it.",
   "",
-  "Digging deeper: each session's full transcript is the JSONL file named in the block. When asked what a session did, why, or what it changed,",
-  "Read the end of that file (it is large — use offset/limit or Bash tail) and answer from it. To send a running session a message, use ListAgents",
-  "to find it by its name from the block and SendMessage to send it; then say what you sent. Relay requests (\"tell X to …\") mean exactly that.",
+  "Digging deeper: each chat's full transcript is the JSONL file named in the block. When asked what a chat did, why, or what it changed,",
+  "Read the end of that file (it is large — use offset/limit or Bash tail) and answer from it. You cannot type into another chat; when",
+  user + " wants one to do something, say so and name the chat so it can be opened.",
   "",
   "Answering: always include one line that starts with 🗣️ — one to three plain spoken sentences that answer the question directly. That line is",
   "read aloud, so no markdown, lists, paths or code in it. Anything else you show stays short; " + user + " can ask for more. When there is",
-  "nothing new, say so in a sentence. When you refer to a session, call it by its name or folder from the block (never by pid or",
-  "file) — Bridge turns those into links that open the session.",
+  "nothing new, say so in a sentence. When you refer to a chat, call it by its title or folder from the block (never by id or file).",
 ].join("\n");
 
 type DaClient = (o: any) => void;
@@ -1152,11 +2036,13 @@ function daBroadcast(o: any) {
   DA.ring.push(o); if (DA.ring.length > 600) DA.ring.shift();
   for (const c of DA.clients) { try { c(o); } catch {} }
 }
+/** what to call the principal: LifeOS's principal.name (first name), else the account name */
+const principalName = (settings: any) => (settings?.daidentity?.userName || String(settings?.principal?.name || "").trim().split(/\s+/)[0] || basename(HOME));
 async function daIdentity() {
   const settings = JSON.parse(await readFile(join(CLAUDE_DIR, "settings.json"), "utf8").catch(() => "{}"));
   const id = settings.daidentity || {};
   DA.name = id.name || id.displayName || "Claude";
-  DA.user = id.userName || basename(HOME);
+  DA.user = principalName(settings);
   return { name: DA.name, user: DA.user, color: id.color || "", voice: id.voices?.main || null };
 }
 async function daLoadState() {
@@ -1201,7 +2087,6 @@ async function daBoot(fresh: boolean) {
     // Pulse; Bridge speaks the desk itself, so that hook is told this is not a desktop terminal.
     const child = spawn(CLAUDE_BIN, args, { cwd: HOME, stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...settingsEnv, FORCE_COLOR: "0", BRIDGE_DESK: "1", LIFEOS_NOTIFICATION_CHANNEL: "bridge" } });
-    if (child.pid) ownPids.add(child.pid);
     DA.child = child; DA.started = Date.now(); DA.busy = false; DA.lastError = ""; DA.ready = false;
     logRow({ ts: Date.now(), kind: "desk.start", msg: (fresh ? "new" : "resumed") + " desk session", session: DA.sessionId, cwd: HOME });
     let buf = "";
@@ -1229,7 +2114,6 @@ async function daBoot(fresh: boolean) {
     });
     child.stderr!.on("data", (c) => { const s = c.toString().trim(); if (s && !/hook|deprecat|warning/i.test(s)) daBroadcast({ t: "stderr", d: s }); });
     child.on("close", (code) => {
-      if (child.pid) ownPids.delete(child.pid);
       if (DA.child === child) { DA.child = null; DA.busy = false; DA.ready = false; }
       DA.exits++;
       logRow({ ts: Date.now(), kind: "desk.exit", msg: "desk process exited", outcome: "exit " + code, session: DA.sessionId, cwd: HOME });
@@ -1257,23 +2141,27 @@ function daDrain() {
   daWrite(next.text, next.ctx);
 }
 /** the situation report that rides in front of every message */
-function bridgeBlock(): string {
+async function bridgeBlock(): Promise<string> {
   const lines: string[] = ["<bridge>", "now: " + new Date().toISOString()];
-  if (!lastLive.length) lines.push("live sessions: none — no Claude Code terminal is open right now");
+  let h: any = null; try { h = await homeData(); } catch {}
+  const runs = h?.running || [], needs = h?.needs || [];
+  if (!runs.length) lines.push("running chats: none");
   else {
-    lines.push("live sessions (" + lastLive.length + "):");
-    for (const s of lastLive) {
-      lines.push("- " + s.name + " · " + s.folder + " (" + s.cwd + ") · " + s.status + (s.waiting ? " · WAITING ON " + DA.user.toUpperCase() + ": " + s.waiting.text : "") +
-        " · started " + new Date(s.startedAt).toISOString().slice(11, 16) + " · " + s.turns + " turns");
-      lines.push("  transcript: " + s.file);
-      if (s.lastUser) lines.push("  last asked: " + s.lastUser.slice(0, 200));
-      if (s.last) lines.push("  last said: " + s.last.slice(0, 300));
+    lines.push("running chats (" + runs.length + "):");
+    for (const r of runs) {
+      lines.push("- " + r.title + " · " + r.projectName + " (" + r.cwd + ") · running " + Math.round(r.elapsed / 60000) + "m · now: " + r.step +
+        (r.jobs.length ? " · background: " + r.jobs.map((j: any) => j.title).join("; ").slice(0, 200) : ""));
+      lines.push("  transcript: " + sessionFile(r.id, r.key));
     }
   }
-  const recent = EVENTS.slice(-8);
+  if (needs.length) {
+    lines.push("waiting on " + DA.user + " (" + needs.length + "):");
+    for (const n of needs.slice(0, 8)) lines.push("- " + n.title + " · " + n.projectName + " · asks: " + n.ask + "\n  transcript: " + sessionFile(n.id, n.key));
+  }
+  const recent = EVENTS.filter((e) => e.kind !== "started" && e.kind !== "titled").slice(-8);
   if (recent.length) {
     lines.push("recent events:");
-    for (const e of recent) lines.push("- " + new Date(e.at).toISOString().slice(11, 16) + " " + e.kind + " · " + e.name + " · " + e.folder + (e.text ? " · " + e.text.slice(0, 160) : ""));
+    for (const e of recent) lines.push("- " + new Date(e.at).toISOString().slice(11, 16) + " " + e.kind + " · " + e.title + " · " + e.folder + (e.text ? " · " + e.text.slice(0, 160) : ""));
   }
   lines.push("</bridge>");
   return lines.join("\n");
@@ -1281,7 +2169,7 @@ function bridgeBlock(): string {
 async function daSend(text: string) {
   if (!DA.child) await daStart();
   if (!DA.child) return { error: DA.lastError || "the desk could not start" };
-  const ctx = bridgeBlock();
+  const ctx = await bridgeBlock();
   if (DA.busy) { DA.queue.push({ text, ctx }); daBroadcast({ t: "state", d: daState() }); return { queued: true }; }
   return { ok: daWrite(text, ctx) };
 }
@@ -1302,6 +2190,7 @@ await daLoadState();
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => {
   try { DA.child?.stdin?.end(); DA.child?.kill("SIGTERM"); } catch {}
   try { voice?.proc.kill(); } catch {}
+  stopTunnel();
   setTimeout(() => process.exit(0), 300);
 });
 
@@ -1414,6 +2303,12 @@ const STT_CANDIDATES: [string, string][] = (() => {
 async function pyHas(py: string, mod: string): Promise<boolean> {
   try { const p = Bun.spawn([py, "-c", "import " + mod], { stdout: "ignore", stderr: "ignore" }); return (await p.exited) === 0; } catch { return false; }
 }
+/** Kokoro on a CPU (Linux sprite): kokoro-onnx importable plus the model files deploy/voice-install.sh fetches */
+const KOKORO_DIR = (process.env.BRIDGE_TTS_KOKORO_DIR || join(HOME, ".local", "share", "kokoro")).replace(/^~(?=\/|$)/, HOME);
+async function kokoroOnnxReady(py: string): Promise<boolean> {
+  if (!existsSync(join(KOKORO_DIR, "kokoro-v1.0.onnx")) || !existsSync(join(KOKORO_DIR, "voices-v1.0.bin"))) return false;
+  return pyHas(py, "kokoro_onnx");
+}
 /** which engines this machine can run, without starting the worker; cached two minutes */
 async function voiceProbe(): Promise<VoiceEngines> {
   if (voice) return { py: voice.py, stt: voice.stt, tts: voice.tts };
@@ -1423,12 +2318,12 @@ async function voiceProbe(): Promise<VoiceEngines> {
     if (py.includes("/") && !existsSync(py)) continue;
     let stt = "none";
     for (const [mod, name] of STT_CANDIDATES) { if (await pyHas(py, mod)) { stt = name; break; } }
-    if (stt === "none") continue;
-    const tts = process.env.BRIDGE_TTS_ENGINE === "none" ? "none" : (await pyHas(py, "mlx_audio")) ? "kokoro" : "none";
+    const tts = process.env.BRIDGE_TTS_ENGINE === "none" ? "none" : (await pyHas(py, "mlx_audio")) || (await kokoroOnnxReady(py)) ? "kokoro" : "none";
+    if (stt === "none" && tts === "none") continue;   // a speak-only worker is still worth running
     v = { py, stt, tts };
     break;
   }
-  if (v.stt === "none" && Bun.which("whisper")) v = { py: "", stt: "whisper-cli", tts: "none" };
+  if (v.stt === "none" && Bun.which("whisper")) v = { ...v, stt: "whisper-cli" };
   voiceProbeCache = { at: Date.now(), v };
   return v;
 }
@@ -1489,7 +2384,7 @@ async function localSpeech(text: string, speed: number): Promise<{ bytes?: Uint8
 async function transcribe(path: string): Promise<{ text?: string; error?: string; ms?: number }> {
   const t0 = Date.now();
   const e = await voiceProbe();
-  if (e.py) {
+  if (e.py && e.stt !== "none" && e.stt !== "whisper-cli") {
     const r = await voiceAsk({ op: "stt", path }, 90_000);
     return { text: r.text, error: r.error, ms: Date.now() - t0 };
   }
@@ -1503,20 +2398,132 @@ async function transcribe(path: string): Promise<{ text?: string; error?: string
   return { error: "no transcriber on this machine — install parakeet-mlx (or mlx_whisper) or type instead" };
 }
 
+/* ─────────────────────────── who may use this Bridge ───────────────────────────
+ * Served from the open internet (a Worker in front of the sprite), every /api call needs a Supabase
+ * session: `Authorization: Bearer <access_token>`, or `?access_token=` where a header cannot be set
+ * (EventSource, <img>, <iframe>). The token is checked against Supabase itself and the email against an
+ * allowlist; a good answer is cached until the token expires (at most 5 minutes). With no Supabase URL
+ * configured there is no gate, which keeps a local Bridge exactly as it was. */
+const AUTH_URL = (process.env.BRIDGE_SUPABASE_URL || "").replace(/\/+$/, "");
+const AUTH_KEY = process.env.BRIDGE_SUPABASE_KEY || "";
+const AUTH_EMAILS = new Set((process.env.BRIDGE_ALLOWED_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
+const authRequired = () => !!AUTH_URL;
+const tokenCache = new Map<string, { ok: boolean; email: string; until: number }>();
+async function checkToken(token: string): Promise<{ ok: boolean; email: string }> {
+  if (!token) return { ok: false, email: "" };
+  const key = new Bun.CryptoHasher("sha256").update(token).digest("hex");
+  const hit = tokenCache.get(key);
+  if (hit && hit.until > Date.now()) return hit;
+  let exp = 0;
+  try { exp = Number(JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString()).exp || 0) * 1000; } catch {}
+  let v = { ok: false, email: "", until: Date.now() + 10_000 };     // a refusal is remembered briefly, so a bad token cannot hammer Supabase
+  if (!exp || exp > Date.now()) {
+    try {
+      const r = await fetch(AUTH_URL + "/auth/v1/user", { headers: { apikey: AUTH_KEY, authorization: "Bearer " + token }, signal: AbortSignal.timeout(5000) });
+      if (r.ok) {
+        const u: any = await r.json();
+        const email = String(u.email || "").toLowerCase();
+        const ok = !!email && (AUTH_EMAILS.size === 0 ? false : AUTH_EMAILS.has(email));
+        v = { ok, email, until: ok ? Math.min(exp || Date.now() + 300_000, Date.now() + 300_000) : Date.now() + 10_000 };
+        if (!ok) logRow({ ts: Date.now(), kind: "auth.denied", msg: (email || "no email") + " is not on the allowlist" });
+      } else if (r.status >= 500) v.until = 0;                       // Supabase down: do not cache, try again next request
+    } catch { v.until = 0; }
+  }
+  if (v.until) tokenCache.set(key, v);
+  if (tokenCache.size > 500) for (const [k, x] of tokenCache) if (x.until < Date.now()) tokenCache.delete(k);
+  return v;
+}
+function bearer(req: Request, q: URLSearchParams) {
+  const h = req.headers.get("authorization") || "";
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  return (m ? m[1] : q.get("access_token") || "").trim();
+}
+
 /* ───────────────────────────── routing ─────────────────────────────── */
 
 function corsHeaders(req: Request): Record<string, string> {
-  return { "access-control-allow-origin": req.headers.get("origin") || "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-credentials": "true" };
+  return { "access-control-allow-origin": req.headers.get("origin") || "*", "access-control-allow-headers": "content-type, authorization", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-credentials": "true" };
 }
 const server = Bun.serve({
   port: PORT,
   idleTimeout: 255,
-  async fetch(req) {
+  // WebSockets: only the Computer panel's screen (/api/desktop/ws) for now
+  websocket: { open: (ws: any) => desk.ws.open(ws), message: (ws: any, m) => desk.ws.message(ws, m), close: (ws: any) => desk.ws.close(ws) },
+  async fetch(req, srv) {
+    const u = new URL(req.url);
+    if (u.pathname === "/qwen" || u.pathname.startsWith("/qwen/")) return qwenRoute(req, u, srv.requestIP(req)?.address || "");
+    if (u.pathname.startsWith("/desktop/")) return desktopLocal(req, u, srv.requestIP(req)?.address || "");
+    if (u.pathname === "/api/desktop/ws") return desktopSocket(req, u, srv);
     const res = await route(req);
     if (CORS) for (const [k, v] of Object.entries(corsHeaders(req))) res.headers.set(k, v);
     return res;
   },
 });
+/** The Qwen adapter (providers/qwen.ts) speaks the Anthropic Messages API to the claude CLI and RunPod behind
+ *  it. Only loopback may call it, and it is loaded on first use so a missing file never stops Bridge booting. */
+let qwenMod: Promise<any> | null = null;
+const loadQwen = () => (qwenMod ||= import("./providers/qwen.ts").catch((e) => { qwenMod = null; throw e; }));
+/** what Qwen chats really cost on RunPod, per session, summed across Bridge restarts (the adapter's counters are in memory) */
+const QWEN_USAGE_FILE = join(DATA_DIR, "qwen-usage.json");
+type QwenUsage = { jobs: number; gpuMs: number; usd: number; estimated: boolean };
+const qwenSpend = new Map<string, QwenUsage>();
+try { for (const [k, v] of Object.entries(JSON.parse(await Bun.file(QWEN_USAGE_FILE).text()))) qwenSpend.set(k, v as QwenUsage); } catch {}
+function addQwenSpend(id: string, d: QwenUsage) {
+  const was = qwenSpend.get(id) || { jobs: 0, gpuMs: 0, usd: 0, estimated: false };
+  qwenSpend.set(id, { jobs: was.jobs + d.jobs, gpuMs: was.gpuMs + d.gpuMs, usd: +(was.usd + d.usd).toFixed(6), estimated: was.estimated || d.estimated });
+  Bun.write(QWEN_USAGE_FILE, JSON.stringify(Object.fromEntries(qwenSpend))).catch(() => {});
+}
+/** the key Bridge's own qwen turns present; new every boot, never leaves this machine */
+const QWEN_KEY = "bridge-qwen-" + randomUUID();
+async function qwenRoute(req: Request, u: URL, ip: string): Promise<Response> {
+  if (!/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(ip)) return json({ error: "not found" }, 404);
+  // loopback is not proof on a host whose public proxy connects locally: a model call must carry this boot's key
+  const key = req.headers.get("x-api-key") || (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (req.method === "POST" && key !== QWEN_KEY) return json({ type: "error", error: { type: "authentication_error", message: "not allowed" } }, 401);
+  let mod: any;
+  try { mod = await loadQwen(); } catch (e) { return json({ type: "error", error: { type: "api_error", message: "Qwen adapter missing: " + String(e) } }, 500); }
+  return mod.handleQwen(req, u.pathname.replace(/^\/qwen\/?/, "") + u.search);
+}
+/* ── the Computer panel (desktop.ts) ── */
+/** /api/desktop/ws: the VNC stream, behind the same gate as every /api route (?access_token=, a WebSocket has no headers) */
+async function desktopSocket(req: Request, u: URL, srv: any): Promise<Response | undefined> {
+  if (authRequired() && !(await checkToken(bearer(req, u.searchParams))).ok) return json({ error: "auth" }, 401);
+  if (!desk.supported) return json({ error: "this computer has no screen" }, 404);
+  if ((req.headers.get("upgrade") || "").toLowerCase() !== "websocket") return json({ error: "websocket only" }, 426);
+  return desk.upgrade(req, srv) ? undefined : json({ error: "upgrade failed" }, 400);
+}
+async function desktopApi(req: Request, p: string): Promise<Response> {
+  if (p === "/api/desktop/status") return json(desk.status());
+  if (p === "/api/desktop/focus") return json(await desk.focus());
+  if (req.method !== "POST") return json({ error: "not found" }, 404);
+  if (!desk.supported) return json({ ...desk.status(), error: "this computer has no screen" }, 404);
+  if (p === "/api/desktop/start") {
+    try { await desk.ensure(true); } catch (e: any) { return json({ ...desk.status(), error: String(e?.message || e) }, 500); }
+    return json(desk.status());
+  }
+  if (p === "/api/desktop/stop") { desk.stop("stopped from Bridge"); return json(desk.status()); }
+  if (p === "/api/desktop/control") { const b: any = await req.json().catch(() => ({})); return json(desk.setControl(!!b.on)); }
+  return json({ error: "not found" }, 404);
+}
+/** /desktop/<key>/…: loopback only, for this boot's turns. `ensure` (the computer tools) and `cdp/json/version`, which
+ *  Playwright MCP reads as its --cdp-endpoint: answering it starts the desktop and Chrome, so the browser is lazy. */
+async function desktopLocal(req: Request, u: URL, ip: string): Promise<Response> {
+  const [, , key, ...rest] = u.pathname.split("/");
+  if (!/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(ip) || key !== DESK_KEY) return json({ error: "not found" }, 404);
+  const sub = rest.join("/").replace(/\/+$/, "");
+  try {
+    if (sub === "ensure" && req.method === "POST") { await desk.ensure(false); return json(desk.status()); }
+    if (sub === "cdp/json/version") { const r = await desk.cdpVersion(); return new Response(r.body, { status: r.status, headers: { "content-type": "application/json" } }); }
+  } catch (e: any) { return json({ error: String(e?.message || e) }, 503); }
+  return json({ error: "not found" }, 404);
+}
+async function qwenAvailable() { return !!((process.env.RUNPOD_QWEN_API_KEY || (await dotenvKey("RUNPOD_QWEN_API_KEY"))) && existsSync(join(dirname(Bun.fileURLToPath(import.meta.url)), "providers", "qwen.ts"))); }
+/** the CLI's version, asked once every ten minutes rather than on every page load */
+let cliVer: { at: number; v: string } | null = null;
+async function cliVersion() {
+  if (!cliVer || Date.now() - cliVer.at > 600_000) cliVer = { at: Date.now(), v: (await new Response(Bun.spawn([CLAUDE_BIN, "--version"]).stdout).text()).trim() };
+  return cliVer.v;
+}
 async function route(req: Request): Promise<Response> {
   {
     const url = new URL(req.url);
@@ -1525,18 +2532,44 @@ async function route(req: Request): Promise<Response> {
     if (CORS && req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req) });
 
     try {
+      if (p === "/api/authconfig") return json({ required: authRequired(), supabaseUrl: AUTH_URL, supabaseKey: AUTH_KEY });
+      // the OAuth callback page may run in a browser not signed in to Bridge: finishing needs only the
+      // vendor's code plus the single-use 18-byte state that an authenticated /oauth/start created
+      const oauthFinish = p === "/api/connectors/oauth/finish" && req.method === "POST";
+      if (p.startsWith("/api/") && !oauthFinish && authRequired() && !(await checkToken(bearer(req, q))).ok) return json({ error: "auth" }, 401);
       if (!rootsReady) { ROOTS = await readRoots(); await ensureRoots(); }
+      if (p.startsWith("/api/desktop/")) return desktopApi(req, p);
+      if (p === "/api/connectors" || p.startsWith("/api/connectors/")) return (await connectors.route(req, url))!;
+      if (q.get("computer") === "cloud" && req.method === "GET" && PROXY_GET.has(p)) {
+        const fwd = new URLSearchParams(q); fwd.delete("computer");
+        return proxyCloud(p + "?" + fwd.toString(), "GET", undefined, req.headers.get("authorization") || "");
+      }
+      if (req.method === "POST" && PROXY_POST.has(p)) {
+        const body = await req.clone().json().catch(() => null);
+        if (body?.computer === "cloud") { delete body.computer; return proxyCloud(p, "POST", body, req.headers.get("authorization") || ""); }
+      }
+      if (p === "/api/reorganize" || p.startsWith("/api/reorganize/")) { projectsCache = null; return reorganize.route(req, p); }
+      if (p === "/api/computers") return json(req.method === "POST" ? await setComputers(await req.json().catch(() => ({}))) : await computersList());
+      if (p === "/api/move" && req.method === "POST") {
+        const { key, id } = await req.json().catch(() => ({}) as any);
+        return json(await moveToCloud(String(key || ""), String(id || "")));
+      }
       if (p === "/api/bootstrap") {
         const settings = JSON.parse(await readFile(join(CLAUDE_DIR, "settings.json"), "utf8").catch(() => "{}"));
         const id = settings.daidentity || {};
         return json({
-          user: id.userName || basename(HOME),
+          user: principalName(settings),
           assistant: id.name || id.displayName || "Claude",
           color: id.color || "", home: HOME, claudeDir: CLAUDE_DIR,
-          version: (await new Response(Bun.spawn([CLAUDE_BIN, "--version"]).stdout).text()).trim(),
+          version: await cliVersion(),
           models: ["opus", "sonnet", "haiku", "fable"],
           permissionModes: ["acceptEdits", "auto", "plan", "bypassPermissions", "manual", "dontAsk"],
           efforts: ["", "low", "medium", "high", "xhigh", "max"],
+          // grouped for the model menu's tabs: Claude, and open models served through the local adapter
+          providers: [{ id: "claude", name: "Claude", group: "claude", available: true },
+            { id: "qwen", name: "Qwen 3.8 Uncensored", short: "Qwen 3.8", group: "open", available: await qwenAvailable(), note: "RunPod · slower, private" }],
+          // where chats run when there is no second computer: this Mac, or the cloud box this server is
+          host: { name: process.env.BRIDGE_HOST_NAME || (process.platform === "darwin" ? principalName(settings) + "'s Mac" : "Cloud computer"), kind: process.platform === "darwin" ? "mac" : "cloud" },
           auth: await authStatus(),
         });
       }
@@ -1552,15 +2585,29 @@ async function route(req: Request): Promise<Response> {
       if (p === "/api/auth/cancel" && req.method === "POST") { endLogin(); return json({ ok: true }); }
       if (p === "/api/auth/logout" && req.method === "POST") return json(await doLogout());
       if (p === "/api/projects") return json(await listProjects());
+      if (p === "/api/projects/delete" && req.method === "POST") { const b = await req.json(); const r = await deleteProject(String(b.key || ""), String(b.path || "")); return json(r, r.error ? 409 : 200); }
+      if (p === "/api/projects/merge" && req.method === "POST") { const b = await req.json(); const r = await mergeProject(String(b.from || ""), String(b.fromPath || ""), String(b.into || ""), String(b.intoPath || "")); return json(r, r.error ? 409 : 200); }
       if (p === "/api/sessions") return json(await listSessions(q.get("key") || ""));
       if (p === "/api/recent") {
         const lim = Math.min(Number(q.get("limit") || 60), 200);
-        const all: any[] = [];
-        for (const proj of await listProjects()) {
-          for (const s of await listSessions(proj.key, 30))
-            all.push({ ...s, project: proj.key, projectName: proj.name, projectPath: proj.path });
+        // the full listing touches every transcript: shared by every poller for a few seconds
+        if (!recentAll || Date.now() - recentAll.at > 5_000) {
+          const list: any[] = [];
+          for (const proj of await listProjects()) {
+            for (const s of await listSessions(proj.key, 30))
+              if (!isDeskId(s.id, s)) list.push({ ...s, project: proj.key, projectName: proj.name, projectPath: proj.path });
+          }
+          recentAll = { at: Date.now(), v: list };
         }
-        return json(all.sort((a, b) => b.mtime - a.mtime).slice(0, lim));
+        const all = recentAll.v.slice();
+        const h = await homeData();
+        const runIds = new Set(h.running.map((r: any) => r.id)), needIds = new Set(h.needs.map((n: any) => n.id));
+        for (const r of running.values()) runIds.add(r.id);
+        const { items, offline } = await mergedRecent(all.sort((a, b) => b.mtime - a.mtime).slice(0, lim).map((s) => ({ ...s, running: runIds.has(s.id), needs: needIds.has(s.id) })), lim);
+        // an array has no room for a flag: a cloud that could not be reached is said in a header
+        const res = json(items);
+        if (offline) res.headers.set("x-cloud-offline", "1");
+        return res;
       }
       if (p === "/api/session") {
         const file = join(PROJECTS_DIR, q.get("key") || "", (q.get("id") || "") + ".jsonl");
@@ -1568,8 +2615,12 @@ async function route(req: Request): Promise<Response> {
         const raw = await readFile(file, "utf8");
         const lines = raw.split("\n").filter(Boolean);
         const out = normalizeTranscript(lines);
-        const custom = customTitles.get(q.get("id") || "");
+        const custom = customTitles.get(q.get("id") || ""), auto = autoTitles.get(q.get("id") || "");
         if (custom) { out.meta.title = custom; (out.meta as any).named = true; }
+        else if (auto) { out.meta.title = auto.title; (out.meta as any).titledAt = auto.at; }
+        (out.meta as any).provider = providerOf(out.meta.model);
+        (out.meta as any).qwenUsage = qwenSpend.get(q.get("id") || "") || null;
+        (out.meta as any).archived = archiver.isArchived(q.get("id") || "");
         // where a follower should start: the bytes up to the last complete line
         const cut = raw.lastIndexOf("\n");
         return json({ ...out, offset: cut >= 0 ? Buffer.byteLength(raw.slice(0, cut + 1)) : 0 });
@@ -1584,10 +2635,14 @@ async function route(req: Request): Promise<Response> {
         const dims = state?.dimensions ? Object.entries(state.dimensions).map(([k, v]: any) => ({ name: k, pct: Number(v.pct) || 0, tbd: v.tbd_count || 0, updated: v.last_updated })) : [];
         return json({ versions, dims, generated: state?.generated_at || null, mtime: st?.mtimeMs || 0, installed: existsSync(join(CLAUDE_DIR, "LIFEOS")) });
       }
-      if (p === "/api/live") return json({ now: Date.now(), sessions: lastLive, events: EVENTS.slice(-40) });
-      if (p === "/api/live/takeover" && req.method === "POST") {
-        const { pid, id } = await req.json().catch(() => ({}) as any);
-        return json(await takeover(Number(pid), String(id || "")));
+      if (p === "/api/home") return json(await mergedHome());
+      if (p === "/api/archive/status") return json({ enabled: process.env.BRIDGE_ARCHIVE === "1", ...(await archiver.status()) });
+      if (p === "/api/jobs") {
+        const id = q.get("id") || "";
+        const r = runFor(id);
+        if (!r) return json({ running: false, started: 0, elapsed: 0, step: "", jobs: [] });
+        const v = await runView(r);
+        return json({ running: true, started: v.started, elapsed: v.elapsed, step: v.step, jobs: v.jobs });
       }
       if (p === "/api/notify" && req.method === "POST") {
         const { title, subtitle, body } = await req.json().catch(() => ({}) as any);
@@ -1752,14 +2807,15 @@ async function route(req: Request): Promise<Response> {
         return json({ path: abs, parent: atRoot ? null : dirname(abs), entries, roots: ROOTS });
       }
       if (p === "/api/file") {
-        const abs = guard(q.get("path") || "");
+        const sid = q.get("session") || "";
+        const abs = await guardFor(q.get("path") || "", sid);
         if (!abs) return json({ error: "outside your Bridge folders — add it in Files" }, 403);
         if (isSensitive(abs)) return json({ path: abs, blocked: true, text: "🔒 Blocked by Bridge — this path may hold credentials." });
         const st = await stat(abs).catch(() => null);
         if (!st || st.isDirectory()) return json({ error: "not a file" }, 404);
         const ext = extname(abs).toLowerCase();
-        if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf"].includes(ext))
-          return json({ path: abs, size: st.size, binary: true, url: "/api/raw?path=" + encodeURIComponent(abs), ext });
+        if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ...Object.keys(VIDEO_TYPES)].includes(ext))
+          return json({ path: abs, size: st.size, binary: true, url: "/api/raw?path=" + encodeURIComponent(abs) + (sid ? "&session=" + encodeURIComponent(sid) : ""), ext });
         if (st.size > 800_000) return json({ path: abs, size: st.size, text: "File too large to preview (" + Math.round(st.size / 1024) + " KB).", lang: "text" });
         return json({ path: abs, size: st.size, mtime: st.mtimeMs, lang: LANGS[ext] || "text", text: await readFile(abs, "utf8") });
       }
@@ -1787,9 +2843,18 @@ async function route(req: Request): Promise<Response> {
         return json({ ok: true, size: st.size, mtime: st.mtimeMs });
       }
       if (p === "/api/raw") {
-        const abs = guard(q.get("path") || "");
+        const abs = await guardFor(q.get("path") || "", q.get("session") || "");
         if (!abs || isSensitive(abs)) return new Response("blocked", { status: 403 });
-        return new Response(Bun.file(abs));
+        const st = await stat(abs).catch(() => null);
+        if (!st || st.isDirectory()) return new Response("not a file", { status: 404 });
+        const ext = extname(abs).toLowerCase();
+        // a page or SVG opened straight from this URL must not run as Bridge itself: it gets an opaque origin, like the preview iframe
+        const h: Record<string, string> = { "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" };
+        if ([".html", ".htm", ".svg", ".xhtml"].includes(ext)) h["Content-Security-Policy"] = "sandbox allow-scripts";
+        // videos: an explicit type, and Range (206/416) is answered by Bun itself because the body stays a Bun.file — seeking and Safari need it
+        if (VIDEO_TYPES[ext]) { h["Content-Type"] = VIDEO_TYPES[ext]; if (!req.headers.get("range")) h["Accept-Ranges"] = "bytes"; }   // Bun adds it to a 206 itself
+        if (q.get("download")) h["Content-Disposition"] = 'attachment; filename="' + basename(abs).replace(/["\\\r\n]/g, "_") + '"';
+        return new Response(Bun.file(abs), { headers: h });
       }
       if (p === "/api/open" && req.method === "POST") {
         const { path } = await req.json();
@@ -1817,6 +2882,26 @@ async function route(req: Request): Promise<Response> {
         return json(hits.sort((a, b) => b.mtime - a.mtime));
       }
 
+      if (p === "/api/secrets" && req.method === "GET") {
+        return json({ secrets: await secrets.list(q.get("cwd") || "") });
+      }
+      if (p === "/api/secrets" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}) as any);
+        const name = String(b.name || "").trim(), scope: Scope = b.scope === "project" ? "project" : "global";
+        try {
+          const r = await secrets.set(name, String(b.value ?? ""), scope, (String(b.cwd || "").startsWith("/") ? resolve(String(b.cwd)) : ""));
+          logRow({ ts: Date.now(), kind: "secret.set", msg: name + " (" + scope + ") " + r.hint, cwd: scope === "project" ? String(b.cwd || "") : undefined });
+          return json({ ok: true, ...r });
+        } catch (e: any) { return json({ error: String(e?.message || e) }, 400); }
+      }
+      if (p === "/api/secrets/remove" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}) as any);
+        const name = String(b.name || "").trim(), scope: Scope = b.scope === "project" ? "project" : "global";
+        if (secrets.check(name)) return json({ error: "bad name" }, 400);
+        await secrets.remove(name, scope, (String(b.cwd || "").startsWith("/") ? resolve(String(b.cwd)) : ""), b.project ? String(b.project) : undefined);
+        logRow({ ts: Date.now(), kind: "secret.remove", msg: name + " (" + scope + ")" });
+        return json({ ok: true });
+      }
       if (p === "/api/rename" && req.method === "POST") {
         const { id, title } = await req.json();
         if (!id || typeof id !== "string") return json({ error: "id required" }, 400);
@@ -1825,26 +2910,28 @@ async function route(req: Request): Promise<Response> {
         return json({ ok: true, id, title: t, named: !!t });
       }
       if (p === "/api/abort" && req.method === "POST") {
-        const { sessionId } = await req.json();
+        const { sessionId: asked } = await req.json();
+        const sessionId = runFor(String(asked || ""))?.id || asked;   // a forked id finds its run
         const c = live.get(sessionId);
         // same gesture as Ctrl+C in the terminal: interrupt first, only then insist
         if (c) {
           c.kill("SIGINT");
-          const pid = c.pid;
-          setTimeout(() => { try { if (live.get(sessionId) === c) c.kill("SIGTERM"); } catch {} }, 1500);
-          setTimeout(() => { try { if (pid && live.get(sessionId) === c) process.kill(pid, "SIGKILL"); } catch {} }, 4000);
-          live.delete(sessionId); running.delete(sessionId);
-          logRow({ ts: Date.now(), kind: "turn.stop", msg: running.get(sessionId)?.prompt || "turn interrupted", outcome: "interrupted", session: sessionId, cwd: running.get(sessionId)?.cwd });
+          const pid = c.pid, gone = () => c.exitCode !== null || c.signalCode !== null;
+          setTimeout(() => { try { if (!gone()) c.kill("SIGTERM"); } catch {} }, 1500);
+          setTimeout(() => { try { if (pid && !gone()) process.kill(pid, "SIGKILL"); } catch {} }, 4000);
+          const r = running.get(sessionId);
+          logRow({ ts: Date.now(), kind: "turn.stop", msg: r?.prompt || "turn interrupted", outcome: "interrupted", session: sessionId, cwd: r?.cwd });
+          stopped.add(sessionId); live.delete(sessionId); running.delete(sessionId); homeCache = null;
         }
         return json({ ok: !!c });
       }
 
       if (p === "/api/chat" && req.method === "POST") {
         const body = await req.json();
+        let closed = false;
         const stream = new ReadableStream({
           start(ctrl) {
             const enc = new TextEncoder();
-            let closed = false;
             const send = (o: any) => {
               if (closed) return;
               try { ctrl.enqueue(enc.encode("data: " + JSON.stringify(o) + "\n\n")); } catch { closed = true; }
@@ -1853,11 +2940,13 @@ async function route(req: Request): Promise<Response> {
             // drops an idle connection at 255s. A tick every 20s is what lets a long fan-out
             // finish and report back into the same turn instead of dying half-way.
             const beat = setInterval(() => send({ t: "ping", ts: Date.now() }), 20_000);
+            // the page going away does not stop the turn: it keeps running and can be re-attached with /api/follow
             runClaude(body, send, () => {
               clearInterval(beat);
               if (!closed) { closed = true; try { ctrl.close(); } catch {} }
-            });
+            }, () => !closed);
           },
+          cancel() { closed = true; },
         });
         return new Response(stream, {
           headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" },

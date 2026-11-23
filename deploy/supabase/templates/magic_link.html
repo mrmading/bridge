@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#05070b;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#05070b;padding:40px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:440px;background:#0b0f17;border:1px solid #1c2633;border-radius:16px;">
+        <tr><td style="padding:32px 32px 8px 32px;">
+          <div style="display:inline-block;width:40px;height:40px;line-height:40px;text-align:center;border-radius:10px;background:#000;border:1px solid #2a5f8f;color:#7fd0ff;font:900 22px Menlo,Consolas,monospace;">B</div>
+          <h1 style="margin:24px 0 8px 0;color:#e8eef6;font:600 22px -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">Sign in to Bridge</h1>
+          <p style="margin:0 0 24px 0;color:#8a98aa;font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">Tap the button to open Bridge on this device. The link works once and expires in an hour.</p>
+          <a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#4aa8ff;color:#00111f;text-decoration:none;padding:13px 22px;border-radius:10px;font:600 15px -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">Open Bridge</a>
+        </td></tr>
+        <tr><td style="padding:24px 32px 32px 32px;">
+          <p style="margin:0 0 8px 0;color:#8a98aa;font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">Signing in from the Home Screen app? Type this code instead:</p>
+          <div style="color:#e8eef6;font:700 26px/1.2 Menlo,Consolas,monospace;letter-spacing:6px;">{{ .Token }}</div>
+        </td></tr>
+      </table>
+      <p style="max-width:440px;margin:16px auto 0 auto;color:#4f5b6b;font:12px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">You got this because someone asked to sign in to Bridge as {{ .Email }}. If it wasn't you, ignore it.</p>
+    </td></tr>
+  </table>
+</body>
+</html>

@@ -1,0 +1,14 @@
+import { expect, test } from "bun:test";
+import { applyDiscount, cartTotal } from "./cart";
+
+test("cartTotal sums price × qty", () => {
+  expect(cartTotal([{ name: "tea", cents: 250, qty: 2 }, { name: "cup", cents: 1000, qty: 1 }])).toBe(1500);
+});
+
+test("SAVE10 takes 10% off", () => {
+  expect(applyDiscount(10000, "SAVE10")).toBe(9000);
+});
+
+test("unknown codes are ignored", () => {
+  expect(applyDiscount(10000, "BOGUS")).toBe(10000);
+});

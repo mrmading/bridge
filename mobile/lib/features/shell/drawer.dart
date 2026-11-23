@@ -1,0 +1,446 @@
+/// The sidebar, Vellum-style: Paquito (opens the hub with projects, files, agents and connectors) and a
+/// new-chat button, Search, Inbox, then Chats (working now with a pulse and a live timer, waiting ones
+/// flagged, the rest by day) and the account footer.
+library;
+
+import 'package:flutter/material.dart';
+
+import '../../core/chat_tidy.dart';
+import '../../core/models.dart';
+import '../../core/nav.dart';
+import '../../core/store.dart';
+import '../../core/theme.dart';
+import '../../widgets/bridge.dart';
+import '../../widgets/common.dart';
+import '../projects/projects_screen.dart';
+import '../search/search_screen.dart';
+import '../session/session_utils.dart';
+import '../settings/settings_screen.dart';
+import '../talk/talk_screen.dart';
+
+class AppDrawer extends StatelessWidget {
+  const AppDrawer({super.key, this.docked = false});
+  /// Always-visible sidebar on wide windows: no close button, a hairline instead of a shadow.
+  final bool docked;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final store = AppStore.instance;
+    final nav = Nav.instance;
+    final body = ListenableBuilder(
+        listenable: Listenable.merge([store, nav]),
+        builder: (context, _) => SafeArea(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+              child: Row(children: [
+                const BrandMark(),
+                const SizedBox(width: 10),
+                const Wordmark(),
+                const Spacer(),
+                if (!docked) IconButton(tooltip: 'Close', onPressed: () => Navigator.of(context).pop(), icon: Icon(Icons.close_rounded, color: t.muted, size: 20)),
+                if (docked) const SizedBox(height: 40),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+              child: Row(children: [
+                Expanded(child: _PaquitoPill(on: const {RootView.home, RootView.projects, RootView.files, RootView.agents}.contains(nav.view), onTap: () => nav.go(RootView.home))),
+                const SizedBox(width: 8),
+                _RoundIcon(icon: Icons.add_rounded, tooltip: 'New thread', onTap: () => nav.newChat()),
+              ]),
+            ),
+            _NavItem(icon: Icons.search_rounded, label: 'Search', onTap: () => nav.push(const SearchScreen())),
+            _NavItem(icon: Icons.inbox_outlined, label: 'Inbox', on: nav.view == RootView.inbox, badge: store.waitingCount, onTap: () => nav.go(RootView.inbox)),
+            const SizedBox(height: 4),
+            Expanded(child: _Chats(store: store, current: nav.view == RootView.chat ? nav.chat?.id : null)),
+            _Footer(store: store),
+          ]),
+        ),
+    );
+    if (docked) {
+      return Container(
+        width: 288,
+        decoration: BoxDecoration(color: t.sunken, border: Border(right: BorderSide(color: t.border))),
+        child: Material(type: MaterialType.transparency, child: body),
+      );
+    }
+    return Drawer(
+      width: 304,
+      backgroundColor: t.sunken,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(),
+      child: body,
+    );
+  }
+}
+
+/// Starts a chat with the assistant: "Paquito", labelled Chief of Staff (the name comes from the server).
+class PaquitoButton extends StatelessWidget {
+  const PaquitoButton({super.key, required this.onTap, this.label = 'Chief of Staff'});
+  final VoidCallback onTap;
+  final String label;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final name = AppStore.instance.boot?.assistant ?? '';
+    return DecoratedBox(
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: t.accent.withValues(alpha: .28), blurRadius: 22, offset: const Offset(0, 6))]),
+      child: Material(
+        color: t.accent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(mouseCursor: hand, 
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: SizedBox(
+            height: 52,
+            child: Row(children: [
+              const SizedBox(width: 12),
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: t.accentFg.withValues(alpha: .16)),
+                child: Icon(Icons.auto_awesome_rounded, color: t.accentFg, size: 16),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(name.isEmpty ? 'Paquito' : name, style: TextStyle(color: t.accentFg, fontSize: 15.5, fontWeight: FontWeight.w700, height: 1.15)),
+                  Text(label, style: TextStyle(color: t.accentFg.withValues(alpha: .78), fontSize: 12, fontWeight: FontWeight.w500, height: 1.2)),
+                ]),
+              ),
+              Icon(Icons.edit_square, color: t.accentFg.withValues(alpha: .85), size: 18),
+              const SizedBox(width: 14),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The assistant's pill at the top of the sidebar: opens the Paquito hub (Home).
+class _PaquitoPill extends StatelessWidget {
+  const _PaquitoPill({required this.onTap, this.on = false});
+  final VoidCallback onTap;
+  final bool on;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final name = AppStore.instance.boot?.assistant ?? '';
+    return Material(
+      color: on ? t.accent : t.accent.withValues(alpha: .85),
+      shape: const StadiumBorder(),
+      child: InkWell(mouseCursor: hand,
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          height: 44,
+          child: Row(children: [
+            const SizedBox(width: 8),
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: t.accentFg.withValues(alpha: .16)),
+              child: Icon(Icons.auto_awesome_rounded, color: t.accentFg, size: 15),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: Text(name.isEmpty ? 'Paquito' : name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.accentFg, fontSize: 15.5, fontWeight: FontWeight.w700))),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoundIcon extends StatelessWidget {
+  const _RoundIcon({required this.icon, required this.tooltip, required this.onTap});
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: t.accentSoft,
+        shape: const CircleBorder(),
+        child: InkWell(mouseCursor: hand, customBorder: const CircleBorder(), onTap: onTap, child: SizedBox(width: 44, height: 44, child: Icon(icon, color: t.accent, size: 22))),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem({required this.icon, required this.label, required this.onTap, this.on = false, this.badge = 0});
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool on;
+  final int badge;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Material(
+        color: on ? t.active : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(mouseCursor: hand, 
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: SizedBox(
+            height: 44,
+            child: Row(children: [
+              const SizedBox(width: 12),
+              Icon(icon, size: 20, color: on ? t.accent : t.muted),
+              const SizedBox(width: 12),
+              Expanded(child: Text(label, style: TextStyle(color: on ? t.fg : t.muted, fontSize: 15, fontWeight: FontWeight.w500))),
+              if (badge > 0)
+                Container(
+                  constraints: const BoxConstraints(minWidth: 20),
+                  height: 20,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(color: t.warn, borderRadius: BorderRadius.circular(10)),
+                  child: Text('$badge', style: const TextStyle(color: Color(0xFF111111), fontSize: 11.5, fontWeight: FontWeight.w800)),
+                ),
+              const SizedBox(width: 12),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Chats extends StatelessWidget {
+  const _Chats({required this.store, required this.current});
+  final AppStore store;
+  final String? current;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final running = store.home.running;
+    final needs = store.home.needs;
+    final busy = {...running.map((r) => r.id), ...needs.map((n) => n.id)};
+    final groups = <String, List<SessionMeta>>{};
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    for (final s in tidyChats(store.recent)) {
+      if (busy.contains(s.id)) continue;
+      final d = DateTime.fromMillisecondsSinceEpoch(s.mtime);
+      final diff = today.difference(DateTime(d.year, d.month, d.day)).inDays;
+      final g = diff <= 0 ? 'Today' : diff == 1 ? 'Yesterday' : diff < 7 ? 'This week' : 'Earlier';
+      (groups[g] ??= []).add(s);
+    }
+    String cwdOf(String id) {
+      for (final s in store.recent) {
+        if (s.id == id) return s.cwd.isNotEmpty ? s.cwd : s.projectPath;
+      }
+      return '';
+    }
+
+    Widget header(String label, {Widget? lead}) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 16, 4),
+          child: Row(children: [
+            if (lead != null) ...[lead, const SizedBox(width: 2)],
+            Text(label.toUpperCase(), style: TextStyle(color: t.faint, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: .6)),
+          ]),
+        );
+
+    // the five most recent projects, right in the menu; a pulse while one of their threads works
+    final projs = [...store.projects.where((p) => p.exists && isProjectPath(p.path))]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
+    final top = projs.take(5).toList();
+    final busyKeys = {...running.map((r) => r.key)};
+    return ListView(padding: const EdgeInsets.only(bottom: 12), children: [
+      if (top.isNotEmpty) ...[
+        header('Projects'),
+        for (final p in top)
+          _ChatItem(
+            title: top.where((q) => q.name == p.name).length > 1 ? '${p.name} · ${baseName(p.path.substring(0, p.path.lastIndexOf('/').clamp(0, p.path.length)))}' : p.name,
+            lead: ProjectIcon(p.name, size: 20),
+            dot: busyKeys.contains(p.key) ? PulseDot(color: t.accent, size: 7) : null,
+            trailing: busyKeys.contains(p.key) ? null : Text('${p.sessions}', style: TextStyle(color: t.faint, fontSize: 11.5)),
+            onTap: () => Nav.instance.push(ProjectScreen(project: p)),
+          ),
+        _ChatItem(title: 'All projects', onTap: () => Nav.instance.go(RootView.projects)),
+      ],
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 16, 2),
+        child: Row(children: [
+          Icon(Icons.chat_bubble_outline_rounded, size: 15, color: t.muted),
+          const SizedBox(width: 8),
+          Text('Threads', style: TextStyle(color: t.muted, fontSize: 14, fontWeight: FontWeight.w600)),
+        ]),
+      ),
+      if (running.isNotEmpty || needs.isNotEmpty) header('Working now', lead: PulseDot(color: t.accent, size: 6)),
+      for (final n in needs)
+        _ChatItem(
+          title: n.title,
+          cloud: n.computer == 'cloud',
+          on: current == n.id,
+          dot: PulseDot(color: t.warn, size: 7),
+          trailing: Text('needs you', style: TextStyle(color: t.warn, fontSize: 11.5, fontWeight: FontWeight.w600)),
+          onTap: () => openSession(key: n.key, id: n.id, cwd: cwdOf(n.id), title: n.title, focus: true, computer: n.computer),
+        ),
+      for (final r in running)
+        _ChatItem(
+          title: r.title,
+          cloud: r.computer == 'cloud',
+          model: store.providerShort(store.providerOf(r.id)),
+          on: current == r.id,
+          dot: PulseDot(color: t.accent, size: 7),
+          trailing: r.started > 0 ? Elapsed(r.started, style: TextStyle(color: t.faint, fontSize: 11.5, fontFeatures: const [FontFeature.tabularFigures()])) : null,
+          onTap: () => openSession(key: r.key, id: r.id, cwd: r.cwd, title: r.title, computer: r.computer),
+        ),
+      for (final g in const ['Today', 'Yesterday', 'This week', 'Earlier'])
+        if (groups[g]?.isNotEmpty == true) ...[
+          header(g),
+          for (final s in groups[g]!.take(g == 'Earlier' ? 20 : 40))
+            _ChatItem(
+              title: s.title,
+              cloud: s.computer == 'cloud',
+              model: store.providerShort(store.providerOf(s.id)),
+              on: current == s.id,
+              archived: s.archived,
+              onTap: () => openSession(key: s.key, id: s.id, cwd: s.cwd.isNotEmpty ? s.cwd : s.projectPath, title: s.title, computer: s.computer),
+            ),
+        ],
+      if (store.recent.isEmpty && running.isEmpty && needs.isEmpty)
+        Padding(padding: const EdgeInsets.fromLTRB(20, 16, 20, 0), child: Text('Your threads will show up here.', style: TextStyle(color: t.faint, fontSize: 13))),
+    ]);
+  }
+}
+
+class _ChatItem extends StatelessWidget {
+  const _ChatItem({required this.title, required this.onTap, this.on = false, this.dot, this.trailing, this.cloud = false, this.model = '', this.lead, this.archived = false});
+  /// a project's letter tile, in the Projects section
+  final Widget? lead;
+  final bool cloud;
+  /// the thread's screenshots were turned into text (server archive policy)
+  final bool archived;
+  /// An open model's short name ("Qwen 3.8"); '' for Claude.
+  final String model;
+  final String title;
+  final VoidCallback onTap;
+  final bool on;
+  final Widget? dot;
+  final Widget? trailing;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Material(
+        color: on ? t.active : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(mouseCursor: hand, 
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: SizedBox(
+            height: 40,
+            child: Row(children: [
+              SizedBox(width: dot == null ? 12 : 4),
+              if (dot != null) ...[dot!, const SizedBox(width: 2)],
+              if (lead != null) ...[lead!, const SizedBox(width: 10)],
+              Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: on ? t.fg : t.muted, fontSize: 14))),
+              if (cloud) ...[const SizedBox(width: 6), const CloudBadge(size: 13)],
+              if (archived) ...[const SizedBox(width: 6), const ArchivedChip()],
+              if (model.isNotEmpty) ...[const SizedBox(width: 6), Tag(model, kind: 'think')],
+              if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+              const SizedBox(width: 12),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Footer extends StatelessWidget {
+  const _Footer({required this.store});
+  final AppStore store;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final name = store.displayName.isEmpty ? 'You' : store.displayName;
+    final a = store.auth;
+    final sub = a.loggedIn ? (a.subscriptionType.isNotEmpty ? '${cap1(a.subscriptionType)} plan' : (a.email.isNotEmpty ? a.email : 'Signed in')) : 'Not signed in';
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: t.border))),
+      padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
+      child: Row(children: [
+        Container(
+          width: 32,
+          height: 32,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [t.accent, t.think])),
+          child: Text(name[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.fg, fontSize: 14, fontWeight: FontWeight.w600)),
+            Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.faint, fontSize: 12)),
+          ]),
+        ),
+        IconButton(
+          tooltip: dark ? 'Light theme' : 'Dark theme',
+          onPressed: () => store.setTheme(dark ? ThemeMode.light : ThemeMode.dark),
+          icon: Icon(dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined, color: t.muted, size: 20),
+        ),
+        IconButton(tooltip: 'Settings', onPressed: () => Nav.instance.push(const SettingsScreen()), icon: Icon(Icons.settings_outlined, color: t.muted, size: 20)),
+      ]),
+    );
+  }
+}
+
+String cap1(String s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
+
+/// App bar for the root views: burger, title, and the Talk pill.
+class RootAppBar extends StatelessWidget implements PreferredSizeWidget {
+  const RootAppBar({super.key, this.title = '', this.actions = const []});
+  final String title;
+  final List<Widget> actions;
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return AppBar(
+      backgroundColor: Colors.transparent,
+      automaticallyImplyLeading: false,
+      leading: Nav.instance.docked ? null : IconButton(tooltip: 'Menu', onPressed: Nav.instance.openDrawer, icon: const Icon(Icons.menu_rounded)),
+      titleSpacing: Nav.instance.docked ? 20 : 4,
+      title: Text(title),
+      actions: [
+        ...actions,
+        Padding(
+          padding: const EdgeInsets.only(right: 10),
+          child: Material(
+            color: t.raised.withValues(alpha: .7),
+            shape: StadiumBorder(side: BorderSide(color: t.border)),
+            child: InkWell(mouseCursor: hand, 
+              customBorder: const StadiumBorder(),
+              onTap: () => openTalk(context),
+              child: Container(
+                height: 36,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.graphic_eq_rounded, size: 17, color: t.muted),
+                  const SizedBox(width: 6),
+                  Text('Talk', style: TextStyle(color: t.muted, fontSize: 13.5, fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}

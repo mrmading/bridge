@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/api.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
+import 'secret_card.dart';
 
 const _monoFamily = 'Menlo';
 const _monoFallback = ['SF Mono', 'Roboto Mono', 'monospace', 'Courier'];
@@ -18,11 +19,61 @@ const _monoFallback = ['SF Mono', 'Roboto Mono', 'monospace', 'Courier'];
 TextStyle mono(double size, Color color, {FontWeight? weight, double height = 1.4}) =>
     TextStyle(fontFamily: _monoFamily, fontFamilyFallback: _monoFallback, fontSize: size, color: color, fontWeight: weight, height: height);
 
-/// One row of the stream. [onChoice] receives a tapped ```choices option.
+/// `[screenshot archived: …]` / `[image archived: …]` — what the server's archive policy leaves where an
+/// image used to be. Returns (kind, description) for such a line, null for anything else.
+final _archivedNote = RegExp(r'^\[(screenshot|image) archived: ([\s\S]*)\]$');
+({String kind, String text})? archivedNote(String line) {
+  final m = _archivedNote.firstMatch(line.trim());
+  return m == null ? null : (kind: m.group(1)!, text: m.group(2)!.trim());
+}
+
+/// Splits text into its archived-image notes and the remaining lines.
+({List<({String kind, String text})> notes, String rest}) splitArchived(String text) {
+  final notes = <({String kind, String text})>[];
+  final rest = <String>[];
+  for (final line in text.split('\n')) {
+    final n = archivedNote(line);
+    if (n != null) {
+      notes.add(n);
+    } else {
+      rest.add(line);
+    }
+  }
+  return (notes: notes, rest: rest.join('\n').trim());
+}
+
+/// A muted, italic one-liner standing in for an archived image: "Screenshot · Login page with an error banner".
+class ArchivedImageLine extends StatelessWidget {
+  const ArchivedImageLine({super.key, required this.kind, required this.text});
+  final String kind, text;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(padding: const EdgeInsets.only(top: 2), child: Icon(Icons.image_not_supported_outlined, size: 14, color: t.faint)),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text.rich(
+            TextSpan(children: [
+              TextSpan(text: '${kind == 'image' ? 'Image' : 'Screenshot'} · ', style: TextStyle(color: t.faint, fontStyle: FontStyle.italic, fontSize: 13, fontWeight: FontWeight.w600)),
+              TextSpan(text: text, style: TextStyle(color: t.muted, fontStyle: FontStyle.italic, fontSize: 13, height: 1.35)),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+/// One row of the stream. [onChoice] receives a tapped ```choices option; [onSaveSecret] saves a
+/// token from a ```secret card (null: the cards are read-only).
 class MsgRow extends StatelessWidget {
-  const MsgRow({super.key, required this.msg, this.onChoice, this.queued = false});
+  const MsgRow({super.key, required this.msg, this.onChoice, this.onSaveSecret, this.queued = false});
   final Msg msg;
   final ValueChanged<String>? onChoice;
+  final SaveSecret? onSaveSecret;
   final bool queued;
 
   @override
@@ -30,7 +81,7 @@ class MsgRow extends StatelessWidget {
     final m = msg;
     final Widget row = switch (m.kind) {
       'user' => UserBubble(text: m.text, queued: queued),
-      'assistant' || 'agent_text' => AssistantText(msg: m, onChoice: onChoice),
+      'assistant' || 'agent_text' => AssistantText(msg: m, onChoice: onChoice, onSaveSecret: onSaveSecret),
       'thinking' => ThinkingRow(msg: m),
       'tool' => ToolCard(msg: m),
       'choices' => ChoiceChips(options: m.options, onChoice: onChoice),
@@ -55,20 +106,24 @@ class UserBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
+    // a pasted image the archive policy turned into text shows as a muted line under the bubble, not inside it
+    final split = splitArchived(stripBridgeBlock(text));
     return Padding(
       padding: const EdgeInsets.fromLTRB(48, 10, 14, 4),
       child: Align(
         alignment: Alignment.centerRight,
         child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: queued ? t.sunken : t.active,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: queued ? t.borderStrong : t.border),
+          if (split.rest.isNotEmpty || split.notes.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: queued ? t.sunken : t.active,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: queued ? t.borderStrong : t.border),
+              ),
+              child: SelectableText(split.rest, style: TextStyle(color: queued ? t.muted : t.fg, fontSize: 16, height: 1.4)),
             ),
-            child: SelectableText(stripBridgeBlock(text).trim(), style: TextStyle(color: queued ? t.muted : t.fg, fontSize: 16, height: 1.4)),
-          ),
+          for (final n in split.notes) Padding(padding: const EdgeInsets.only(top: 2, right: 4), child: ArchivedImageLine(kind: n.kind, text: n.text)),
           if (queued) Padding(padding: const EdgeInsets.only(top: 4, right: 4), child: Text('queued', style: mono(11, t.faint))),
         ]),
       ),
@@ -118,16 +173,21 @@ Future<void> openLink(String? href) async {
 }
 
 class AssistantText extends StatelessWidget {
-  const AssistantText({super.key, required this.msg, this.onChoice});
+  const AssistantText({super.key, required this.msg, this.onChoice, this.onSaveSecret, this.padding = const EdgeInsets.fromLTRB(16, 8, 16, 4)});
   final Msg msg;
   final ValueChanged<String>? onChoice;
+  /// Set only on the last assistant message of a finished turn; the follow-up goes via [onChoice].
+  final SaveSecret? onSaveSecret;
+  final EdgeInsets padding;
   @override
   Widget build(BuildContext context) {
-    // While streaming, a half-written ```choices block is just text; split once it is complete.
-    final split = msg.live ? (text: msg.text, options: const <String>[]) : splitChoices(msg.text);
+    // While streaming, a half-written ```choices or ```secret block is just text; split once complete.
+    final secrets = msg.live ? (text: msg.text, secrets: const <SecretRequest>[]) : splitSecrets(msg.text);
+    final split = msg.live ? (text: msg.text, options: const <String>[]) : splitChoices(secrets.text);
     final text = split.text.trim();
+    final canSave = onSaveSecret != null && onChoice != null;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      padding: padding,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (text.isNotEmpty)
           MarkdownBody(
@@ -136,12 +196,21 @@ class AssistantText extends StatelessWidget {
             styleSheet: bridgeMarkdown(context),
             onTapLink: (_, href, _) => openLink(href),
           ),
+        if (secrets.secrets.isNotEmpty)
+          SecretPrompt(
+            key: ValueKey('secrets-${msg.id}-${msg.hashCode}'),
+            requests: secrets.secrets,
+            onSave: canSave ? onSaveSecret : null,
+            onDone: canSave ? onChoice : null,
+          ),
         if (split.options.isNotEmpty) ChoiceChips(options: split.options, onChoice: onChoice),
       ]),
     );
   }
 }
 
+/// A decision the assistant asked for (a ```choices block): a warm card with one big button per
+/// option. Tapping sends the option as the next message.
 class ChoiceChips extends StatelessWidget {
   const ChoiceChips({super.key, required this.options, this.onChoice});
   final List<String> options;
@@ -149,17 +218,46 @@ class ChoiceChips extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.t;
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Wrap(spacing: 8, runSpacing: 8, children: [
-        for (final o in options)
-          ActionChip(
-            label: Text(o, style: TextStyle(color: t.accent, fontSize: 14, fontWeight: FontWeight.w600)),
-            backgroundColor: t.accentSoft,
-            materialTapTargetSize: MaterialTapTargetSize.padded,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: t.accent.withValues(alpha: .35))),
-            onPressed: onChoice == null ? null : () => onChoice!(o),
+    return Container(
+      margin: const EdgeInsets.only(top: 10, bottom: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: t.warnSoft.withValues(alpha: .55), borderRadius: BorderRadius.circular(14), border: Border.all(color: t.warn.withValues(alpha: .45))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8, left: 2),
+          child: Row(children: [
+            Icon(Icons.back_hand_outlined, size: 15, color: t.warn),
+            const SizedBox(width: 7),
+            Text(onChoice == null ? 'You were asked' : 'Your call', style: TextStyle(color: t.warn, fontSize: 13, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+        for (var i = 0; i < options.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Material(
+              color: t.raised,
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(mouseCursor: hand, 
+                borderRadius: BorderRadius.circular(10),
+                onTap: onChoice == null ? null : () => onChoice!(options[i]),
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 46),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: t.border)),
+                  child: Row(children: [
+                    Container(
+                      width: 22,
+                      height: 22,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(color: t.active, borderRadius: BorderRadius.circular(7)),
+                      child: Text('${i + 1}', style: TextStyle(color: t.fg, fontSize: 12, fontWeight: FontWeight.w700)),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(options[i], style: TextStyle(color: onChoice == null ? t.muted : t.fg, fontSize: 14.5, fontWeight: FontWeight.w600))),
+                  ]),
+                ),
+              ),
+            ),
           ),
       ]),
     );
@@ -182,7 +280,7 @@ class _ThinkingRowState extends State<ThinkingRow> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        InkWell(
+        InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(10),
           onTap: () => setState(() => _open = !_open),
           child: ConstrainedBox(
@@ -300,7 +398,7 @@ class _ToolCardState extends State<ToolCard> {
       child: Material(
         color: t.raised,
         borderRadius: BorderRadius.circular(12),
-        child: InkWell(
+        child: InkWell(mouseCursor: hand, 
           borderRadius: BorderRadius.circular(12),
           onTap: () => setState(() => _open = !_open),
           child: Container(
@@ -341,7 +439,9 @@ class _ToolCardState extends State<ToolCard> {
     } catch (_) {
       input = '${m.input}';
     }
-    var result = m.result?.content ?? '';
+    // archived screenshots come back as `[screenshot archived: …]` lines: shown as muted notes, not as raw result text
+    final split = splitArchived(m.result?.content ?? '');
+    var result = split.rest;
     final lines = result.split('\n');
     if (lines.length > 300) result = '${lines.take(300).join('\n')}\n… ${lines.length - 300} more lines';
     Widget block(String label, String text, Color color) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -360,7 +460,11 @@ class _ToolCardState extends State<ToolCard> {
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         block('INPUT', input, t.muted),
-        if (m.result != null) ...[
+        if (split.notes.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          for (final n in split.notes) ArchivedImageLine(kind: n.kind, text: n.text),
+        ],
+        if (m.result != null && (result.isNotEmpty || split.notes.isEmpty)) ...[
           const SizedBox(height: 10),
           block(m.result!.isError ? 'ERROR' : 'RESULT', result.isEmpty ? '(empty)' : result, m.result!.isError ? t.err : t.fg),
         ],
