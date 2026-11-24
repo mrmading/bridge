@@ -29,12 +29,17 @@ beforeAll(async () => {
   await thread(alpha, "22222222-2222-4222-8222-222222222222", "alpha two");
   await thread(beta, "33333333-3333-4333-8333-333333333333", "beta one");
   await thread(gamma, "44444444-4444-4444-8444-444444444444", "gamma one");
+  // a thread deeper inside beta, one in the home folder, and a folder with no threads yet
+  await mkdir(join(beta, "apps", "web"), { recursive: true });
+  await thread(join(beta, "apps", "web"), "55555555-5555-4555-8555-555555555555", "beta web");
+  await thread(home, "66666666-6666-4666-8666-666666666666", "home chat");
+  await mkdir(join(home, "work", "delta"), { recursive: true });
   const data = join(home, ".claude", "bridge");
   await mkdir(data, { recursive: true });
   await writeFile(join(data, "roots.json"), JSON.stringify([alpha, beta, gamma]));
   const port = 20000 + Math.floor(Math.random() * 20000);
   base = "http://127.0.0.1:" + port;
-  const env: Record<string, string> = { ...process.env as any, HOME: home, BRIDGE_PORT: String(port), BRIDGE_DATA: data };
+  const env: Record<string, string> = { ...process.env as any, HOME: home, BRIDGE_PORT: String(port), BRIDGE_DATA: data, BRIDGE_PROJECTS_BASE: join(home, "work") };
   delete env.BRIDGE_SUPABASE_URL; delete env.BRIDGE_SUPABASE_KEY;
   proc = Bun.spawn(["bun", "server.ts"], { cwd: import.meta.dir, env, stdout: "ignore", stderr: "ignore" });
   for (let i = 0; i < 100; i++) {
@@ -45,6 +50,15 @@ beforeAll(async () => {
 }, 20000);
 afterAll(async () => { proc?.kill(); await rm(home, { recursive: true, force: true }); });
 
+test("projects are the folders in the work folder: subfolder threads join their project, home chats join none", async () => {
+  const list = await projects();
+  expect(list.map((p) => p.name).sort()).toEqual(["alpha", "beta", "delta", "gamma"]);
+  expect(list.find((p) => p.name === "beta").sessions).toBe(2);
+  expect(list.find((p) => p.name === "delta").sessions).toBe(0);
+  const ids = ((await (await fetch(base + "/api/sessions?key=" + key(beta))).json()) as any[]).map((s) => s.id).sort();
+  expect(ids).toEqual(["33333333-3333-4333-8333-333333333333", "55555555-5555-4555-8555-555555555555"]);
+});
+
 test("merge moves every thread into the existing project, which keeps its own folder", async () => {
   const r = await post("/api/projects/merge", { from: key(alpha), fromPath: alpha, into: key(beta), intoPath: beta });
   expect(r.status).toBe(200);
@@ -52,11 +66,11 @@ test("merge moves every thread into the existing project, which keeps its own fo
   const list = await projects();
   expect(list.find((p) => p.path === alpha)).toBeUndefined();
   const b = list.find((p) => p.path === beta);
-  expect(b.sessions).toBe(3);
-  // the merged threads now resume in beta's folder
+  expect(b.sessions).toBe(4);
+  // the merged threads now resume in beta's folder; the one in beta/apps/web keeps its own
   const sessions = (await (await fetch(base + "/api/sessions?key=" + key(beta))).json()) as any[];
-  expect(sessions.length).toBe(3);
-  for (const s of sessions) expect(s.cwd).toBe(beta);
+  expect(sessions.length).toBe(4);
+  for (const s of sessions) expect(s.cwd.startsWith(beta)).toBe(true);
   // alpha's work folder is untouched; it is only gone from Bridge's folders
   expect(existsSync(alpha)).toBe(true);
   expect(await (await fetch(base + "/api/roots")).json()).toEqual([beta, gamma]);

@@ -7,7 +7,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rmdir, stat, unlink } from "node:fs/promises";
-import { existsSync, readdirSync, readFileSync, rmdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { Desktop, desktopConfig, mcpConfig, isDesktopTool, DESKTOP_PROTOCOL } from "./desktop.ts";
@@ -373,7 +373,76 @@ async function computeMeta(key: string, file: string): Promise<SessionMeta | nul
 
 /** BRIDGE_SCOPE limits a server to the projects under one folder (a second Bridge on the same machine, say) */
 const SCOPE = process.env.BRIDGE_SCOPE ? resolve(process.env.BRIDGE_SCOPE) : "";
+
+/* Projects are the folders inside the work folder: ~/Desktop/Cowork, or BRIDGE_PROJECTS_BASE (comma-separated).
+ * A thread belongs to the project folder its cwd sits in, however deep; a thread anywhere else is a home chat
+ * and belongs to no project. Paths compare by their real path, so /Users/x and a symlinked /home/x agree. */
+const realCache = new Map<string, string>();
+function real(p: string) {
+  let r = realCache.get(p);
+  if (r === undefined) { try { r = realpathSync(p); } catch { r = p; } realCache.set(p, r); }
+  return r;
+}
+let basesMemo: { raw: string; real: string }[] | null = null;
+function projectBases() {   // lazy: ~/Desktop is TCC-gated on macOS, so never touch it at import time
+  if (!basesMemo) basesMemo = (process.env.BRIDGE_PROJECTS_BASE || join(HOME, "Desktop", "Cowork"))
+    .split(",").map((s) => s.trim()).filter(Boolean).map((b) => ({ raw: resolve(b), real: real(resolve(b)) }));
+  return basesMemo;
+}
+/** the project folder a cwd belongs to, or "" for a home chat */
+function projectOf(cwd: string): string {
+  if (!cwd) return "";
+  const r = real(resolve(cwd));
+  for (const b of projectBases()) {
+    for (const [base, p] of [[b.real, r], [b.raw, resolve(cwd)]]) {
+      if (!p.startsWith(base + sep)) continue;
+      const seg = p.slice(base.length + 1).split(sep)[0];
+      return seg && !seg.startsWith(".") ? join(b.raw, seg) : "";
+    }
+  }
+  return "";
+}
+/** Every project: each folder in the work folder, with the threads of every transcript folder inside it. */
 async function listProjects() {
+  const groups = new Map<string, any>();
+  for (const d of await listThreadDirs()) {
+    if (!d.project) continue;
+    let g = groups.get(d.project);
+    if (!g) groups.set(d.project, g = { key: projectKey(d.project), path: d.project, name: basename(d.project), sessions: 0, lastActivity: 0, exists: existsSync(d.project), keys: [] as string[] });
+    g.sessions += d.sessions; g.lastActivity = Math.max(g.lastActivity, d.lastActivity); g.keys.push(d.key);
+  }
+  for (const b of projectBases()) {
+    for (const e of await readdir(b.raw, { withFileTypes: true }).catch(() => [])) {
+      if (!e.isDirectory() || e.name.startsWith(".")) continue;
+      const p = join(b.raw, e.name);
+      if (!groups.has(p)) groups.set(p, { key: projectKey(p), path: p, name: e.name, sessions: 0, lastActivity: 0, exists: true, keys: [] });
+    }
+  }
+  // a deleted or merged-away folder stays out of the list until a thread runs in it again
+  return [...groups.values()].filter((g) => g.sessions || !hiddenProjects.has(g.path))
+    .sort((a, b) => b.lastActivity - a.lastActivity || a.name.localeCompare(b.name));
+}
+const HIDDEN_PROJECTS_FILE = join(DATA_DIR, "hidden-projects.json");
+const hiddenProjects = new Set<string>((() => { try { return JSON.parse(readFileSync(HIDDEN_PROJECTS_FILE, "utf8")) || []; } catch { return []; } })());
+async function hideProject(path: string) {
+  if (!path) return;
+  hiddenProjects.add(resolve(path));
+  await Bun.write(HIDDEN_PROJECTS_FILE, JSON.stringify([...hiddenProjects], null, 2));
+}
+/** the transcript folders that make up a project key (a project spans every folder its threads ran in) */
+async function projectKeys(key: string): Promise<string[]> {
+  const g = (await projectsCached()).find((p) => p.key === key);
+  return g && g.keys.length ? g.keys : [key];
+}
+async function listProjectSessions(key: string) {
+  const all = (await Promise.all((await projectKeys(key)).map((k) => listSessions(k)))).flat();
+  return all.sort((a, b) => b.mtime - a.mtime).slice(0, 200);
+}
+/** how a thread lists its project: the work-folder project it belongs to, else its own folder */
+const projectView = (d: { project?: string; name: string; path: string }) =>
+  d.project ? { projectName: basename(d.project), projectPath: d.project } : { projectName: d.name, projectPath: d.path };
+/** Claude Code's transcript folders (one per cwd), each with the project it belongs to */
+async function listThreadDirs() {
   const dirs = await readdir(PROJECTS_DIR, { withFileTypes: true }).catch(() => []);
   const out: any[] = [];
   for (const d of dirs) {
@@ -397,7 +466,7 @@ async function listProjects() {
     if (projectHomes[d.name]) cwd = projectHomes[d.name];   // a project other projects were merged into keeps its own folder
     if (!cwd) cwd = "/" + d.name.replace(/^-/, "").split("-").join("/");
     if (SCOPE && cwd !== SCOPE && !cwd.startsWith(SCOPE + sep)) continue;
-    out.push({ key: d.name, path: cwd, name: basename(cwd) || cwd, sessions: files.length, lastActivity: latest, exists: existsSync(cwd) });
+    out.push({ key: d.name, path: cwd, name: basename(cwd) || cwd, sessions: files.length, lastActivity: latest, exists: existsSync(cwd), project: projectOf(cwd) });
   }
   return out.sort((a, b) => b.lastActivity - a.lastActivity);
 }
@@ -419,7 +488,29 @@ async function dropRoot(path: string) {
   await Bun.write(ROOTS_FILE, JSON.stringify(next, null, 2));
   ROOTS = next;
 }
+/** Delete or merge a whole project: every transcript folder inside it, then keep the folder out of the list. */
 async function deleteProject(key: string, path: string) {
+  if (!validKey(key)) return { error: "bad project" };
+  const keys = await projectKeys(key);
+  if (keys.some(projectBusy)) return { error: "A thread in this project is still working. Stop it first." };
+  let threads = 0, trash = "";
+  for (const k of keys) { const r: any = await deleteThreadDir(k, path); if (r.error) return r; threads += r.threads; trash = r.trash || trash; }
+  if (projectOf(path)) await hideProject(path);
+  projectsCache = null;
+  return { ok: true, threads, trash };
+}
+async function mergeProject(from: string, fromPath: string, into: string, intoPath: string) {
+  if (!validKey(from) || !validKey(into) || !intoPath) return { error: "bad project" };
+  if (from === into) return { error: "Pick a different project to merge into." };
+  const keys = (await projectKeys(from)).filter((k) => k !== into);
+  if ([...keys, into].some(projectBusy)) return { error: "A thread in one of these projects is still working. Stop it first." };
+  let threads = 0;
+  for (const k of keys) { const r: any = await mergeThreadDir(k, fromPath, into, intoPath); if (r.error) return r; threads += r.threads; }
+  if (projectOf(fromPath)) await hideProject(fromPath);
+  projectsCache = null;
+  return { ok: true, threads };
+}
+async function deleteThreadDir(key: string, path: string) {
   if (!validKey(key)) return { error: "bad project" };
   if (projectBusy(key)) return { error: "A thread in this project is still working. Stop it first." };
   const dir = join(PROJECTS_DIR, key);
@@ -435,7 +526,7 @@ async function deleteProject(key: string, path: string) {
   logRow({ ts: Date.now(), kind: "project.delete", msg: basename(path) || key, outcome: moved + " threads to trash", cwd: path });
   return { ok: true, threads: moved, trash };
 }
-async function mergeProject(from: string, fromPath: string, into: string, intoPath: string) {
+async function mergeThreadDir(from: string, fromPath: string, into: string, intoPath: string) {
   if (!validKey(from) || !validKey(into) || !intoPath) return { error: "bad project" };
   if (from === into) return { error: "Pick a different project to merge into." };
   if (projectBusy(from) || projectBusy(into)) return { error: "A thread in one of these projects is still working. Stop it first." };
@@ -766,7 +857,7 @@ async function scopeDirs(scope: string, key: string, cwd: string): Promise<strin
   if (scope === "project" && key) return [join(PROJECTS_DIR, key)];
   if (scope === "folder" && cwd) {
     const abs = resolve(cwd);
-    return (await listProjects())
+    return (await listThreadDirs())
       .filter((p) => p.path === abs || p.path.startsWith(abs + sep))
       .map((p) => join(PROJECTS_DIR, p.key));
   }
@@ -1538,9 +1629,9 @@ let recentCache: { at: number; v: any[] } | null = null;
 async function recentSessions(since: number) {
   if (!recentCache || Date.now() - recentCache.at > 8_000) {
     const all: any[] = [];
-    for (const proj of await listProjects()) {
+    for (const proj of await listThreadDirs()) {
       if (proj.lastActivity < Date.now() - 8 * 86400_000) continue;
-      for (const s of await listSessions(proj.key, 80)) all.push({ ...s, project: proj.key, projectName: proj.name, projectPath: proj.path });
+      for (const s of await listSessions(proj.key, 80)) all.push({ ...s, project: proj.key, ...projectView(proj) });
     }
     recentCache = { at: Date.now(), v: all.sort((a, b) => b.mtime - a.mtime) };
   }
@@ -2587,15 +2678,15 @@ async function route(req: Request): Promise<Response> {
       if (p === "/api/projects") return json(await listProjects());
       if (p === "/api/projects/delete" && req.method === "POST") { const b = await req.json(); const r = await deleteProject(String(b.key || ""), String(b.path || "")); return json(r, r.error ? 409 : 200); }
       if (p === "/api/projects/merge" && req.method === "POST") { const b = await req.json(); const r = await mergeProject(String(b.from || ""), String(b.fromPath || ""), String(b.into || ""), String(b.intoPath || "")); return json(r, r.error ? 409 : 200); }
-      if (p === "/api/sessions") return json(await listSessions(q.get("key") || ""));
+      if (p === "/api/sessions") return json(await listProjectSessions(q.get("key") || ""));
       if (p === "/api/recent") {
         const lim = Math.min(Number(q.get("limit") || 60), 200);
         // the full listing touches every transcript: shared by every poller for a few seconds
         if (!recentAll || Date.now() - recentAll.at > 5_000) {
           const list: any[] = [];
-          for (const proj of await listProjects()) {
+          for (const proj of await listThreadDirs()) {
             for (const s of await listSessions(proj.key, 30))
-              if (!isDeskId(s.id, s)) list.push({ ...s, project: proj.key, projectName: proj.name, projectPath: proj.path });
+              if (!isDeskId(s.id, s)) list.push({ ...s, project: proj.key, ...projectView(proj) });
           }
           recentAll = { at: Date.now(), v: list };
         }
@@ -2736,9 +2827,9 @@ async function route(req: Request): Promise<Response> {
         const dayStart = new Date(new Date().toDateString()).getTime();
         const todayLog = LOG.filter((r) => r.ts >= dayStart);
         const sessions: any[] = [];
-        for (const proj of await listProjects()) {
+        for (const proj of await listThreadDirs()) {
           for (const s of await listSessions(proj.key, 40))
-            if (s.mtime >= dayStart) sessions.push({ ...s, project: proj.key, projectName: proj.name, projectPath: proj.path });
+            if (s.mtime >= dayStart) sessions.push({ ...s, project: proj.key, ...projectView(proj) });
         }
         sessions.sort((a, b) => b.mtime - a.mtime);
         // resolve session ids in the log to a readable title
@@ -2870,12 +2961,12 @@ async function route(req: Request): Promise<Response> {
       if (p === "/api/search") {
         const term = (q.get("q") || "").toLowerCase();
         if (term.length < 2) return json([]);
-        const projects = await listProjects();
+        const projects = await listThreadDirs();
         const hits: any[] = [];
         for (const proj of projects.slice(0, 40)) {
           for (const s of await listSessions(proj.key, 60)) {
             if ((s.title + " " + s.preview).toLowerCase().includes(term))
-              hits.push({ ...s, project: proj.name, projectPath: proj.path });
+              hits.push({ ...s, project: projectView(proj).projectName, projectPath: projectView(proj).projectPath });
             if (hits.length > 60) break;
           }
         }

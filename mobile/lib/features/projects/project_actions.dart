@@ -13,16 +13,10 @@ import '../../widgets/bridge.dart';
 import '../../widgets/common.dart';
 import '../session/session_utils.dart';
 
-/// Every project Bridge shows: folders with threads, plus Bridge folders with none yet.
-List<Project> bridgeProjects(AppStore store) {
-  final out = [...store.projects.where((p) => p.exists && isProjectPath(p.path))]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
-  final paths = out.map((p) => p.path).toSet();
-  for (final r in store.roots) {
-    if (r.isEmpty || paths.contains(r) || !isProjectPath(r)) continue;
-    out.add(Project(key: projectKeyFor(r), path: r, name: baseName(r), sessions: 0, lastActivity: 0, exists: true));
-  }
-  return out;
-}
+/// Every project Bridge shows: the server lists each folder in the work folder (~/Desktop/Cowork) as a
+/// project, with the threads that ran anywhere inside it. Bridge folders (roots) are only for browsing files.
+List<Project> bridgeProjects(AppStore store) =>
+    [...store.projects.where((p) => p.exists && isProjectPath(p.path))]..sort((a, b) => b.lastActivity.compareTo(a.lastActivity));
 
 String _nameOf(Project p) => p.name.isNotEmpty ? p.name : baseName(p.path);
 

@@ -21,15 +21,16 @@ Future<void> seed() async {
   s.projects = [
     Project(key: '-home-u-work-alpha', path: '/home/u/work/alpha', name: 'alpha', sessions: 3, lastActivity: now, exists: true),
     Project(key: '-home-u-work-beta', path: '/home/u/work/beta', name: 'beta', sessions: 1, lastActivity: now - 1000, exists: true),
+    Project(key: '-home-u-work-gamma', path: '/home/u/work/gamma', name: 'gamma', sessions: 0, lastActivity: 0, exists: true),
   ];
-  s.roots = ['/home/u/work/gamma'];
+  s.roots = ['/home/u/Desktop'];
   s.changed();
 }
 
 Widget app() => MaterialApp(theme: buildTheme(Brightness.dark), home: const ProjectsScreen());
 
 void main() {
-  test('bridgeProjects lists folders with threads, then Bridge folders with none', () async {
+  test('bridgeProjects lists the server projects, newest first, and never the Bridge folders', () async {
     await seed();
     expect(bridgeProjects(AppStore.instance).map((p) => p.name).toList(), ['alpha', 'beta', 'gamma']);
   });
